@@ -26,7 +26,7 @@
 
 Name:		certmonger
 Version:	0.78.4
-Release:	3%{?dist}
+Release:	3%{?dist}.1
 Summary:	Certificate status monitor and PKI enrollment client
 
 Group:		System Environment/Daemons
@@ -45,6 +45,8 @@ Patch0006:	0006-ipa-submit-Retry-without-ca-on-OptionError.patch
 Patch0007:	0007-getcert-fix-a-potential-out-of-bounds.patch
 Patch0008:	0008-Document-the-X-option-in-the-ipa-submit-man-page.patch
 Patch0009:	0009-Fix-a-flakiness-in-the-028-dbus-test.patch
+Patch0010:	0010-Set-all-bits-to-1-in-local-CA-Basic-Constraint-to-se.patch
+Patch0011:	0011-Fix-conversions-of-bit-lengths-to-byte-lengths.patch
 
 Patch1001:	1001-Remove-rekey-feature.patch
 Patch1002:	1002-Fix-CA-option-name-for-ipa-cert-request.patch
@@ -256,6 +258,11 @@ exit 0
 %endif
 
 %changelog
+* Tue Mar 27 2018 Rob Crittenden <rcritten@redhat.com> - 0.78.4-3.1
+- Use required DER encoding when setting CA basic constraint (#1560961)
+- NSS 3.34 more strictly enforces length checking when verifying signatures
+  (#1560960)
+
 * Tue Sep  6 2016 Jan Cholasta <jcholast@redhat.com> - 0.78.4-3
 - Resolves: #1367683 getcert request command fails to use Sub CA using -X
   argument
