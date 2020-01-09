@@ -1,0 +1,699 @@
+From 9db945a8f3e3bf1b68eb6a65041e3c1bd5ba5bfa Mon Sep 17 00:00:00 2001
+From: Rob Crittenden <rcritten@redhat.com>
+Date: Wed, 5 Oct 2016 14:25:44 -0400
+Subject: [PATCH] Remove tests of 512-bit keys, they are unsupported now.
+
+---
+ tests/001-keyiread-rsa/expected.out |   2 -
+ tests/001-keyiread-rsa/run.sh       |   4 +-
+ tests/001-keyiread/expected.out     |   2 -
+ tests/001-keyiread/run.sh           |   4 +-
+ tests/002-keygen-dsa/expected.out   |   6 --
+ tests/002-keygen-dsa/expected.out.2 |   5 --
+ tests/002-keygen-dsa/expected.out.3 |   6 --
+ tests/002-keygen-dsa/run.sh         |   4 +-
+ tests/002-keygen-rsa/expected.out   |   6 --
+ tests/002-keygen-rsa/run.sh         |   4 +-
+ tests/002-keygen/expected.out       |  18 -----
+ tests/002-keygen/run.sh             |   4 +-
+ tests/003-csrgen-rsa/expected.out   | 124 ++++++++++++++--------------
+ tests/003-csrgen-rsa/run.sh         |   4 +-
+ tests/003-csrgen/expected.out       | 157 +++++++++++++++++-------------------
+ tests/003-csrgen/run.sh             |   4 +-
+ tests/004-selfsign-rsa/expected.out |   1 -
+ tests/004-selfsign-rsa/run.sh       |   2 +-
+ tests/004-selfsign/expected.out     |   1 -
+ tests/004-selfsign/run.sh           |   2 +-
+ 20 files changed, 152 insertions(+), 208 deletions(-)
+
+diff --git a/tests/001-keyiread-rsa/expected.out b/tests/001-keyiread-rsa/expected.out
+index fa3493c..727897d 100644
+--- a/tests/001-keyiread-rsa/expected.out
++++ b/tests/001-keyiread-rsa/expected.out
+@@ -1,10 +1,8 @@
+-OK (RSA:512).
+ OK (RSA:1024).
+ OK (RSA:1536).
+ OK (RSA:2048).
+ OK (RSA:3072).
+ OK (RSA:4096).
+-OK (RSA:512).
+ OK (RSA:1024).
+ OK (RSA:1536).
+ OK (RSA:2048).
+diff --git a/tests/001-keyiread-rsa/run.sh b/tests/001-keyiread-rsa/run.sh
+index b5ac715..c7b7768 100755
+--- a/tests/001-keyiread-rsa/run.sh
++++ b/tests/001-keyiread-rsa/run.sh
+@@ -5,7 +5,7 @@ cd "$tmpdir"
+ source "$srcdir"/functions
+ initnssdb "$tmpdir"
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	# Generate a self-signed cert.
+ 	run_certutil -d "$tmpdir" -S -g $size -n keyi$size \
+ 		-s "cn=T$size" -c "cn=T$size" \
+@@ -30,7 +30,7 @@ for size in 512 1024 1536 2048 3072 4096 ; do
+ 	$toolsdir/keyiread entry.nss.$size
+ done
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	# Generate a key.
+ 	openssl genrsa $size > sample.$size 2> /dev/null
+ 	# Check the size of the key.
+diff --git a/tests/001-keyiread/expected.out b/tests/001-keyiread/expected.out
+index fa3493c..727897d 100644
+--- a/tests/001-keyiread/expected.out
++++ b/tests/001-keyiread/expected.out
+@@ -1,10 +1,8 @@
+-OK (RSA:512).
+ OK (RSA:1024).
+ OK (RSA:1536).
+ OK (RSA:2048).
+ OK (RSA:3072).
+ OK (RSA:4096).
+-OK (RSA:512).
+ OK (RSA:1024).
+ OK (RSA:1536).
+ OK (RSA:2048).
+diff --git a/tests/001-keyiread/run.sh b/tests/001-keyiread/run.sh
+index d95043d..ce1428e 100755
+--- a/tests/001-keyiread/run.sh
++++ b/tests/001-keyiread/run.sh
+@@ -5,7 +5,7 @@ cd "$tmpdir"
+ source "$srcdir"/functions
+ initnssdb "$tmpdir"
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	# Generate a self-signed cert.
+ 	run_certutil -d "$tmpdir" -S -g $size -n keyi$size \
+ 		-s "cn=T$size" -c "cn=T$size" \
+@@ -30,7 +30,7 @@ for size in 512 1024 1536 2048 3072 4096 ; do
+ 	$toolsdir/keyiread entry.nss.$size
+ done
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	# Generate a key.
+ 	openssl genrsa $size > sample.$size 2> /dev/null
+ 	# Check the size of the key.
+diff --git a/tests/002-keygen-dsa/expected.out b/tests/002-keygen-dsa/expected.out
+index 2bce3e4..17a79fd 100644
+--- a/tests/002-keygen-dsa/expected.out
++++ b/tests/002-keygen-dsa/expected.out
+@@ -1,6 +1,3 @@
+-[nss:512]
+-OK.
+-OK (DSA:512).
+ [nss:1024]
+ OK.
+ OK (DSA:1024).
+@@ -17,9 +14,6 @@ OK (DSA:3072).
+ Failed to save NSS:${tmpdir}/rosubdir: need fs permissions.
+ [nss:rwsubdir]
+ Failed to save NSS:${tmpdir}/rwsubdir: need fs permissions.
+-[openssl:512]
+-OK.
+-OK (DSA:512).
+ [openssl:1024]
+ OK.
+ OK (DSA:1024).
+diff --git a/tests/002-keygen-dsa/expected.out.2 b/tests/002-keygen-dsa/expected.out.2
+index 935a979..e502bc8 100644
+--- a/tests/002-keygen-dsa/expected.out.2
++++ b/tests/002-keygen-dsa/expected.out.2
+@@ -1,5 +1,3 @@
+-[nss:512]
+-OK.
+ OK (DSA:3072).
+ [nss:1024]
+ OK.
+@@ -17,9 +15,6 @@ OK (DSA:3072).
+ Failed to save NSS:${tmpdir}/rosubdir: need fs permissions.
+ [nss:rwsubdir]
+ Failed to save NSS:${tmpdir}/rwsubdir: need fs permissions.
+-[openssl:512]
+-OK.
+-OK (DSA:512).
+ [openssl:1024]
+ OK.
+ OK (DSA:1024).
+diff --git a/tests/002-keygen-dsa/expected.out.3 b/tests/002-keygen-dsa/expected.out.3
+index 2eea897..8e23385 100644
+--- a/tests/002-keygen-dsa/expected.out.3
++++ b/tests/002-keygen-dsa/expected.out.3
+@@ -1,6 +1,3 @@
+-[nss:512]
+-OK.
+-OK (DSA:512).
+ [nss:1024]
+ OK.
+ OK (DSA:1016).
+@@ -17,9 +14,6 @@ OK (DSA:3072).
+ Failed to save NSS:${tmpdir}/rosubdir: need fs permissions.
+ [nss:rwsubdir]
+ Failed to save NSS:${tmpdir}/rwsubdir: need fs permissions.
+-[openssl:512]
+-OK.
+-OK (DSA:512).
+ [openssl:1024]
+ OK.
+ OK (DSA:1024).
+diff --git a/tests/002-keygen-dsa/run.sh b/tests/002-keygen-dsa/run.sh
+index b0a463d..321ccdd 100755
+--- a/tests/002-keygen-dsa/run.sh
++++ b/tests/002-keygen-dsa/run.sh
+@@ -5,7 +5,7 @@ cd "$tmpdir"
+ source "$srcdir"/functions
+ initnssdb "$tmpdir"
+ 
+-for size in 512 1024 1536 2048 3072 ; do
++for size in 1024 1536 2048 3072 ; do
+ 	echo "[nss:$size]"
+ 	# Generate a key.
+ 	cat > entry.$size <<- EOF
+@@ -41,7 +41,7 @@ key_gen_type=DSA
+ EOF
+ $toolsdir/keygen entry.$size || true
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	echo "[openssl:$size]"
+ 	# Generate a key.
+ 	cat > entry.$size <<- EOF
+diff --git a/tests/002-keygen-rsa/expected.out b/tests/002-keygen-rsa/expected.out
+index 33f0f48..3e6e9f3 100644
+--- a/tests/002-keygen-rsa/expected.out
++++ b/tests/002-keygen-rsa/expected.out
+@@ -1,6 +1,3 @@
+-[nss:512]
+-OK.
+-OK (RSA:512).
+ [nss:1024]
+ OK.
+ OK (RSA:1024).
+@@ -20,9 +17,6 @@ OK (RSA:4096).
+ Failed to save NSS:${tmpdir}/rosubdir: need fs permissions.
+ [nss:rwsubdir]
+ Failed to save NSS:${tmpdir}/rwsubdir: need fs permissions.
+-[openssl:512]
+-OK.
+-OK (RSA:512).
+ [openssl:1024]
+ OK.
+ OK (RSA:1024).
+diff --git a/tests/002-keygen-rsa/run.sh b/tests/002-keygen-rsa/run.sh
+index b133edd..476f412 100755
+--- a/tests/002-keygen-rsa/run.sh
++++ b/tests/002-keygen-rsa/run.sh
+@@ -5,7 +5,7 @@ cd "$tmpdir"
+ source "$srcdir"/functions
+ initnssdb "$tmpdir"
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	echo "[nss:$size]"
+ 	# Generate a key.
+ 	cat > entry.$size <<- EOF
+@@ -41,7 +41,7 @@ key_gen_type=RSA
+ EOF
+ $toolsdir/keygen entry.$size || true
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	echo "[openssl:$size]"
+ 	# Generate a key.
+ 	cat > entry.$size <<- EOF
+diff --git a/tests/002-keygen/expected.out b/tests/002-keygen/expected.out
+index f47d2d5..ff56372 100644
+--- a/tests/002-keygen/expected.out
++++ b/tests/002-keygen/expected.out
+@@ -1,12 +1,3 @@
+-[nss:512]
+-OK.
+-OK (RSA:512).
+-OK.
+-OK (RSA:512 after RSA:512).
+-OK.
+-OK (RSA:512 after RSA:512).
+-keyi512
+-keyi512 (candidate (next))
+ [nss:1024]
+ OK.
+ OK (RSA:1024).
+@@ -56,15 +47,6 @@ keyi4096 (candidate (next))
+ Failed to save NSS:${tmpdir}/rosubdir: need fs permissions.
+ [nss:rwsubdir]
+ Failed to save NSS:${tmpdir}/rwsubdir: need fs permissions.
+-[openssl:512]
+-OK.
+-OK (RSA:512).
+-OK.
+-OK (RSA:512 after RSA:512).
+-OK.
+-OK (RSA:512 after RSA:512).
+-${tmpdir}/sample.512
+-${tmpdir}/sample.512.(next).key
+ [openssl:1024]
+ OK.
+ OK (RSA:1024).
+diff --git a/tests/002-keygen/run.sh b/tests/002-keygen/run.sh
+index a0867cf..f550fee 100755
+--- a/tests/002-keygen/run.sh
++++ b/tests/002-keygen/run.sh
+@@ -5,7 +5,7 @@ cd "$tmpdir"
+ source "$srcdir"/functions
+ initnssdb "$tmpdir"
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	echo "[nss:$size]"
+ 	# Generate a key.
+ 	cat > entry.$size <<- EOF
+@@ -49,7 +49,7 @@ key_gen_size=$size
+ EOF
+ $toolsdir/keygen entry.$size || true
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	echo "[openssl:$size]"
+ 	# Generate a key.
+ 	cat > entry.$size <<- EOF
+diff --git a/tests/003-csrgen-rsa/expected.out b/tests/003-csrgen-rsa/expected.out
+index 7b67eab..e1c19f2 100644
+--- a/tests/003-csrgen-rsa/expected.out
++++ b/tests/003-csrgen-rsa/expected.out
+@@ -1,9 +1,5 @@
+ pk12util: PKCS12 EXPORT SUCCESSFUL
+ MAC verified OK
+-512 OK.
+-Signature OK
+-pk12util: PKCS12 EXPORT SUCCESSFUL
+-MAC verified OK
+ 1024 OK.
+ Signature OK
+ pk12util: PKCS12 EXPORT SUCCESSFUL
+@@ -23,70 +19,70 @@ MAC verified OK
+ 4096 OK.
+ Signature OK
+ The last CSR (the one with everything) was:
+-    0:d=0  hl=4 l=1019 cons: SEQUENCE          
+-    4:d=1  hl=4 l= 933 cons: SEQUENCE          
++    0:d=0  hl=4 l=1152 cons: SEQUENCE          
++    4:d=1  hl=4 l=1001 cons: SEQUENCE          
+     8:d=2  hl=2 l=   1 prim: INTEGER           :00
+    11:d=2  hl=2 l=  22 cons: SEQUENCE          
+    13:d=3  hl=2 l=  20 cons: SET               
+    15:d=4  hl=2 l=  18 cons: SEQUENCE          
+    17:d=5  hl=2 l=   3 prim: OBJECT            :commonName
+    22:d=5  hl=2 l=  11 prim: PRINTABLESTRING   :Babs Jensen
+-   35:d=2  hl=2 l=  92 cons: SEQUENCE          
+-   37:d=3  hl=2 l=  13 cons: SEQUENCE          
+-   39:d=4  hl=2 l=   9 prim: OBJECT            :rsaEncryption
+-   50:d=4  hl=2 l=   0 prim: NULL              
+-   52:d=3  hl=2 l=  75 prim: BIT STRING        
+-  129:d=2  hl=4 l= 808 cons: cont [ 0 ]        
+-  133:d=3  hl=2 l=  52 cons: SEQUENCE          
+-  135:d=4  hl=2 l=   9 prim: OBJECT            :challengePassword
+-  146:d=4  hl=2 l=  39 cons: SET               
+-  148:d=5  hl=2 l=  37 prim: PRINTABLESTRING   :ChallengePasswordIsEncodedInPlainText
+-  187:d=3  hl=2 l=  61 cons: SEQUENCE          
+-  189:d=4  hl=2 l=   9 prim: OBJECT            :friendlyName
+-  200:d=4  hl=2 l=  48 cons: SET               
+-  202:d=5  hl=2 l=  46 prim: BMPSTRING         
+-  250:d=3  hl=4 l= 687 cons: SEQUENCE          
+-  254:d=4  hl=2 l=   9 prim: OBJECT            :Extension Request
+-  265:d=4  hl=4 l= 672 cons: SET               
+-  269:d=5  hl=4 l= 668 cons: SEQUENCE          
+-  273:d=6  hl=2 l=  14 cons: SEQUENCE          
+-  275:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Key Usage
+-  280:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  283:d=7  hl=2 l=   4 prim: OCTET STRING      [HEX DUMP]:030205E0
+-  289:d=6  hl=4 l= 264 cons: SEQUENCE          
+-  293:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Subject Alternative Name
+-  298:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  301:d=7  hl=3 l= 253 prim: OCTET STRING      [HEX DUMP]:3081FA82096C6F63616C686F737482156C6F63616C686F73742E6C6F63616C646F6D61696E810E726F6F74406C6F63616C686F7374811A726F6F74406C6F63616C686F73742E6C6F63616C646F6D61696EA020060A2B060104018237140203A0120C10726F6F74404558414D504C452E434F4DA02E06062B0601050202A0243022A00D1B0B4558414D504C452E434F4DA111300FA003020101A10830061B04726F6F74A024060A2B060104018237140203A0160C14726F6F7440464F4F2E4558414D504C452E434F4DA03206062B0601050202A0283026A0111B0F464F4F2E4558414D504C452E434F4DA111300FA003020101A10830061B04726F6F74
+-  557:d=6  hl=2 l=  32 cons: SEQUENCE          
+-  559:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Extended Key Usage
+-  564:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  567:d=7  hl=2 l=  22 prim: OCTET STRING      [HEX DUMP]:301406082B0601050507030206082B06010505070304
+-  591:d=6  hl=2 l=  18 cons: SEQUENCE          
+-  593:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Basic Constraints
+-  598:d=7  hl=2 l=   1 prim: BOOLEAN           :255
+-  601:d=7  hl=2 l=   8 prim: OCTET STRING      [HEX DUMP]:30060101FF020103
+-  611:d=6  hl=2 l=  34 cons: SEQUENCE          
+-  613:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Authority Key Identifier
+-  618:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  621:d=7  hl=2 l=  24 prim: OCTET STRING      [HEX DUMP]:30168014A9993E364706816ABA3E25717850C26C9CD0D89D
+-  647:d=6  hl=2 l=  32 cons: SEQUENCE          
+-  649:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Subject Key Identifier
+-  654:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  657:d=7  hl=2 l=  22 prim: OCTET STRING      [HEX DUMP]:0414A9993E364706816ABA3E25717850C26C9CD0D89D
+-  681:d=6  hl=2 l= 107 cons: SEQUENCE          
+-  683:d=7  hl=2 l=   8 prim: OBJECT            :Authority Information Access
+-  693:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  696:d=7  hl=2 l=  92 prim: OCTET STRING      [HEX DUMP]:305A302B06082B06010505073001861F687474703A2F2F6F6373702D312E6578616D706C652E636F6D3A3132333435302B06082B06010505073001861F687474703A2F2F6F6373702D322E6578616D706C652E636F6D3A3132333435
+-  790:d=6  hl=2 l=  96 cons: SEQUENCE          
+-  792:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 CRL Distribution Points
+-  797:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  800:d=7  hl=2 l=  86 prim: OCTET STRING      [HEX DUMP]:30543028A026A0248622687474703A2F2F63726C2D312E6578616D706C652E636F6D3A31323334352F6765743028A026A0248622687474703A2F2F63726C2D322E6578616D706C652E636F6D3A31323334352F676574
+-  888:d=6  hl=2 l=  51 cons: SEQUENCE          
+-  890:d=7  hl=2 l=   9 prim: OBJECT            :Netscape Comment
+-  901:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  904:d=7  hl=2 l=  35 prim: OCTET STRING      [HEX DUMP]:1621636572746D6F6E6765722067656E65726174656420746869732072657175657374
+-  941:d=1  hl=2 l=  13 cons: SEQUENCE          
+-  943:d=2  hl=2 l=   9 prim: OBJECT            :sha256WithRSAEncryption
+-  954:d=2  hl=2 l=   0 prim: NULL              
+-  956:d=1  hl=2 l=  65 prim: BIT STRING        
++   35:d=2  hl=3 l= 159 cons: SEQUENCE          
++   38:d=3  hl=2 l=  13 cons: SEQUENCE          
++   40:d=4  hl=2 l=   9 prim: OBJECT            :rsaEncryption
++   51:d=4  hl=2 l=   0 prim: NULL              
++   53:d=3  hl=3 l= 141 prim: BIT STRING        
++  197:d=2  hl=4 l= 808 cons: cont [ 0 ]        
++  201:d=3  hl=2 l=  52 cons: SEQUENCE          
++  203:d=4  hl=2 l=   9 prim: OBJECT            :challengePassword
++  214:d=4  hl=2 l=  39 cons: SET               
++  216:d=5  hl=2 l=  37 prim: PRINTABLESTRING   :ChallengePasswordIsEncodedInPlainText
++  255:d=3  hl=2 l=  61 cons: SEQUENCE          
++  257:d=4  hl=2 l=   9 prim: OBJECT            :friendlyName
++  268:d=4  hl=2 l=  48 cons: SET               
++  270:d=5  hl=2 l=  46 prim: BMPSTRING         
++  318:d=3  hl=4 l= 687 cons: SEQUENCE          
++  322:d=4  hl=2 l=   9 prim: OBJECT            :Extension Request
++  333:d=4  hl=4 l= 672 cons: SET               
++  337:d=5  hl=4 l= 668 cons: SEQUENCE          
++  341:d=6  hl=2 l=  14 cons: SEQUENCE          
++  343:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Key Usage
++  348:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  351:d=7  hl=2 l=   4 prim: OCTET STRING      [HEX DUMP]:030205E0
++  357:d=6  hl=4 l= 264 cons: SEQUENCE          
++  361:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Subject Alternative Name
++  366:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  369:d=7  hl=3 l= 253 prim: OCTET STRING      [HEX DUMP]:3081FA82096C6F63616C686F737482156C6F63616C686F73742E6C6F63616C646F6D61696E810E726F6F74406C6F63616C686F7374811A726F6F74406C6F63616C686F73742E6C6F63616C646F6D61696EA020060A2B060104018237140203A0120C10726F6F74404558414D504C452E434F4DA02E06062B0601050202A0243022A00D1B0B4558414D504C452E434F4DA111300FA003020101A10830061B04726F6F74A024060A2B060104018237140203A0160C14726F6F7440464F4F2E4558414D504C452E434F4DA03206062B0601050202A0283026A0111B0F464F4F2E4558414D504C452E434F4DA111300FA003020101A10830061B04726F6F74
++  625:d=6  hl=2 l=  32 cons: SEQUENCE          
++  627:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Extended Key Usage
++  632:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  635:d=7  hl=2 l=  22 prim: OCTET STRING      [HEX DUMP]:301406082B0601050507030206082B06010505070304
++  659:d=6  hl=2 l=  18 cons: SEQUENCE          
++  661:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Basic Constraints
++  666:d=7  hl=2 l=   1 prim: BOOLEAN           :255
++  669:d=7  hl=2 l=   8 prim: OCTET STRING      [HEX DUMP]:30060101FF020103
++  679:d=6  hl=2 l=  34 cons: SEQUENCE          
++  681:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Authority Key Identifier
++  686:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  689:d=7  hl=2 l=  24 prim: OCTET STRING      [HEX DUMP]:30168014A9993E364706816ABA3E25717850C26C9CD0D89D
++  715:d=6  hl=2 l=  32 cons: SEQUENCE          
++  717:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Subject Key Identifier
++  722:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  725:d=7  hl=2 l=  22 prim: OCTET STRING      [HEX DUMP]:0414A9993E364706816ABA3E25717850C26C9CD0D89D
++  749:d=6  hl=2 l= 107 cons: SEQUENCE          
++  751:d=7  hl=2 l=   8 prim: OBJECT            :Authority Information Access
++  761:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  764:d=7  hl=2 l=  92 prim: OCTET STRING      [HEX DUMP]:305A302B06082B06010505073001861F687474703A2F2F6F6373702D312E6578616D706C652E636F6D3A3132333435302B06082B06010505073001861F687474703A2F2F6F6373702D322E6578616D706C652E636F6D3A3132333435
++  858:d=6  hl=2 l=  96 cons: SEQUENCE          
++  860:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 CRL Distribution Points
++  865:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  868:d=7  hl=2 l=  86 prim: OCTET STRING      [HEX DUMP]:30543028A026A0248622687474703A2F2F63726C2D312E6578616D706C652E636F6D3A31323334352F6765743028A026A0248622687474703A2F2F63726C2D322E6578616D706C652E636F6D3A31323334352F676574
++  956:d=6  hl=2 l=  51 cons: SEQUENCE          
++  958:d=7  hl=2 l=   9 prim: OBJECT            :Netscape Comment
++  969:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  972:d=7  hl=2 l=  35 prim: OCTET STRING      [HEX DUMP]:1621636572746D6F6E6765722067656E65726174656420746869732072657175657374
++ 1009:d=1  hl=2 l=  13 cons: SEQUENCE          
++ 1011:d=2  hl=2 l=   9 prim: OBJECT            :sha256WithRSAEncryption
++ 1022:d=2  hl=2 l=   0 prim: NULL              
++ 1024:d=1  hl=3 l= 129 prim: BIT STRING        
+ Test complete (32 combinations).
+diff --git a/tests/003-csrgen-rsa/run.sh b/tests/003-csrgen-rsa/run.sh
+index c049dd0..cea4340 100755
+--- a/tests/003-csrgen-rsa/run.sh
++++ b/tests/003-csrgen-rsa/run.sh
+@@ -5,7 +5,7 @@ cd "$tmpdir"
+ source "$srcdir"/functions
+ initnssdb "$tmpdir"
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	# Build a self-signed certificate.
+ 	run_certutil -d "$tmpdir" -S -g $size -n keyi$size \
+ 		-s "cn=T$size" -c "cn=T$size" \
+@@ -216,7 +216,7 @@ for nscomment in "" "certmonger generated this request" ; do
+ done
+ nscomment=
+ 
+-size=512
++size=1024
+ subject="CN=Babs Jensen"
+ hostname=localhost,localhost.localdomain
+ email=root@localhost,root@localhost.localdomain
+diff --git a/tests/003-csrgen/expected.out b/tests/003-csrgen/expected.out
+index 7f4586c..5c31051 100644
+--- a/tests/003-csrgen/expected.out
++++ b/tests/003-csrgen/expected.out
+@@ -1,11 +1,6 @@
+ pk12util: PKCS12 EXPORT SUCCESSFUL
+ MAC verified OK
+ Signature OK
+-minicert.openssl.512.pem: OK
+-512 OK.
+-pk12util: PKCS12 EXPORT SUCCESSFUL
+-MAC verified OK
+-Signature OK
+ minicert.openssl.1024.pem: OK
+ 1024 OK.
+ pk12util: PKCS12 EXPORT SUCCESSFUL
+@@ -29,86 +24,86 @@ Signature OK
+ minicert.openssl.4096.pem: OK
+ 4096 OK.
+ The last CSR (the one with everything) was:
+-    0:d=0  hl=4 l=1241 cons: SEQUENCE          
+-    4:d=1  hl=4 l=1155 cons: SEQUENCE          
++    0:d=0  hl=4 l=1374 cons: SEQUENCE          
++    4:d=1  hl=4 l=1223 cons: SEQUENCE          
+     8:d=2  hl=2 l=   1 prim: INTEGER           :00
+    11:d=2  hl=2 l=  22 cons: SEQUENCE          
+    13:d=3  hl=2 l=  20 cons: SET               
+    15:d=4  hl=2 l=  18 cons: SEQUENCE          
+    17:d=5  hl=2 l=   3 prim: OBJECT            :commonName
+    22:d=5  hl=2 l=  11 prim: PRINTABLESTRING   :Babs Jensen
+-   35:d=2  hl=2 l=  92 cons: SEQUENCE          
+-   37:d=3  hl=2 l=  13 cons: SEQUENCE          
+-   39:d=4  hl=2 l=   9 prim: OBJECT            :rsaEncryption
+-   50:d=4  hl=2 l=   0 prim: NULL              
+-   52:d=3  hl=2 l=  75 prim: BIT STRING        
+-  129:d=2  hl=4 l=1030 cons: cont [ 0 ]        
+-  133:d=3  hl=2 l=  52 cons: SEQUENCE          
+-  135:d=4  hl=2 l=   9 prim: OBJECT            :challengePassword
+-  146:d=4  hl=2 l=  39 cons: SET               
+-  148:d=5  hl=2 l=  37 prim: PRINTABLESTRING   :ChallengePasswordIsEncodedInPlainText
+-  187:d=3  hl=2 l=  61 cons: SEQUENCE          
+-  189:d=4  hl=2 l=   9 prim: OBJECT            :friendlyName
+-  200:d=4  hl=2 l=  48 cons: SET               
+-  202:d=5  hl=2 l=  46 prim: BMPSTRING         
+-  250:d=3  hl=4 l= 909 cons: SEQUENCE          
+-  254:d=4  hl=2 l=   9 prim: OBJECT            :Extension Request
+-  265:d=4  hl=4 l= 894 cons: SET               
+-  269:d=5  hl=4 l= 890 cons: SEQUENCE          
+-  273:d=6  hl=2 l=  14 cons: SEQUENCE          
+-  275:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Key Usage
+-  280:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  283:d=7  hl=2 l=   4 prim: OCTET STRING      [HEX DUMP]:030205E0
+-  289:d=6  hl=4 l= 290 cons: SEQUENCE          
+-  293:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Subject Alternative Name
+-  298:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  301:d=7  hl=4 l= 278 prim: OCTET STRING      [HEX DUMP]:3082011282096C6F63616C686F737482156C6F63616C686F73742E6C6F63616C646F6D61696E810E726F6F74406C6F63616C686F7374811A726F6F74406C6F63616C686F73742E6C6F63616C646F6D61696EA020060A2B060104018237140203A0120C10726F6F74404558414D504C452E434F4DA02E06062B0601050202A0243022A00D1B0B4558414D504C452E434F4DA111300FA003020101A10830061B04726F6F74A024060A2B060104018237140203A0160C14726F6F7440464F4F2E4558414D504C452E434F4DA03206062B0601050202A0283026A0111B0F464F4F2E4558414D504C452E434F4DA111300FA003020101A10830061B04726F6F7487047F000001871000000000000000000000000000000001
+-  583:d=6  hl=2 l=  32 cons: SEQUENCE          
+-  585:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Extended Key Usage
+-  590:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  593:d=7  hl=2 l=  22 prim: OCTET STRING      [HEX DUMP]:301406082B0601050507030206082B06010505070304
+-  617:d=6  hl=2 l=  18 cons: SEQUENCE          
+-  619:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Basic Constraints
+-  624:d=7  hl=2 l=   1 prim: BOOLEAN           :255
+-  627:d=7  hl=2 l=   8 prim: OCTET STRING      [HEX DUMP]:30060101FF020103
+-  637:d=6  hl=2 l=  34 cons: SEQUENCE          
+-  639:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Authority Key Identifier
+-  644:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  647:d=7  hl=2 l=  24 prim: OCTET STRING      [HEX DUMP]:30168014A9993E364706816ABA3E25717850C26C9CD0D89D
+-  673:d=6  hl=2 l=  32 cons: SEQUENCE          
+-  675:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Subject Key Identifier
+-  680:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  683:d=7  hl=2 l=  22 prim: OCTET STRING      [HEX DUMP]:0414A9993E364706816ABA3E25717850C26C9CD0D89D
+-  707:d=6  hl=2 l= 107 cons: SEQUENCE          
+-  709:d=7  hl=2 l=   8 prim: OBJECT            :Authority Information Access
+-  719:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  722:d=7  hl=2 l=  92 prim: OCTET STRING      [HEX DUMP]:305A302B06082B06010505073001861F687474703A2F2F6F6373702D312E6578616D706C652E636F6D3A3132333435302B06082B06010505073001861F687474703A2F2F6F6373702D322E6578616D706C652E636F6D3A3132333435
+-  816:d=6  hl=2 l=  96 cons: SEQUENCE          
+-  818:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 CRL Distribution Points
+-  823:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  826:d=7  hl=2 l=  86 prim: OCTET STRING      [HEX DUMP]:30543028A026A0248622687474703A2F2F63726C2D312E6578616D706C652E636F6D3A31323334352F6765743028A026A0248622687474703A2F2F63726C2D322E6578616D706C652E636F6D3A31323334352F676574
+-  914:d=6  hl=2 l= 106 cons: SEQUENCE          
+-  916:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Freshest CRL
+-  921:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+-  924:d=7  hl=2 l=  96 prim: OCTET STRING      [HEX DUMP]:305E302DA02BA0298627687474703A2F2F63726C2D312E6578616D706C652E636F6D3A31323334352F67657464656C7461302DA02BA0298627687474703A2F2F63726C2D322E6578616D706C652E636F6D3A31323334352F67657464656C7461
+- 1022:d=6  hl=2 l=  51 cons: SEQUENCE          
+- 1024:d=7  hl=2 l=   9 prim: OBJECT            :Netscape Comment
+- 1035:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+- 1038:d=7  hl=2 l=  35 prim: OCTET STRING      [HEX DUMP]:1621636572746D6F6E6765722067656E65726174656420746869732072657175657374
+- 1075:d=6  hl=2 l=  18 cons: SEQUENCE          
+- 1077:d=7  hl=2 l=   9 prim: OBJECT            :OCSP No Check
+- 1088:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+- 1091:d=7  hl=2 l=   2 prim: OCTET STRING      [HEX DUMP]:0500
+- 1095:d=6  hl=2 l=  44 cons: SEQUENCE          
+- 1097:d=7  hl=2 l=   9 prim: OBJECT            :1.3.6.1.4.1.311.20.2
+- 1108:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+- 1111:d=7  hl=2 l=  28 prim: OCTET STRING      [HEX DUMP]:1E1A006300610041007700650073006F006D00650043006500720074
+- 1141:d=6  hl=2 l=  20 cons: SEQUENCE          
+- 1143:d=7  hl=2 l=   9 prim: OBJECT            :Netscape Cert Type
+- 1154:d=7  hl=2 l=   1 prim: BOOLEAN           :0
+- 1157:d=7  hl=2 l=   4 prim: OCTET STRING      [HEX DUMP]:030205A0
+- 1163:d=1  hl=2 l=  13 cons: SEQUENCE          
+- 1165:d=2  hl=2 l=   9 prim: OBJECT            :sha256WithRSAEncryption
+- 1176:d=2  hl=2 l=   0 prim: NULL              
+- 1178:d=1  hl=2 l=  65 prim: BIT STRING        
++   35:d=2  hl=3 l= 159 cons: SEQUENCE          
++   38:d=3  hl=2 l=  13 cons: SEQUENCE          
++   40:d=4  hl=2 l=   9 prim: OBJECT            :rsaEncryption
++   51:d=4  hl=2 l=   0 prim: NULL              
++   53:d=3  hl=3 l= 141 prim: BIT STRING        
++  197:d=2  hl=4 l=1030 cons: cont [ 0 ]        
++  201:d=3  hl=2 l=  52 cons: SEQUENCE          
++  203:d=4  hl=2 l=   9 prim: OBJECT            :challengePassword
++  214:d=4  hl=2 l=  39 cons: SET               
++  216:d=5  hl=2 l=  37 prim: PRINTABLESTRING   :ChallengePasswordIsEncodedInPlainText
++  255:d=3  hl=2 l=  61 cons: SEQUENCE          
++  257:d=4  hl=2 l=   9 prim: OBJECT            :friendlyName
++  268:d=4  hl=2 l=  48 cons: SET               
++  270:d=5  hl=2 l=  46 prim: BMPSTRING         
++  318:d=3  hl=4 l= 909 cons: SEQUENCE          
++  322:d=4  hl=2 l=   9 prim: OBJECT            :Extension Request
++  333:d=4  hl=4 l= 894 cons: SET               
++  337:d=5  hl=4 l= 890 cons: SEQUENCE          
++  341:d=6  hl=2 l=  14 cons: SEQUENCE          
++  343:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Key Usage
++  348:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  351:d=7  hl=2 l=   4 prim: OCTET STRING      [HEX DUMP]:030205E0
++  357:d=6  hl=4 l= 290 cons: SEQUENCE          
++  361:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Subject Alternative Name
++  366:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  369:d=7  hl=4 l= 278 prim: OCTET STRING      [HEX DUMP]:3082011282096C6F63616C686F737482156C6F63616C686F73742E6C6F63616C646F6D61696E810E726F6F74406C6F63616C686F7374811A726F6F74406C6F63616C686F73742E6C6F63616C646F6D61696EA020060A2B060104018237140203A0120C10726F6F74404558414D504C452E434F4DA02E06062B0601050202A0243022A00D1B0B4558414D504C452E434F4DA111300FA003020101A10830061B04726F6F74A024060A2B060104018237140203A0160C14726F6F7440464F4F2E4558414D504C452E434F4DA03206062B0601050202A0283026A0111B0F464F4F2E4558414D504C452E434F4DA111300FA003020101A10830061B04726F6F7487047F000001871000000000000000000000000000000001
++  651:d=6  hl=2 l=  32 cons: SEQUENCE          
++  653:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Extended Key Usage
++  658:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  661:d=7  hl=2 l=  22 prim: OCTET STRING      [HEX DUMP]:301406082B0601050507030206082B06010505070304
++  685:d=6  hl=2 l=  18 cons: SEQUENCE          
++  687:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Basic Constraints
++  692:d=7  hl=2 l=   1 prim: BOOLEAN           :255
++  695:d=7  hl=2 l=   8 prim: OCTET STRING      [HEX DUMP]:30060101FF020103
++  705:d=6  hl=2 l=  34 cons: SEQUENCE          
++  707:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Authority Key Identifier
++  712:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  715:d=7  hl=2 l=  24 prim: OCTET STRING      [HEX DUMP]:30168014A9993E364706816ABA3E25717850C26C9CD0D89D
++  741:d=6  hl=2 l=  32 cons: SEQUENCE          
++  743:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Subject Key Identifier
++  748:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  751:d=7  hl=2 l=  22 prim: OCTET STRING      [HEX DUMP]:0414A9993E364706816ABA3E25717850C26C9CD0D89D
++  775:d=6  hl=2 l= 107 cons: SEQUENCE          
++  777:d=7  hl=2 l=   8 prim: OBJECT            :Authority Information Access
++  787:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  790:d=7  hl=2 l=  92 prim: OCTET STRING      [HEX DUMP]:305A302B06082B06010505073001861F687474703A2F2F6F6373702D312E6578616D706C652E636F6D3A3132333435302B06082B06010505073001861F687474703A2F2F6F6373702D322E6578616D706C652E636F6D3A3132333435
++  884:d=6  hl=2 l=  96 cons: SEQUENCE          
++  886:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 CRL Distribution Points
++  891:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  894:d=7  hl=2 l=  86 prim: OCTET STRING      [HEX DUMP]:30543028A026A0248622687474703A2F2F63726C2D312E6578616D706C652E636F6D3A31323334352F6765743028A026A0248622687474703A2F2F63726C2D322E6578616D706C652E636F6D3A31323334352F676574
++  982:d=6  hl=2 l= 106 cons: SEQUENCE          
++  984:d=7  hl=2 l=   3 prim: OBJECT            :X509v3 Freshest CRL
++  989:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++  992:d=7  hl=2 l=  96 prim: OCTET STRING      [HEX DUMP]:305E302DA02BA0298627687474703A2F2F63726C2D312E6578616D706C652E636F6D3A31323334352F67657464656C7461302DA02BA0298627687474703A2F2F63726C2D322E6578616D706C652E636F6D3A31323334352F67657464656C7461
++ 1090:d=6  hl=2 l=  51 cons: SEQUENCE          
++ 1092:d=7  hl=2 l=   9 prim: OBJECT            :Netscape Comment
++ 1103:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++ 1106:d=7  hl=2 l=  35 prim: OCTET STRING      [HEX DUMP]:1621636572746D6F6E6765722067656E65726174656420746869732072657175657374
++ 1143:d=6  hl=2 l=  18 cons: SEQUENCE          
++ 1145:d=7  hl=2 l=   9 prim: OBJECT            :OCSP No Check
++ 1156:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++ 1159:d=7  hl=2 l=   2 prim: OCTET STRING      [HEX DUMP]:0500
++ 1163:d=6  hl=2 l=  44 cons: SEQUENCE          
++ 1165:d=7  hl=2 l=   9 prim: OBJECT            :1.3.6.1.4.1.311.20.2
++ 1176:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++ 1179:d=7  hl=2 l=  28 prim: OCTET STRING      [HEX DUMP]:1E1A006300610041007700650073006F006D00650043006500720074
++ 1209:d=6  hl=2 l=  20 cons: SEQUENCE          
++ 1211:d=7  hl=2 l=   9 prim: OBJECT            :Netscape Cert Type
++ 1222:d=7  hl=2 l=   1 prim: BOOLEAN           :0
++ 1225:d=7  hl=2 l=   4 prim: OCTET STRING      [HEX DUMP]:030205A0
++ 1231:d=1  hl=2 l=  13 cons: SEQUENCE          
++ 1233:d=2  hl=2 l=   9 prim: OBJECT            :sha256WithRSAEncryption
++ 1244:d=2  hl=2 l=   0 prim: NULL              
++ 1246:d=1  hl=3 l= 129 prim: BIT STRING        
+ Test complete (69 combinations).
+diff --git a/tests/003-csrgen/run.sh b/tests/003-csrgen/run.sh
+index 9a1c027..4064230 100755
+--- a/tests/003-csrgen/run.sh
++++ b/tests/003-csrgen/run.sh
+@@ -5,7 +5,7 @@ cd "$tmpdir"
+ source "$srcdir"/functions
+ initnssdb "$tmpdir"
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	# Build a self-signed certificate.
+ 	run_certutil -d "$tmpdir" -S -g $size -n keyi$size \
+ 		-s "cn=T$size" -c "cn=T$size" \
+@@ -298,7 +298,7 @@ for ns_certtype in "" client server email objsign reserved sslca emailca objca c
+ done
+ ns_certtype=
+ 
+-size=512
++size=1024
+ subject="CN=Babs Jensen"
+ hostname=localhost,localhost.localdomain
+ email=root@localhost,root@localhost.localdomain
+diff --git a/tests/004-selfsign-rsa/expected.out b/tests/004-selfsign-rsa/expected.out
+index c50bd2e..dd5029e 100644
+--- a/tests/004-selfsign-rsa/expected.out
++++ b/tests/004-selfsign-rsa/expected.out
+@@ -1,4 +1,3 @@
+-512 OK.
+ 1024 OK.
+ 1536 OK.
+ 2048 OK.
+diff --git a/tests/004-selfsign-rsa/run.sh b/tests/004-selfsign-rsa/run.sh
+index 8788bdb..6f9285b 100755
+--- a/tests/004-selfsign-rsa/run.sh
++++ b/tests/004-selfsign-rsa/run.sh
+@@ -33,7 +33,7 @@ function setupca() {
+ 	EOF
+ }
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	# Build a self-signed certificate.
+ 	run_certutil -d "$tmpdir" -S -g $size -n keyi$size \
+ 		-s "cn=T$size" -c "cn=T$size" \
+diff --git a/tests/004-selfsign/expected.out b/tests/004-selfsign/expected.out
+index c50bd2e..dd5029e 100644
+--- a/tests/004-selfsign/expected.out
++++ b/tests/004-selfsign/expected.out
+@@ -1,4 +1,3 @@
+-512 OK.
+ 1024 OK.
+ 1536 OK.
+ 2048 OK.
+diff --git a/tests/004-selfsign/run.sh b/tests/004-selfsign/run.sh
+index 7b2ee43..7bb368e 100755
+--- a/tests/004-selfsign/run.sh
++++ b/tests/004-selfsign/run.sh
+@@ -43,7 +43,7 @@ function setupca() {
+ 	EOF
+ }
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 1536 2048 3072 4096 ; do
+ 	# Build a self-signed certificate.
+ 	run_certutil -d "$tmpdir" -S -g $size -n keyi$size \
+ 		-s "cn=T$size" -c "cn=T$size" \
+-- 
+2.5.5
+

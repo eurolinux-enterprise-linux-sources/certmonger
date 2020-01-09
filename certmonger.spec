@@ -26,7 +26,7 @@
 
 Name:		certmonger
 Version:	0.77.5
-Release:	2%{?dist}
+Release:	4%{?dist}
 Summary:	Certificate status monitor and PKI enrollment client
 
 Group:		System Environment/Daemons
@@ -42,6 +42,7 @@ Patch0003:	0003-Get-vague-about-what-we-expect-from-certutil.patch
 Patch0004:	0004-Drop-workarounds-for-DSA-keygen-with-NSS.patch
 Patch0005:	0005-Accept-cases-where-NSS-insists-on-2048-bit-DSA.patch
 Patch0006:	0006-Fix-a-possible-uninitialized-memory-read.patch
+Patch0007:      0007-Remove-tests-of-512-bit-keys-they-are-unsupported-no.patch
 
 BuildRequires:	openldap-devel
 BuildRequires:	dbus-devel, nspr-devel, nss-devel, openssl-devel, libidn-devel
@@ -124,6 +125,7 @@ system enrolled with a certificate authority (CA) and keeping it enrolled.
 %patch0004 -p1
 %patch0005 -p1
 %patch0006 -p1
+%patch0007 -p1
 %if 0%{?rhel} > 0
 # Enabled by default for RHEL for bug #765600, still disabled by default for
 # Fedora pending a similar bug report there.
@@ -228,6 +230,14 @@ exit 0
 exit 0
 %endif
 
+%triggerin -- nss
+%if %{systemd}
+	/bin/systemctl try-restart certmonger.service >/dev/null 2>&1 || :
+%endif
+%if %{sysvinit}
+	/sbin/service certmonger condrestart 2>&1 > /dev/null
+%endif
+
 %files -f %{name}.lang
 %defattr(-,root,root,-)
 %doc README LICENSE STATUS doc/*.txt
@@ -252,6 +262,12 @@ exit 0
 %endif
 
 %changelog
+* Wed Oct  5 2016 Rob Crittenden <rcritten@redhat.com> 0.77.5-4
+- Remove tests for 512-bit key sizes (#1150682)
+
+* Wed Oct  5 2016 Rob Crittenden <rcritten@redhat.com> 0.77.5-3
+- Restart service when NSS is updated (#1150682)
+
 * Mon Jan 11 2016 Jan Cholasta <jcholast@redhat.com> 0.77.5-2
 - Accept cases where NSS insists on 2048-bit DSA
 - Drop workarounds for DSA keygen with NSS
