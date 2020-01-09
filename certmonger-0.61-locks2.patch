@@ -1,0 +1,18 @@
+commit 1355b605d0d2e1a9c17aefcf85ff41e02dc16819
+Author: Nalin Dahyabhai <nalin@redhat.com>
+Date:   Tue Jan 8 14:23:45 2013 -0500
+
+    release the lock if we can't start key generation
+
+diff --git a/src/iterate.c b/src/iterate.c
+index 3e788d7..8dc3206 100644
+--- a/src/iterate.c
++++ b/src/iterate.c
+@@ -437,6 +437,7 @@ cm_iterate(struct cm_store_entry *entry, struct cm_store_ca *ca,
+ 			}
+ 		} else {
+ 			/* Failed to start generating a key; try again. */
++			cm_writing_unlock(entry);
+ 			*when = cm_time_soonish;
+ 		}
+ 		break;

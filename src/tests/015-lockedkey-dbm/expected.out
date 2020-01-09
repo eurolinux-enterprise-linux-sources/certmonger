@@ -1,0 +1,106 @@
+[Generate Key Without PIN.]
+OK.
+-----BEGIN PRIVATE KEY-----
+-----END PRIVATE KEY-----
+[Try To Read Key Without PIN.]
+OK (2048).
+[Retry With Unnecessary PIN File.]
+Failed to read key "$tmpdir/keyfile".
+(Need PIN.)
+[Replacing key with an encrypted one.]
+[Read Key Info With Bogus PIN Location.]
+Failed to read key "$tmpdir/keyfile".
+(Need PIN.)
+[Read Key Info Without PIN.]
+Failed to read key "$tmpdir/keyfile".
+(Need PIN.)
+[Retrying With PIN.]
+OK (512).
+[Read Key Info Without PIN File.]
+Failed to read key "$tmpdir/keyfile".
+(Need PIN.)
+[Retry With PIN File.]
+OK (512).
+[Generate Key With PIN.]
+OK.
+-----BEGIN ENCRYPTED PRIVATE KEY-----
+-----END ENCRYPTED PRIVATE KEY-----
+[Try To Read Key Without PIN.]
+Failed to read key "$tmpdir/keyfile".
+(Need PIN.)
+[Retry With PIN File.]
+OK (2048).
+[Generate CSR With PIN.]
+-----BEGIN NEW CERTIFICATE REQUEST-----
+-----END NEW CERTIFICATE REQUEST-----
+[Not pre-creating database.]
+[Generating key (dbm) without PIN.]
+OK.
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+< 0> rsa PRIVATE-KEY Test
+[Providing Unnecessary PIN.]
+[Reading Key Info With Unnecessary PIN.]
+Failed to read key "dbm:$tmpdir/dbmdb":"Test".
+(Need PIN.)
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+< 0> rsa PRIVATE-KEY Test
+[Generating CSR With Unnecessary PIN.]
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+< 0> rsa PRIVATE-KEY Test
+[Creating database, without PIN.]
+[Generating key (dbm) without PIN.]
+OK.
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+< 0> rsa PRIVATE-KEY Test
+[Providing Unnecessary PIN.]
+[Reading Key Info With Unnecessary PIN.]
+Failed to read key "dbm:$tmpdir/dbmdb":"Test".
+(Need PIN.)
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+< 0> rsa PRIVATE-KEY Test
+[Generating CSR With Unnecessary PIN.]
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+< 0> rsa PRIVATE-KEY Test
+[Not pre-creating database, with PIN.]
+[Generating key (dbm) with PIN.]
+OK.
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+< 0> rsa PRIVATE-KEY Test
+[Reading Key Info Without PIN.]
+Failed to read key "dbm:$tmpdir/dbmdb":"Test".
+(Need PIN.)
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+Incorrect password/PIN entered.
+certutil: could not authenticate to token NSS Certificate DB.: The security password entered is incorrect.
+[Reading Key Info With Bogus PIN Location.]
+Failed to read key "dbm:$tmpdir/dbmdb":"Test".
+(Need PIN.)
+[Reading Key Info With PIN.]
+OK (2048).
+[Generating CSR Without PIN.]
+[Generating CSR With Bogus PIN Location.]
+[Generating CSR With PIN.]
+-----BEGIN NEW CERTIFICATE REQUEST-----
+-----END NEW CERTIFICATE REQUEST-----
+[Creating database with PIN.]
+[Generating key (dbm) with PIN.]
+OK.
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+< 0> rsa PRIVATE-KEY Test
+[Reading Key Info Without PIN.]
+Failed to read key "dbm:$tmpdir/dbmdb":"Test".
+(Need PIN.)
+certutil: Checking token "NSS Certificate DB" in slot "NSS User Private Key and Certificate Services"
+Incorrect password/PIN entered.
+certutil: could not authenticate to token NSS Certificate DB.: The security password entered is incorrect.
+[Reading Key Info With Bogus PIN Location.]
+Failed to read key "dbm:$tmpdir/dbmdb":"Test".
+(Need PIN.)
+[Reading Key Info With PIN.]
+OK (2048).
+[Generating CSR Without PIN.]
+[Generating CSR With Bogus PIN Location.]
+[Generating CSR With PIN.]
+-----BEGIN NEW CERTIFICATE REQUEST-----
+-----END NEW CERTIFICATE REQUEST-----
+[Test complete.]

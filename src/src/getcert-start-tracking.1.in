@@ -1,0 +1,139 @@
+.TH certmonger 1 "14 June 2012" "certmonger Manual"
+
+.SH NAME
+getcert
+
+.SH SYNOPSIS
+getcert start-tracking [options]
+
+.SH DESCRIPTION
+Tells \fIcertmonger\fR to monitor an already-issued certificate.
+Optionally, when the certificate nears expiration, use an existing key
+pair (or to generate one if one is not already found in the specified
+location), to generate a signing request using the key pair and to
+submit them for signing to a CA.
+
+.SH SPECIFYING EXISTING REQUESTS
+.TP
+\fB\-i\fR NAME
+Modify the request which has this nickname.  If this option is not specified,
+and a tracking entry which matches the key and certificate storage options
+which are specified already exists, that entry will be modified.  Otherwise, a
+new tracking entry will be added.
+
+.SH KEY AND CERTIFICATE STORAGE OPTIONS
+.TP
+\fB\-d\fR DIR
+Use an NSS database in the specified directory for reading this
+certificate and, if possible, the corresponding key.
+.TP
+\fB\-n\fR NAME
+Use the certificate with this nickname, and if a private key with the
+same nickname or which corresponds to the certificate is available, to
+use it, too.
+Only valid with \fB\-d\fR.
+.TP
+\fB\-t\fR TOKEN
+If the NSS database has more than one token available, use the token
+with this name for accessing the certificate and key.  This argument
+only rarely needs to be specified.
+Only valid with \fB\-d\fR.
+.TP
+\fB\-f\fR FILE
+Read the certificate from this file.  For safety's sake, do not use the
+same file specified with the \fB\-k\fR option.
+.TP
+\fB\-k\fR FILE
+Use the key stored in this file to generate a signing request for
+refreshing the certificate.  If no such file is found when needed,
+generate a new key pair and store them in the file.
+Only valid with \fB\-f\fR.
+
+.SH KEY ENCRYPTION OPTIONS
+.TP
+\fB\-p\fR FILE
+The private key files or databases are encrypted using the PIN stored in the
+named file as the passphrase.
+.TP
+\fB\-P\fR PIN
+The private key files or databases are encrypted using the specified PIN as the
+passphrase.  Because command-line arguments to running processes are trivially
+discoverable, use of this option is not recommended except for testing.
+
+.SH TRACKING OPTIONS
+.TP
+\fB\-I\fR NAME
+Assign the specified nickname to this task.  If this option is not specified,
+a name will be assigned automatically.
+.TP
+\fB\-r\fR
+Attempt to obtain a new certificate from the CA when the expiration date of a
+certificate nears.  This is the default setting.
+.TP
+\fB\-R\fR
+Don't attempt to obtain a new certificate from the CA when the expiration date
+of a certificate nears.  If this option is specified, an expired certificate
+will simply stay expired.
+
+.SH ENROLLMENT OPTIONS
+.TP
+\fB\-c\fR NAME
+Enroll with the specified CA rather than a possible default.  The name of
+the CA should correspond to one listed by \fIgetcert list-cas\fR.  Only
+useful in combination with \fB\-r\fR.
+.TP
+\fB\-T\fR NAME
+Request a certificate using the named profile, template, or certtype,
+from the specified CA.
+
+.SH SIGNING REQUEST OPTIONS
+If and when \fIcertmonger\fR attempts to obtain a new certificate to replace
+the one being monitored, the values to be added to the signing request will be
+taken from the current certificate, unless preferred values are set using one
+or more of \fB\-U\fR, \fB\-K\fR, \fB\-E\fR, and \fB\-D\fR.
+
+.TP
+\fB\-U\fR EKU
+Add an extensionRequest for the specified extendedKeyUsage to the
+signing request.  The EKU value is expected to be an object identifier
+(OID).
+.TP
+\fB\-K\fR NAME
+Add an extensionRequest for a subjectAltName, with the specified Kerberos
+principal name as its value, to the signing request.
+.TP
+\fB\-E\fR EMAIL
+Add an extensionRequest for a subjectAltName, with the specified email
+address as its value, to the signing request.
+.TP
+\fB\-D\fR DNSNAME
+Add an extensionRequest for a subjectAltName, with the specified DNS name
+as its value, to the signing request.
+
+.SH OTHER OPTIONS
+.TP
+\fB\-B\fR command
+When ever the certificate is saved to the specified location, run the
+specified command as the client user before saving the certificate.
+.TP
+\fB\-C\fR command
+When ever the certificate is saved to the specified location, run the
+specified command as the client user after saving the certificate.
+.TP
+\fB\-v\fR
+Be verbose about errors.  Normally, the details of an error received from
+the daemon will be suppressed if the client can make a diagnostic suggestion.
+
+.SH BUGS
+Please file tickets for any that you find at https://fedorahosted.org/certmonger/
+
+.SH SEE ALSO
+\fBcertmonger\fR(8)
+\fBgetcert\fR(1)
+\fBgetcert-list\fR(1)
+\fBgetcert-list-cas\fR(1)
+\fBgetcert-request\fR(1)
+\fBgetcert-resubmit\fR(1)
+\fBgetcert-stop-tracking\fR(1)
+\fBcertmonger-certmaster-submit\fR(8)
+\fBcertmonger-ipa-submit\fR(8)

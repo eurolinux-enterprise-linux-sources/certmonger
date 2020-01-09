@@ -1,0 +1,69 @@
+.TH certmonger 8 "12 July 2011" "certmonger Manual"
+
+.SH NAME
+certmonger
+
+.SH SYNOPSIS
+certmonger [-s|-S] [-b TIMEOUT|-B] [-n|-f] [-d LEVEL] [-p FILE]
+
+.SH DESCRIPTION
+The \fIcertmonger\fR daemon monitors certificates for impending
+expiration, and can optionally refresh soon-to-be-expired certificates
+with the help of a CA.  If told to, it can drive the entire enrollment
+process from key generation through enrollment and refresh.
+
+The daemon provides a control interface via the \fI@CM_DBUS_NAME@\fR
+service, with which client tools such as \fBgetcert\fR(1) interact.
+
+.SH OPTIONS
+.TP
+-s
+Listen on the session bus rather than the system bus.
+.TP
+-S
+Listen on the system bus rather than the session bus.  This is the default.
+.TP
+-b TIMEOUT
+Behave as a bus-activated service: if there are no certificates to be monitored
+or obtained, and no requests received within TIMEOUT seconds, exit.
+.TP
+-B
+Don't behave as a bus-activated service.  This is the default.
+.TP
+-n
+Don't fork, and log messages to stderr rather than syslog.
+.TP
+-f
+Do fork, and log messages to syslog rather than stderr.  This is the default.
+.TP
+-d LEVEL
+Set debugging level.  Higher values produce more debugging output.  Implies -n.
+.TP
+-p FILE
+Store the daemon's process ID in the named file.
+
+.SH FILES
+The set of certificates being monitored or signed is tracked using files stored
+under \fI@CM_STORE_REQUESTS_DIRECTORY@\fR, or in a directory named by the
+\fI@CM_STORE_REQUESTS_DIRECTORY_ENV@\fR environment variable.
+
+The set of known CAs is tracked using files stored
+under \fI@CM_STORE_CAS_DIRECTORY@\fR, or in a directory named by the
+\fI@CM_STORE_CAS_DIRECTORY_ENV@\fR environment variable.
+
+Temporary files will be stored in "\fI@CM_TMPDIR@\fR", or in the directory
+named by the \fI@CM_TMPDIR_ENV@\fR environment variable if that value was
+not given at compile time.
+
+.SH BUGS
+Please file tickets for any that you find at https://fedorahosted.org/certmonger/
+
+.SH SEE ALSO
+\fBgetcert\fR(1)
+\fBgetcert-list\fR(1)
+\fBgetcert-list-cas\fR(1)
+\fBgetcert-request\fR(1)
+\fBgetcert-start-tracking\fR(1)
+\fBgetcert-stop-tracking\fR(1)
+\fBcertmonger-certmaster-submit\fR(8)
+\fBcertmonger-ipa-submit\fR(8)

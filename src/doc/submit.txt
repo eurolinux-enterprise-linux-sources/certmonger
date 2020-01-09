@@ -1,0 +1,75 @@
+The CA submission internal API uses child processes to do the heavy
+lifting.  Self-signing is handled internally, but interaction with
+most CAs is done through external helpers.
+
+An external CA helper has a few jobs:
+* Invoked either with "SUBMIT" or "POLL" as the value of the
+  $CERTMONGER_OPERATION environment variable, with command-line arguments as
+  specified in certmaster's configuration.  Some of the data from the request
+  is also provided in the environment.
+  * $CERTMONGER_REQ_SUBJECT   -> requested subject name
+  * $CERTMONGER_REQ_EMAIL     -> email address subjectAltName values
+  * $CERTMONGER_REQ_HOSTNAME  -> DNS name subjectAltName values
+  * $CERTMONGER_REQ_PRINCIPAL -> Kerberos principal name subjectAltName values
+  * $CERTMONGER_CA_PROFILE    -> requested enrollment profile/template/certtype
+  * $CERTMONGER_CERTIFICATE   -> previously-issued certificate, if there is one
+* If in "submit" mode, $CERTMONGER_CSR has as its value a PEM-formatted CSR.
+  * Submit request to CA.
+    * Issued         -> output PEM-formatted cert on stdout, exit with status 0.
+    * Wait a bit     -> output CA cookie value on stdout, exit with status 1.
+    * Rejected       -> output error message on stdout, exit with status 2.
+    * Connect error  -> output error message on stdout, exit with status 3.
+    * Underconfigured-> output error message on stdout, exit with status 4.
+    * Wait a bit more-> output recommended delay (seconds) and CA cookie value
+                        on stdout, separated by newline, and exit with status 5.
+* If in "poll" mode, $CERTMONGER_COOKIE has as its value a CA cookie value
+  in addition to the PEM-formatted CSR in $CERTMONGER_CSR.
+  * Poll CA for result of previously-started enrollment operation.
+    * Issued         -> output PEM-formatted cert on stdout, exit with status 0.
+    * Wait some more -> output CA cookie value on stdout, exit with status 1.
+    * Rejected       -> output error message on stdout, exit with status 2.
+    * Connect error  -> output error message on stdout, exit with status 3.
+    * Underconfigured-> output error message on stdout, exit with status 4.
+    * Wait some more -> output recommended delay (seconds) and CA cookie value
+                        on stdout, separated by newline, and exit with status 5.
+* Other operations may be defined later.
+    * Operation not supported by this helper -> exit with status 6.
+
+Operations to be added:
+  * Invoked with "IDENTIFY" as the value of the $CERTMONGER_OPERATION
+    environment variable:
+    * Output suggested nickname (ID) for CA, suggested nickname for CA
+      certificate when stored in an NSS database (a.k.a FriendlyName),
+      and root certificate in PEM format, exit with status 0.
+    * This will let us add the root certificate to the same database
+      as the requested certificate.  We can expose it in a file of our
+      own in case we're storing the certificate in PEM form.
+  * Invoked with "GET-NEW-REQUEST-REQUIREMENTS" as the value of the
+    $CERTMONGER_OPERATION environment variable:
+    * Output list of environment variable names which are expected to
+      have non-empty values when the helper is run in SUBMIT or POLL
+      mode, without $s, separated by newlines, exit with status 0.
+    * This will let us push lack-of-required-input all the way back
+      from the CA helper to the getcert client.
+  * Invoked with "GET-RENEW-REQUEST-REQUIREMENTS" as the value of the
+    $CERTMONGER_OPERATION environment variable:
+    * Output list of environment variable names which are expected to
+      have non-empty values when the helper is run in SUBMIT or POLL
+      mode, without $s, separated by newlines, exit with status 0.
+    * This will let us push lack-of-required-input all the way back
+      from the CA helper to the getcert client.
+
+For testing purposes, a helper can be added by creating a file in the CAs
+directory (usually /var/lib/certmonger/cas) with these contents:
+  id=Test
+  ca_type=EXTERNAL
+  ca_is_default=0
+  ca_external_helper=/usr/libexec/certmonger/test-submit-helper
+
+Passing the "-c Test" flag to the "getcert request" command will then use the
+helper to attempt enrollment.
+
+This, with some built-in defaults that provide the same result when no
+existing CAs file defines a CA named "IPA", is how the daemon knows about IPA.
+The ipa-getcert client, meanwhile, just assumes that clients want to use the
+CA nicknamed "IPA".

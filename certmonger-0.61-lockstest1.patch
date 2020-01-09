@@ -1,0 +1,349 @@
+Backported after cherry-picking for 0.61.  Original patch commit log:
+
+commit b4f4806e86dc2219346ab8829ed95ed7ac4c6b5a
+Author: Nalin Dahyabhai <nalin@redhat.com>
+Date:   Tue Jan 8 14:59:00 2013 -0500
+
+    add stop-states and note when reset changes state
+    
+    Add an optional list of "stop" states to the test tool.  If it has a
+    list of "stop" states and no list of "continue" states, stop when we hit
+    a stop state or we get stuck.
+    
+    Note when a resume-style state reset changes the state.
+
+diff --git a/tests/010-iterate/expected.out b/tests/010-iterate/expected.out
+index ed06d4c..9947d3f 100644
+--- a/tests/010-iterate/expected.out
++++ b/tests/010-iterate/expected.out
+@@ -16,6 +16,8 @@ NEED_CSR
+ key_size=2048
+ 
+ [Generating CSR.]
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+@@ -88,6 +90,8 @@ READING_KEYINFO
+ HAVE_KEYINFO
+ NEED_CSR
+ -STOP-
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+@@ -146,6 +150,8 @@ READING_KEYINFO
+ HAVE_KEYINFO
+ NEED_CSR
+ -STOP-
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+@@ -166,6 +172,8 @@ READING_KEYINFO
+ HAVE_KEYINFO
+ NEED_CSR
+ -STOP-
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+@@ -180,6 +188,8 @@ delay=604800
+ CA_WORKING
+ -STOP-
+ ca_cookie=iLoveCookiesSome
++CA_WORKING
++-(RESET)-
+ HAVE_CSR
+ -START-
+ NEED_TO_SUBMIT
+@@ -193,6 +203,8 @@ READING_KEYINFO
+ HAVE_KEYINFO
+ NEED_CSR
+ -STOP-
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+@@ -224,6 +236,8 @@ READING_KEYINFO
+ HAVE_KEYINFO
+ NEED_CSR
+ -STOP-
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+@@ -237,6 +251,8 @@ SUBMITTING
+ delay=604800
+ CA_UNREACHABLE
+ -STOP-
++CA_UNREACHABLE
++-(RESET)-
+ HAVE_CSR
+ -START-
+ NEED_TO_SUBMIT
+@@ -250,6 +266,8 @@ READING_KEYINFO
+ HAVE_KEYINFO
+ NEED_CSR
+ -STOP-
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+@@ -263,6 +281,8 @@ SUBMITTING
+ delay=604800
+ CA_UNCONFIGURED
+ -STOP-
++CA_UNCONFIGURED
++-(RESET)-
+ HAVE_CSR
+ -START-
+ NEED_TO_SUBMIT
+@@ -276,6 +296,8 @@ READING_KEYINFO
+ HAVE_KEYINFO
+ NEED_CSR
+ -STOP-
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+@@ -290,6 +312,8 @@ delay=13
+ CA_WORKING
+ -STOP-
+ ca_cookie=iLoveCookiesMore
++CA_WORKING
++-(RESET)-
+ HAVE_CSR
+ -START-
+ NEED_TO_SUBMIT
+@@ -303,6 +327,8 @@ READING_KEYINFO
+ HAVE_KEYINFO
+ NEED_CSR
+ -STOP-
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+@@ -675,6 +701,8 @@ READING_KEYINFO
+ HAVE_KEYINFO
+ NEED_CSR
+ -STOP-
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+diff --git a/tests/017-notoken-dbm/expected.out b/tests/017-notoken-dbm/expected.out
+index 3e717e8..a968a91 100644
+--- a/tests/017-notoken-dbm/expected.out
++++ b/tests/017-notoken-dbm/expected.out
+@@ -16,6 +16,8 @@ NEED_KEYINFO_READ_TOKEN
+ state=NEED_KEYINFO_READ_TOKEN
+ [Creating database.]
+ [Generating CSR (dbm) with no token.]
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+diff --git a/tests/017-notoken-sql/expected.out b/tests/017-notoken-sql/expected.out
+index 2e87315..ec3c3ad 100644
+--- a/tests/017-notoken-sql/expected.out
++++ b/tests/017-notoken-sql/expected.out
+@@ -16,6 +16,8 @@ NEED_KEYINFO_READ_TOKEN
+ state=NEED_KEYINFO_READ_TOKEN
+ [Creating database.]
+ [Generating CSR (sql) with no token.]
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+diff --git a/tests/017-notoken/expected.out b/tests/017-notoken/expected.out
+index 9aa8bc2..d3370f7 100644
+--- a/tests/017-notoken/expected.out
++++ b/tests/017-notoken/expected.out
+@@ -16,6 +16,8 @@ NEED_KEYINFO_READ_TOKEN
+ state=NEED_KEYINFO_READ_TOKEN
+ [Creating database.]
+ [Generating CSR with no token.]
++NEED_CSR
++-(RESET)-
+ HAVE_KEYINFO
+ -START-
+ NEED_CSR
+diff --git a/tests/tools/iterate.c b/tests/tools/iterate.c
+index a780125..63874da 100644
+--- a/tests/tools/iterate.c
++++ b/tests/tools/iterate.c
+@@ -73,8 +73,10 @@ main(int argc, char **argv)
+ 	enum cm_state old_state;
+ 	int readfd, delay;
+ 	void *parent, *istate;
+-	char *p, *q, *states, *tmp;
++	char *p, *q, *continue_states, *stop_states, *tmp;
++	const char *state;
+ 	enum cm_time when;
++
+ 	cm_log_set_method(cm_log_stderr);
+ 	cm_log_set_level(3);
+ 	parent = talloc_new(NULL);
+@@ -99,51 +101,106 @@ main(int argc, char **argv)
+ 			talloc_free(cm.ca);
+ 			cm.ca = NULL;
+ 		}
+-		states = argv[3];
++		continue_states = argv[3];
++		stop_states = NULL;
++		if ((argc > 4) && (strlen(argv[4]) > 0)) {
++			stop_states = argv[4];
++			if (strlen(continue_states) == 0) {
++				continue_states = NULL;
++			}
++		}
+ 	} else {
+ 		printf("Specify a CA file and an entry file as the first "
+-		       "two arguments, and a list of states as the third.\n");
++		       "two arguments, a list of continue states as the "
++		       "third, and perhaps a list of stop states as the "
++		       "fourth.\n");
+ 		return 1;
+ 	}
++	old_state = entry->cm_state;
++	state = cm_store_state_as_string(entry->cm_state);
+ 	if (cm_iterate_init(entry, &istate) != 0) {
+ 		printf("Error initializing.\n");
+ 		return 1;
+ 	}
+-	old_state = entry->cm_state;
+-	printf("%s\n-START-\n",
+-	       cm_store_state_as_string(entry->cm_state));
++	if (old_state != entry->cm_state) {
++		printf("%s\n-(RESET)-\n", state);
++	}
++	old_state = CM_INVALID;
++	state = cm_store_state_as_string(entry->cm_state);
++	printf("%s\n-START-\n", state);
+ 	fflush(NULL);
+-	p = states;
+ 	while (cm_iterate(entry, cm.ca, &cm, get_ca_by_index, get_n_cas,
+ 			  NULL, NULL, istate, &when, &delay, &readfd) == 0) {
+-		/* Check if this state is in our continue-states list. */
+-		for (p = states; *p != '\0'; p = q + strspn(q, ",")) {
+-			q = p + strcspn(p, ",");
+-			tmp = talloc_strndup(parent, p, q - p);
+-			if (entry->cm_state ==
+-			    cm_store_state_from_string(tmp)) {
+-				if (entry->cm_state != old_state) {
+-					printf("%s\n", tmp);
++		state = cm_store_state_as_string(entry->cm_state);
++		switch (when) {
++		case cm_time_now:
++		case cm_time_soon:
++		case cm_time_soonish:
++			printf("%s\n", state);
++			break;
++		case cm_time_delay:
++			printf("delay=%ld\n%s\n", (long) delay, state);
++			break;
++		case cm_time_no_time:
++			if (entry->cm_state != old_state) {
++				printf("%s\n", state);
++			}
++			break;
++		}
++		if (stop_states != NULL) {
++			/* Check if this state is in our stop-states list. */
++			for (p = stop_states;
++			     *p != '\0';
++			     p = q + strspn(q, ",")) {
++				q = p + strcspn(p, ",");
++				tmp = talloc_strndup(parent, p, q - p);
++				if (entry->cm_state ==
++				    cm_store_state_from_string(tmp)) {
++					fflush(NULL);
++					talloc_free(tmp);
++					break;
+ 				}
+-				fflush(NULL);
+ 				talloc_free(tmp);
++			}
++			if (*p != '\0') {
++				/* We found a match.  Stop here. */
++				printf("-STOP-\n");
++				fflush(NULL);
++				state = NULL;
++				break;
++			}
++			if ((entry->cm_state == old_state) &&
++			    ((when != cm_time_no_time) || (readfd == -1))) {
++				/* If we didn't change state, stop. */
++				printf("-STUCK- (%d:%ld)\n", when, (long) delay);
++				fflush(NULL);
++				state = NULL;
+ 				break;
+ 			}
+-			talloc_free(tmp);
+-		}
+-		if (when == cm_time_delay) {
+-			printf("delay=%ld\n", (long) delay);
+ 		}
+-		/* If we didn't find a match, stop here. */
+-		if (*p == '\0') {
+-			printf("%s\n-STOP-\n",
+-			       cm_store_state_as_string(entry->cm_state));
+-			fflush(NULL);
+-			break;
++		/* Check if this state is in our continue-states list. */
++		if (continue_states != NULL) {
++			for (p = continue_states;
++			     *p != '\0';
++			     p = q + strspn(q, ",")) {
++				q = p + strcspn(p, ",");
++				tmp = talloc_strndup(parent, p, q - p);
++				if (entry->cm_state ==
++				    cm_store_state_from_string(tmp)) {
++					fflush(NULL);
++					talloc_free(tmp);
++					break;
++				}
++				talloc_free(tmp);
++			}
++			/* If we didn't find a match, stop here. */
++			if (*p == '\0') {
++				printf("-STOP-\n");
++				fflush(NULL);
++				state = NULL;
++				break;
++			}
+ 		}
+-		/* Reset 'p' so that it's not an empty string. */
+-		p = states;
+-		old_state = entry->cm_state;
+ 		/* Wait. */
+ 		switch (when) {
+ 		case cm_time_now:
+@@ -161,10 +218,11 @@ main(int argc, char **argv)
+ 			wait_to_read(readfd);
+ 			break;
+ 		}
++		state = cm_store_state_as_string(entry->cm_state);
++		old_state = entry->cm_state;
+ 	}
+-	if (*p != '\0') {
+-		printf("%s\n-ERROR-\n",
+-		       cm_store_state_as_string(entry->cm_state));
++	if (state != NULL) {
++		printf("-ERROR-\n");
+ 		fflush(NULL);
+ 	}
+ 	cm_iterate_done(entry, istate);

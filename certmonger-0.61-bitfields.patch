@@ -1,0 +1,59 @@
+commit 4b0fc1ff08b386bc6dfb3336a02de0b7275092b6
+Author: Nalin Dahyabhai <nalin@redhat.com>
+Date:   Wed Dec 19 10:48:38 2012 -0500
+
+    unsign bitfields to avoid sign-extension weirdness
+
+diff --git a/src/certread-n.c b/src/certread-n.c
+index 702f78d..888571f 100644
+--- a/src/certread-n.c
++++ b/src/certread-n.c
+@@ -53,7 +53,7 @@ struct cm_certread_state {
+ 	struct cm_subproc_state *subproc;
+ };
+ struct cm_certread_n_settings {
+-	int readwrite:1;
++	unsigned int readwrite:1;
+ };
+ 
+ static int
+diff --git a/src/keygen-n.c b/src/keygen-n.c
+index 3e55bd0..a135c2a 100644
+--- a/src/keygen-n.c
++++ b/src/keygen-n.c
+@@ -49,7 +49,7 @@ struct cm_keygen_state {
+ 	struct cm_subproc_state *subproc;
+ };
+ struct cm_keygen_n_settings {
+-	int readwrite:1;
++	unsigned int readwrite:1;
+ };
+ 
+ static int
+diff --git a/src/keyiread-n.c b/src/keyiread-n.c
+index c180416..5ea2938 100644
+--- a/src/keyiread-n.c
++++ b/src/keyiread-n.c
+@@ -55,7 +55,7 @@ struct cm_keyiread_state {
+ 	struct cm_subproc_state *subproc;
+ };
+ struct cm_keyiread_n_settings {
+-	int readwrite:1;
++	unsigned int readwrite:1;
+ };
+ 
+ struct cm_keyiread_n_ctx_and_key *
+diff --git a/src/submit-x.c b/src/submit-x.c
+index 80aa4fd..cb3a10d 100644
+--- a/src/submit-x.c
++++ b/src/submit-x.c
+@@ -165,7 +165,8 @@ struct cm_submit_x_context {
+ 	xmlrpc_client *client;
+ 	const char *method;
+ 	xmlrpc_value *params, *namedarg, *results;
+-	int fault_occurred:1, fault_code;
++	unsigned int fault_occurred:1;
++	int fault_code;
+ 	const char *fault_text;
+ };
+ 

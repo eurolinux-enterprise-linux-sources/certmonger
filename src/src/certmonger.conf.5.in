@@ -1,0 +1,77 @@
+.TH certmonger.conf 5 "19 April 2012" "certmonger Manual"
+
+.SH NAME
+certmonger.conf - configuration file for certmonger
+
+.SH DESCRIPTION
+The \fIcertmonger.conf\fR file contains default settings used by certmonger.
+Its format is more or less that of a typical INI-style file.  The only sections
+currently of note are named \fIdefaults\fR and \fIselfsign\fR.
+
+.SH DEFAULTS
+Within the \fIdefaults\fR section, these variables and values are recognized:
+
+.IP notify_ttls
+This is the list of times, given in seconds, before a certificate's not-after
+validity date
+(often referred to as its expiration time) when \fIcertmonger\fR should warn
+that the certificate will soon no longer be valid.
+If this value is not specified, \fIcertmonger\fR will attempt to use the value
+of the \fIttls\fR setting.  The default list of values is "@CM_DEFAULT_TTL_LIST@".
+
+.IP enroll_ttls
+This is the list of times, given in seconds, before a certificate's not-after
+validity date
+(often referred to as its expiration time) when \fIcertmonger\fR should attempt
+to automatically renew the certificate, if it is configured to do so.
+If this value is not specified, \fIcertmonger\fR will attempt to use the value
+of the \fIttls\fR setting.  The default list of values is "@CM_DEFAULT_TTL_LIST@".
+
+.IP notification_method
+This is the method by which \fIcertmonger\fP will notify the system
+administrator that a certificate will soon become invalid.  The recognized
+values are \fIsyslog\fP, \fImail\fP, and \fIcommand\fP.  The default is \fIsyslog\fP.
+When sending mail, the notification message will be the mail message subject.
+When invoking a command, the notification message will be available in the
+"@CM_NOTIFICATION_ENV@" environment variable.
+
+.IP notification_destination
+This is the destination to which \fIcertmonger\fP will send notifications.  It
+can be a syslog priority and/or facility, separated by a period, it can be
+an email address, or it can be a command to run.  The default value is
+\fI@CM_DEFAULT_NOTIFICATION_SYSLOG_PRIORITY@\fP.
+
+.IP symmetric_cipher
+This is the symmetric cipher which will be used to encrypt private keys stored
+in OpenSSL's PEM format.  Recognized values include \fIaes128\fP and
+\fIaes256\fP.  The default is \fIaes128\fP.  It is not recommended that this
+value be changed except in cases where the default is incompatible with other
+software.
+
+.IP digest
+This is the digest algorithm which will be used when signing certificate
+signing requests and self-signed certificates.  Recognized values include
+\fIsha1\fP, \fIsha256\fP, \fIsha384\fP, and \fIsha512\fP.  The default is
+\fIsha256\fP.  It is not recommended that this value be changed except in cases
+where the default is incompatible with other software.
+
+.SH SELFSIGN
+Within the \fIselfsign\fR section, these variables and values are recognized:
+
+.IP validity_period
+This is the validity period given to self-signed certificates.  The value is
+specified as a combination of years (y), months (M), weeks (w), days (d), hours
+(h), minutes (m), and/or seconds (s).  If no unit of time is specified, seconds
+are assumed.  The default value is \fI@CM_DEFAULT_CERT_LIFETIME@\fR.
+
+.IP populate_unique_id
+This controls whether or not self-signed certificates will have their
+subjectUniqueID and issuerUniqueID fields populated.  While RFC5280 prohibits
+their use, they may be needed and/or used by older applications.  The default
+value is \fI@CM_DEFAULT_POPULATE_UNIQUE_ID@\fR.
+
+.SH BUGS
+Please file tickets for any that you find at https://fedorahosted.org/certmonger/
+
+.SH SEE ALSO
+\fBcertmonger\fR(8)
