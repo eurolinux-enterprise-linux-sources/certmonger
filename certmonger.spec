@@ -26,7 +26,7 @@
 
 Name:		certmonger
 Version:	0.77.5
-Release:	1%{?dist}
+Release:	2%{?dist}
 Summary:	Certificate status monitor and PKI enrollment client
 
 Group:		System Environment/Daemons
@@ -35,6 +35,13 @@ URL:		http://certmonger.fedorahosted.org
 Source0:	http://fedorahosted.org/released/certmonger/certmonger-%{version}.tar.gz
 Source1:	http://fedorahosted.org/released/certmonger/certmonger-%{version}.tar.gz.sig
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
+
+Patch0001:	0001-Add-an-alternate-accepted-result-for-DSA-keygen.patch
+Patch0002:	0002-Accept-1016-instead-of-1024-bit-for-DSA-keygen.patch
+Patch0003:	0003-Get-vague-about-what-we-expect-from-certutil.patch
+Patch0004:	0004-Drop-workarounds-for-DSA-keygen-with-NSS.patch
+Patch0005:	0005-Accept-cases-where-NSS-insists-on-2048-bit-DSA.patch
+Patch0006:	0006-Fix-a-possible-uninitialized-memory-read.patch
 
 BuildRequires:	openldap-devel
 BuildRequires:	dbus-devel, nspr-devel, nss-devel, openssl-devel, libidn-devel
@@ -111,6 +118,12 @@ system enrolled with a certificate authority (CA) and keeping it enrolled.
 
 %prep
 %setup -q
+%patch0001 -p1
+%patch0002 -p1
+%patch0003 -p1
+%patch0004 -p1
+%patch0005 -p1
+%patch0006 -p1
 %if 0%{?rhel} > 0
 # Enabled by default for RHEL for bug #765600, still disabled by default for
 # Fedora pending a similar bug report there.
@@ -239,6 +252,14 @@ exit 0
 %endif
 
 %changelog
+* Mon Jan 11 2016 Jan Cholasta <jcholast@redhat.com> 0.77.5-2
+- Accept cases where NSS insists on 2048-bit DSA
+- Drop workarounds for DSA keygen with NSS
+- Get vague about what we expect from certutil
+- Accept 1016 instead of 1024 bit for DSA keygen
+- Add an alternate accepted result for DSA keygen
+- Fix a possible uninitialized memory read
+
 * Thu May 28 2015 Nalin Dahyabhai <nalin@redhat.com> 0.77.5-1
 - pass $CERTMONGER_REQ_IP_ADDRESS to enrollment helpers if the signing request
   includes IP address subjectAltName values

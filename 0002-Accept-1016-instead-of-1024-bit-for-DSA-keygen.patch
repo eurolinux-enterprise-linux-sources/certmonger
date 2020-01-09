@@ -1,0 +1,102 @@
+From ab6b459196f374f12a5f2a9c52c680178994b30b Mon Sep 17 00:00:00 2001
+From: Nalin Dahyabhai <nalin@redhat.com>
+Date: Sat, 20 Jun 2015 10:28:44 -0400
+Subject: [PATCH] Accept 1016 instead of 1024 bit for DSA keygen
+
+Sometimes NSS will give us a key that it calls 1016 bits when we askf ro
+1024.  It's rounding down to a byte boundary, so we settle.
+---
+ tests/002-keygen-dsa/expected.out.3 | 45 +++++++++++++++++++++++++++++++++++++
+ tests/Makefile.am                   |  3 ++-
+ tests/Makefile.in                   |  3 ++-
+ 3 files changed, 49 insertions(+), 2 deletions(-)
+ create mode 100644 tests/002-keygen-dsa/expected.out.3
+
+diff --git a/tests/002-keygen-dsa/expected.out.3 b/tests/002-keygen-dsa/expected.out.3
+new file mode 100644
+index 0000000000000000000000000000000000000000..c8547b4206435a004e0f3a64016e2fb09ff4e25a
+--- /dev/null
++++ b/tests/002-keygen-dsa/expected.out.3
+@@ -0,0 +1,45 @@
++[nss:512]
++OK.
++OK (DSA:512).
++[nss:1024]
++OK.
++OK (DSA:1016).
++[nss:1536]
++OK.
++OK (DSA:2048).
++[nss:2048]
++OK.
++OK (DSA:2048).
++[nss:3072]
++OK.
++OK (DSA:3072).
++[nss:4096]
++OK.
++OK (DSA:3072).
++[nss:rosubdir]
++Failed to save NSS:${tmpdir}/rosubdir: need fs permissions.
++[nss:rwsubdir]
++Failed to save NSS:${tmpdir}/rwsubdir: need fs permissions.
++[openssl:512]
++OK.
++OK (DSA:512).
++[openssl:1024]
++OK.
++OK (DSA:1024).
++[openssl:1536]
++OK.
++OK (DSA:1536).
++[openssl:2048]
++OK.
++OK (DSA:2048).
++[openssl:3072]
++OK.
++OK (DSA:3072).
++[openssl:4096]
++OK.
++OK (DSA:4096).
++[openssl:rosubdir]
++Failed to save FILE:${tmpdir}/rosubdir/sample.4096: need fs permissions.
++[openssl:rwsubdir]
++Failed to save FILE:${tmpdir}/rwsubdir/sample.4096: need fs permissions.
++Test complete.
+diff --git a/tests/Makefile.am b/tests/Makefile.am
+index c6b2b358d2e62580f31585097345c6a2ad5bda78..ad9c436ae1c8fd29155f9571dbe5447f1f6a8956 100644
+--- a/tests/Makefile.am
++++ b/tests/Makefile.am
+@@ -18,10 +18,11 @@ EXTRA_DIST = \
+ 	002-keygen-rsa/prequal.sh \
+ 	002-keygen-rsa/run.sh \
+ 	002-keygen-rsa/expected.out \
+-	002-keygen-rsa/expected.out.2 \
+ 	002-keygen-dsa/prequal.sh \
+ 	002-keygen-dsa/run.sh \
+ 	002-keygen-dsa/expected.out \
++	002-keygen-dsa/expected.out.2 \
++	002-keygen-dsa/expected.out.3 \
+ 	002-keygen-ec/prequal.sh \
+ 	002-keygen-ec/run.sh \
+ 	002-keygen-ec/expected.out \
+diff --git a/tests/Makefile.in b/tests/Makefile.in
+index 7520b5cdcc97d083b17f26da00165bc18e8aa72c..b2f7b5ea05db5f7c9f499f9565a233eac11349f0 100644
+--- a/tests/Makefile.in
++++ b/tests/Makefile.in
+@@ -425,10 +425,11 @@ EXTRA_DIST = \
+ 	002-keygen-rsa/prequal.sh \
+ 	002-keygen-rsa/run.sh \
+ 	002-keygen-rsa/expected.out \
+-	002-keygen-rsa/expected.out.2 \
+ 	002-keygen-dsa/prequal.sh \
+ 	002-keygen-dsa/run.sh \
+ 	002-keygen-dsa/expected.out \
++	002-keygen-dsa/expected.out.2 \
++	002-keygen-dsa/expected.out.3 \
+ 	002-keygen-ec/prequal.sh \
+ 	002-keygen-ec/run.sh \
+ 	002-keygen-ec/expected.out \
+-- 
+2.4.3
+

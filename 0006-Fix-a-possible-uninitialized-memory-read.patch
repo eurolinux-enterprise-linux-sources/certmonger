@@ -1,0 +1,31 @@
+From 21a84e9949f90a6f87ce4eaa216e724bf6157687 Mon Sep 17 00:00:00 2001
+From: Nalin Dahyabhai <nalin@redhat.com>
+Date: Tue, 8 Sep 2015 14:45:27 -0400
+Subject: [PATCH] Fix a possible uninitialized memory read
+
+Fix an error where we might try to read from an uninitialized pointer
+when trying to determine if a CA helper produced any useful data.  This
+might be the root cause of Red Hat bug #1260871.
+---
+ src/submit-e.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/submit-e.c b/src/submit-e.c
+index 2e2930b52bc7a8f3a534c9f4f680816ad99048d5..ec1143d69eedd97ec9fbff8a070d143d8c11bd6b 100644
+--- a/src/submit-e.c
++++ b/src/submit-e.c
+@@ -632,6 +632,11 @@ cm_submit_e_start_or_resume(struct cm_store_ca *ca,
+ 		state->done = cm_submit_e_done;
+ 		state->delay = -1;
+ 		estate = talloc_ptrtype(state, estate);
++		if (estate == NULL) {
++			talloc_free(state);
++			return NULL;
++		}
++		memset(estate, 0, sizeof(*estate));
+ 		estate->phase = running_helper;
+ 		estate->ca = ca;
+ 		estate->entry = entry;
+-- 
+2.4.3
+

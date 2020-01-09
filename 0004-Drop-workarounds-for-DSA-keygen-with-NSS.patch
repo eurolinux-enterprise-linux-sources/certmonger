@@ -1,0 +1,285 @@
+From 741805f425eff77a928f4af339ff612305cf2221 Mon Sep 17 00:00:00 2001
+From: Nalin Dahyabhai <nalin@redhat.com>
+Date: Mon, 22 Jun 2015 19:12:43 -0400
+Subject: [PATCH] Drop workarounds for DSA keygen with NSS
+
+Don't artificially limit the size of DSA parameters that we try to
+generate; instead, just let errors that we get when the requested size
+is too big percolate up.
+Don't bother trying to get certutil to generate larger DSA keys, since
+it won't.
+Don't expect to be able to generate 4096-bit keys, because softoken
+won't.
+Round up to the nearest 8-bit multiple when reporting key sizes, so that
+our tests can accept keys with a few of the high bits not necessarily
+set, since we're not screening them out any more.
+---
+ src/keygen-n.c                      | 36 ++++++++++++++++++++++--------------
+ tests/001-keyiread-dsa/expected.out | 21 +++------------------
+ tests/001-keyiread-dsa/run.sh       | 12 ++++--------
+ tests/002-keygen-dsa/expected.out   |  3 ---
+ tests/002-keygen-dsa/expected.out.2 |  3 ---
+ tests/002-keygen-dsa/expected.out.3 |  3 ---
+ tests/002-keygen-dsa/run.sh         |  2 +-
+ tests/tools/keyiread.c              | 24 ++++++++++++++++++++++++
+ 8 files changed, 54 insertions(+), 50 deletions(-)
+
+diff --git a/src/keygen-n.c b/src/keygen-n.c
+index 040655c64d01f75714f3e4e1b5b39baddfb48d2c..a9eccba6cab8899ad3446a27ddf0aa6654ed392d 100644
+--- a/src/keygen-n.c
++++ b/src/keygen-n.c
+@@ -131,6 +131,7 @@ cm_keygen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
+ 	PQGVerify *pqg_verify;
+ 	SECStatus pqg_ok;
+ 	SECKEYPQGParams dsa_params;
++	int pqg_s;
+ #endif
+ 	SECItem *spki;
+ 	CERTSubjectPublicKeyInfo *pubkeyinfo;
+@@ -417,16 +418,25 @@ retry_gen:
+ 		break;
+ #ifdef CM_ENABLE_DSA
+ 	case cm_key_dsa:
+-		cm_log(1, "Generating domain parameters.\n");
++		cm_log(1, "Computing parameters for domain generation.\n");
+ 		pqg_ok = SECFailure;
+ 		cm_key_size = pqg_size(cm_key_size);
+ 		retry = 0;
+ 		while (pqg_ok == SECFailure) {
+ 			pqg_params = NULL;
+ 			pqg_verify = NULL;
++			pqg_s = cm_key_size / 32;
++			if (pqg_s < 20) {
++				pqg_s = 20;
++			} else
++			if (pqg_s > 64) {
++				pqg_s = 64;
++			}
++			cm_log(1, "Generating domain parameters (L=%d,N=%d,S=%d).\n",
++			       cm_key_size, 0, pqg_s);
+ 			while (PK11_PQG_ParamGenV2(cm_key_size,
+ 						   0,
+-						   64,
++						   pqg_s,
+ 						   &pqg_params,
+ 						   &pqg_verify) != SECSuccess) {
+ 				ec = PORT_GetError();
+@@ -480,11 +490,15 @@ retry_gen:
+ 				}
+ 			}
+ 			generated_size = pqg_params->prime.len * 8;
+-			if ((generated_size < cm_key_size) &&
+-			    (generated_size > (cm_key_size * 9 / 10))) {
+-				cm_log(1, "Params are a bit small (%d vs %d).  Retrying.\n",
++			if (generated_size < (cm_key_size * 9 / 10)) {
++				cm_log(1, "Params are a too small (%d vs %d).\n",
+ 				       pqg_params->prime.len * 8, cm_key_size);
+-				goto retry_gen;
++				PK11_FreeSlotList(slotlist);
++				error = NSS_ShutdownContext(ctx);
++				if (error != SECSuccess) {
++					cm_log(1, "Error shutting down NSS.\n");
++				}
++				_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+ 			}
+ 			if (pqg_ok == SECFailure) {
+ 				cm_log(1, "Params are bad.  Retrying.\n");
+@@ -541,15 +555,9 @@ retry_gen:
+ 	pubkey = NULL;
+ 	privkey = PK11_GenerateKeyPair(slot, mech, params, &pubkey,
+ 				       PR_TRUE, PR_TRUE, NULL);
+-	/* If we're just a bit(s?) short (as opposed to cut off at an arbitrary
+-	 * limit that's less than 90% of what we asked for), try again. */
+ 	generated_size = SECKEY_PublicKeyStrengthInBits(pubkey);
+-	if ((generated_size < cm_key_size) &&
+-	    (generated_size > (cm_key_size * 9 / 10))) {
+-		cm_log(1, "Ended up with %d instead of %d.  Retrying.\n",
+-		       SECKEY_PublicKeyStrengthInBits(pubkey), cm_key_size);
+-		goto retry_gen;
+-	}
++	cm_log(1, "Ended up with %d bit public key.\n",
++	       SECKEY_PublicKeyStrengthInBits(pubkey));
+ 	/* Retry with the optimum key size. */
+ 	if (privkey == NULL) {
+ 		cm_key_size = PK11_GetBestKeyLength(slot, pmech);
+diff --git a/tests/001-keyiread-dsa/expected.out b/tests/001-keyiread-dsa/expected.out
+index 9d6e460c393b7132e27d744fff3fa93065c13a5d..b09db0aedcf9f1e548fc9f75e83ec402eb96b244 100644
+--- a/tests/001-keyiread-dsa/expected.out
++++ b/tests/001-keyiread-dsa/expected.out
+@@ -1,19 +1,4 @@
+-OK (DSA >= ~512).
+-OK (DSA >= ~512).
+-OK (DSA >= ~512).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
+-OK (DSA >= ~1024).
++OK (DSA:1024).
++OK (DSA:1024).
++OK (DSA:1024).
+ Test complete.
+diff --git a/tests/001-keyiread-dsa/run.sh b/tests/001-keyiread-dsa/run.sh
+index 20ff2aa46d72798bd630546da2e08d5e92ba8fcd..9f96b3bc6dabe22f88ccb608436532af143d9303 100755
+--- a/tests/001-keyiread-dsa/run.sh
++++ b/tests/001-keyiread-dsa/run.sh
+@@ -5,15 +5,11 @@ cd "$tmpdir"
+ source "$srcdir"/functions
+ initnssdb "$tmpdir"
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 1024 ; do
+ 	# Generate a self-signed cert.
+ 	run_certutil -d "$tmpdir" -S -g $size -n keyi$size \
+ 		-s "cn=T$size" -c "cn=T$size" \
+ 		-x -t u -k dsa
+-	# Correct the expected size of the key.
+-	if test $size -gt 1024 ; then
+-		size=1024
+-	fi
+ 	# Export the key.
+ 	pk12util -d "$tmpdir" -o $size.p12 -W "" -n "keyi$size" > /dev/null 2>&1
+ 	openssl pkcs12 -in $size.p12 -out key.$size -passin pass: -nodes -nocerts > /dev/null 2>&1
+@@ -22,7 +18,7 @@ for size in 512 1024 1536 2048 3072 4096 ; do
+ 	key_storage_location=$tmpdir/key.$size
+ 	key_nickname=keyi$size
+ 	EOF
+-	$toolsdir/keyiread -m $size -s entry.openssl.$size
++	$toolsdir/keyiread entry.openssl.$size
+ 	# Check the size of the key (with cache).
+ 	cat > entry.nss.$size <<- EOF
+ 	key_storage_type=NSSDB
+@@ -31,13 +27,13 @@ for size in 512 1024 1536 2048 3072 4096 ; do
+ 	EOF
+ 	grep ^key_pubkey_info= entry.openssl.$size >> entry.nss.$size
+ 	grep ^key_pubkey= entry.openssl.$size >> entry.nss.$size
+-	$toolsdir/keyiread -m $size -s entry.nss.$size
++	$toolsdir/keyiread entry.nss.$size
+ 	# Check the size of the key (without cache).
+ 	cat > entry.nss.$size <<- EOF
+ 	key_storage_type=NSSDB
+ 	key_storage_location=$tmpdir
+ 	key_nickname=keyi$size
+ 	EOF
+-	$toolsdir/keyiread -m $size -s entry.nss.$size
++	$toolsdir/keyiread entry.nss.$size
+ done
+ echo Test complete.
+diff --git a/tests/002-keygen-dsa/expected.out b/tests/002-keygen-dsa/expected.out
+index f2a44d26286605c4186963f6c43b6dbd6e2e81cc..2bce3e4abd863983eac742a8f2e35106e9eab148 100644
+--- a/tests/002-keygen-dsa/expected.out
++++ b/tests/002-keygen-dsa/expected.out
+@@ -13,9 +13,6 @@ OK (DSA:2048).
+ [nss:3072]
+ OK.
+ OK (DSA:3072).
+-[nss:4096]
+-OK.
+-OK (DSA:3072).
+ [nss:rosubdir]
+ Failed to save NSS:${tmpdir}/rosubdir: need fs permissions.
+ [nss:rwsubdir]
+diff --git a/tests/002-keygen-dsa/expected.out.2 b/tests/002-keygen-dsa/expected.out.2
+index 9275bafaabb15bfc4829860bc994880c3f8f704d..935a979544e270c5acc8ecba0405ae163aac5e62 100644
+--- a/tests/002-keygen-dsa/expected.out.2
++++ b/tests/002-keygen-dsa/expected.out.2
+@@ -13,9 +13,6 @@ OK (DSA:2048).
+ [nss:3072]
+ OK.
+ OK (DSA:3072).
+-[nss:4096]
+-OK.
+-OK (DSA:3072).
+ [nss:rosubdir]
+ Failed to save NSS:${tmpdir}/rosubdir: need fs permissions.
+ [nss:rwsubdir]
+diff --git a/tests/002-keygen-dsa/expected.out.3 b/tests/002-keygen-dsa/expected.out.3
+index c8547b4206435a004e0f3a64016e2fb09ff4e25a..2eea8972a34ce9116012d17667144354295397a9 100644
+--- a/tests/002-keygen-dsa/expected.out.3
++++ b/tests/002-keygen-dsa/expected.out.3
+@@ -13,9 +13,6 @@ OK (DSA:2048).
+ [nss:3072]
+ OK.
+ OK (DSA:3072).
+-[nss:4096]
+-OK.
+-OK (DSA:3072).
+ [nss:rosubdir]
+ Failed to save NSS:${tmpdir}/rosubdir: need fs permissions.
+ [nss:rwsubdir]
+diff --git a/tests/002-keygen-dsa/run.sh b/tests/002-keygen-dsa/run.sh
+index fad19de1d365466c0bfd739fbd8be1be9135a291..b0a463d4fc40ddee0799557408a001c086f17c6e 100755
+--- a/tests/002-keygen-dsa/run.sh
++++ b/tests/002-keygen-dsa/run.sh
+@@ -5,7 +5,7 @@ cd "$tmpdir"
+ source "$srcdir"/functions
+ initnssdb "$tmpdir"
+ 
+-for size in 512 1024 1536 2048 3072 4096 ; do
++for size in 512 1024 1536 2048 3072 ; do
+ 	echo "[nss:$size]"
+ 	# Generate a key.
+ 	cat > entry.$size <<- EOF
+diff --git a/tests/tools/keyiread.c b/tests/tools/keyiread.c
+index 5d5e1edd4bb3c16e9ec3e5ca590ba4cbc44f00b1..7860f2b588adc940a3f1af53ed9ae833d95ad699 100644
+--- a/tests/tools/keyiread.c
++++ b/tests/tools/keyiread.c
+@@ -18,6 +18,7 @@
+ #include "../../src/config.h"
+ 
+ #include <sys/types.h>
++#include <sys/param.h>
+ #include <sys/select.h>
+ #include <assert.h>
+ #include <errno.h>
+@@ -70,6 +71,27 @@ type_name(enum cm_key_algorithm alg)
+ 	return NULL;
+ }
+ 
++static void
++munge_key_size(struct cm_key_type *key)
++{
++	switch (key->cm_key_algorithm) {
++	case cm_key_rsa:
++		break;
++#ifdef CM_ENABLE_DSA
++	case cm_key_dsa:
++		key->cm_key_size = howmany(key->cm_key_size, 8) * 8;
++		break;
++#endif
++#ifdef CM_ENABLE_EC
++	case cm_key_ecdsa:
++		break;
++#endif
++	default:
++		assert(0);
++		break;
++	}
++}
++
+ int
+ main(int argc, const char **argv)
+ {
+@@ -123,7 +145,9 @@ main(int argc, const char **argv)
+ 		need_pin = cm_keyiread_need_pin(state);
+ 		cm_keyiread_done(state);
+ 		if (entry->cm_key_type.cm_key_size != 0) {
++			munge_key_size(&entry->cm_key_type);
+ 			if (entry->cm_key_next_type.cm_key_size != 0) {
++				munge_key_size(&entry->cm_key_next_type);
+ 				if (summary) {
+ 					if (minimum > 0) {
+ 					       if ((entry->cm_key_next_type.cm_key_size >= minimum * 0.9) &&
+-- 
+2.4.3
+
