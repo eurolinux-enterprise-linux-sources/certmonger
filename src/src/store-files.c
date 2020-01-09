@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2009,2010,2011,2012 Red Hat, Inc.
- * 
+ * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -58,14 +58,17 @@ enum cm_store_file_field {
 	cm_store_entry_field_key_pin,
 	cm_store_entry_field_key_pin_file,
 	cm_store_entry_field_key_pubkey,
+	cm_store_entry_field_key_pubkey_info,
 
 	cm_store_entry_field_cert_storage_type,
 	cm_store_entry_field_cert_storage_location,
 	cm_store_entry_field_cert_token,
 	cm_store_entry_field_cert_nickname,
 
+	cm_store_entry_field_cert_issuer_der,
 	cm_store_entry_field_cert_issuer,
 	cm_store_entry_field_cert_serial,
+	cm_store_entry_field_cert_subject_der,
 	cm_store_entry_field_cert_subject,
 	cm_store_entry_field_cert_spki,
 	cm_store_entry_field_cert_not_before,
@@ -73,20 +76,38 @@ enum cm_store_file_field {
 	cm_store_entry_field_cert_hostname,
 	cm_store_entry_field_cert_email,
 	cm_store_entry_field_cert_principal,
+	cm_store_entry_field_cert_ipaddress,
 	cm_store_entry_field_cert_ku,
 	cm_store_entry_field_cert_eku,
+	cm_store_entry_field_cert_is_ca,
+	cm_store_entry_field_cert_ca_path_length,
+	cm_store_entry_field_cert_crl_distribution_point,
+	cm_store_entry_field_cert_freshest_crl,
+	cm_store_entry_field_cert_ocsp_location,
+	cm_store_entry_field_cert_ns_comment,
 	cm_store_entry_field_cert_profile,
+	cm_store_entry_field_cert_no_ocsp_check,
 
 	cm_store_entry_field_last_expiration_check,
 	cm_store_entry_field_last_need_notify_check,
 	cm_store_entry_field_last_need_enroll_check,
 
+	cm_store_entry_field_template_subject_der,
 	cm_store_entry_field_template_subject,
 	cm_store_entry_field_template_hostname,
 	cm_store_entry_field_template_email,
 	cm_store_entry_field_template_principal,
+	cm_store_entry_field_template_ipaddress,
 	cm_store_entry_field_template_ku,
 	cm_store_entry_field_template_eku,
+	cm_store_entry_field_template_is_ca,
+	cm_store_entry_field_template_ca_path_length,
+	cm_store_entry_field_template_crl_distribution_point,
+	cm_store_entry_field_template_freshest_crl,
+	cm_store_entry_field_template_ocsp_location,
+	cm_store_entry_field_template_ns_comment,
+	cm_store_entry_field_template_profile,
+	cm_store_entry_field_template_no_ocsp_check,
 
 	cm_store_entry_field_challenge_password,
 
@@ -99,19 +120,27 @@ enum cm_store_file_field {
 	cm_store_entry_field_monitor,
 
 	cm_store_entry_field_ca_nickname,
-	cm_store_entry_field_ca_profile,
 
 	cm_store_entry_field_submitted,
 	cm_store_entry_field_ca_cookie,
 	cm_store_entry_field_ca_error,
 
 	cm_store_entry_field_cert,
+	cm_store_entry_field_cert_chain,
 
 	cm_store_entry_field_pre_certsave_command,
 	cm_store_entry_field_pre_certsave_uid,
 	cm_store_entry_field_post_certsave_command,
 	cm_store_entry_field_post_certsave_uid,
 
+	cm_store_entry_field_root_cert_files,
+	cm_store_entry_field_other_root_cert_files,
+	cm_store_entry_field_other_cert_files,
+	cm_store_entry_field_root_cert_nssdbs,
+	cm_store_entry_field_other_root_cert_nssdbs,
+	cm_store_entry_field_other_cert_nssdbs,
+
+	cm_store_ca_field_aka,
 	cm_store_ca_field_known_issuer_names,
 	cm_store_ca_field_is_default,
 
@@ -119,6 +148,27 @@ enum cm_store_file_field {
 	cm_store_ca_field_internal_serial,
 	cm_store_ca_field_internal_issue_time,
 	cm_store_ca_field_external_helper,
+
+	cm_store_ca_field_root_certs,
+	cm_store_ca_field_other_root_certs,
+	cm_store_ca_field_other_certs,
+
+	cm_store_ca_field_required_enroll_attributes,
+	cm_store_ca_field_required_renewal_attributes,
+	cm_store_ca_field_profiles,
+	cm_store_ca_field_default_profile,
+
+	cm_store_ca_field_pre_save_command,
+	cm_store_ca_field_pre_save_uid,
+	cm_store_ca_field_post_save_command,
+	cm_store_ca_field_post_save_uid,
+
+	cm_store_ca_field_root_cert_files,
+	cm_store_ca_field_other_root_cert_files,
+	cm_store_ca_field_other_cert_files,
+	cm_store_ca_field_root_cert_nssdbs,
+	cm_store_ca_field_other_root_cert_nssdbs,
+	cm_store_ca_field_other_cert_nssdbs,
 
 	cm_store_file_field_invalid_high,
 };
@@ -140,14 +190,17 @@ static struct cm_store_file_field_list {
 	{cm_store_entry_field_key_pin, "key_pin"},
 	{cm_store_entry_field_key_pin_file, "key_pin_file"},
 	{cm_store_entry_field_key_pubkey, "key_pubkey"},
+	{cm_store_entry_field_key_pubkey_info, "key_pubkey_info"},
 
 	{cm_store_entry_field_cert_storage_type, "cert_storage_type"},
 	{cm_store_entry_field_cert_storage_location, "cert_storage_location"},
 	{cm_store_entry_field_cert_token, "cert_token"},
 	{cm_store_entry_field_cert_nickname, "cert_nickname"},
 
+	{cm_store_entry_field_cert_issuer_der, "cert_issuer_der"},
 	{cm_store_entry_field_cert_issuer, "cert_issuer"},
 	{cm_store_entry_field_cert_serial, "cert_serial"},
+	{cm_store_entry_field_cert_subject_der, "cert_subject_der"},
 	{cm_store_entry_field_cert_subject, "cert_subject"},
 	{cm_store_entry_field_cert_spki, "cert_spki"},
 	{cm_store_entry_field_cert_not_before, "cert_not_before"}, /* right */
@@ -157,20 +210,39 @@ static struct cm_store_file_field_list {
 	{cm_store_entry_field_cert_hostname, "cert_hostname"},
 	{cm_store_entry_field_cert_email, "cert_email"},
 	{cm_store_entry_field_cert_principal, "cert_principal"},
+	{cm_store_entry_field_cert_ipaddress, "cert_ipaddress"},
 	{cm_store_entry_field_cert_ku, "cert_ku"},
 	{cm_store_entry_field_cert_eku, "cert_eku"},
+	{cm_store_entry_field_cert_is_ca, "cert_is_ca"},
+	{cm_store_entry_field_cert_ca_path_length, "cert_ca_path_length"},
+	{cm_store_entry_field_cert_crl_distribution_point, "cert_crldp"},
+	{cm_store_entry_field_cert_freshest_crl, "cert_freshest_crl"},
+	{cm_store_entry_field_cert_ocsp_location, "cert_ocsp"},
+	{cm_store_entry_field_cert_ns_comment, "cert_ns_comment"},
 	{cm_store_entry_field_cert_profile, "cert_profile"},
+	{cm_store_entry_field_cert_no_ocsp_check, "cert_no_ocsp_check"},
 
 	{cm_store_entry_field_last_expiration_check, "last_expiration_check"},
 	{cm_store_entry_field_last_need_notify_check, "last_need_notify_check"},
 	{cm_store_entry_field_last_need_enroll_check, "last_need_enroll_check"},
 
+	{cm_store_entry_field_template_subject_der, "template_subject_der"},
 	{cm_store_entry_field_template_subject, "template_subject"},
 	{cm_store_entry_field_template_hostname, "template_hostname"},
 	{cm_store_entry_field_template_email, "template_email"},
 	{cm_store_entry_field_template_principal, "template_principal"},
+	{cm_store_entry_field_template_ipaddress, "template_ipaddress"},
 	{cm_store_entry_field_template_ku, "template_ku"},
 	{cm_store_entry_field_template_eku, "template_eku"},
+	{cm_store_entry_field_template_is_ca, "template_is_ca"},
+	{cm_store_entry_field_template_ca_path_length, "template_ca_path_length"},
+	{cm_store_entry_field_template_crl_distribution_point, "template_crldp"},
+	{cm_store_entry_field_template_freshest_crl, "template_freshest_crl"},
+	{cm_store_entry_field_template_ocsp_location, "template_ocsp"},
+	{cm_store_entry_field_template_ns_comment, "template_ns_comment"},
+	{cm_store_entry_field_template_profile, "template_profile"}, /* right */
+	{cm_store_entry_field_template_profile, "ca_profile"}, /* wrong */
+	{cm_store_entry_field_template_no_ocsp_check, "template_no_ocsp_check"},
 
 	{cm_store_entry_field_challenge_password, "challenge_password"},
 
@@ -182,18 +254,27 @@ static struct cm_store_file_field_list {
 	{cm_store_entry_field_monitor, "monitor"},
 
 	{cm_store_entry_field_ca_nickname, "ca_name"},
-	{cm_store_entry_field_ca_profile, "ca_profile"},
 
 	{cm_store_entry_field_submitted, "submitted"},
 	{cm_store_entry_field_ca_cookie, "ca_cookie"},
 	{cm_store_entry_field_ca_error, "ca_error"},
 
 	{cm_store_entry_field_cert, "cert"},
+	{cm_store_entry_field_cert_chain, "cert_chain"},
+
 	{cm_store_entry_field_pre_certsave_command, "pre_certsave_command"},
 	{cm_store_entry_field_pre_certsave_uid, "pre_certsave_uid"},
 	{cm_store_entry_field_post_certsave_command, "post_certsave_command"},
 	{cm_store_entry_field_post_certsave_uid, "post_certsave_uid"},
 
+	{cm_store_entry_field_root_cert_files, "root_cert_files"},
+	{cm_store_entry_field_other_root_cert_files, "other_root_cert_files"},
+	{cm_store_entry_field_other_cert_files, "other_cert_files"},
+	{cm_store_entry_field_root_cert_nssdbs, "root_cert_dbs"},
+	{cm_store_entry_field_other_root_cert_nssdbs, "other_root_cert_dbs"},
+	{cm_store_entry_field_other_cert_nssdbs, "other_cert_dbs"},
+
+	{cm_store_ca_field_aka, "ca_aka"},
 	{cm_store_ca_field_known_issuer_names, "ca_issuer_names"},
 	{cm_store_ca_field_is_default, "ca_is_default"},
 
@@ -201,6 +282,29 @@ static struct cm_store_file_field_list {
 	{cm_store_ca_field_internal_serial, "ca_internal_serial"},
 	{cm_store_ca_field_internal_issue_time, "ca_internal_issue_time"},
 	{cm_store_ca_field_external_helper, "ca_external_helper"},
+
+	{cm_store_ca_field_root_certs, "ca_root_certs"},
+	{cm_store_ca_field_other_root_certs, "ca_other_root_certs"},
+	{cm_store_ca_field_other_certs, "ca_other_certs"},
+
+	{cm_store_ca_field_required_enroll_attributes,
+	 "ca_required_enroll_attributes"},
+	{cm_store_ca_field_required_renewal_attributes,
+	 "ca_required_renewal_attributes"},
+	{cm_store_ca_field_profiles, "ca_profiles"},
+	{cm_store_ca_field_default_profile, "ca_default_profile"},
+
+	{cm_store_ca_field_pre_save_command, "ca_pre_save_command"},
+	{cm_store_ca_field_pre_save_uid, "ca_pre_save_uid"},
+	{cm_store_ca_field_post_save_command, "ca_post_save_command"},
+	{cm_store_ca_field_post_save_uid, "ca_post_save_uid"},
+
+	{cm_store_ca_field_root_cert_files, "ca_root_cert_files"},
+	{cm_store_ca_field_other_root_cert_files, "ca_other_root_cert_files"},
+	{cm_store_ca_field_other_cert_files, "ca_other_cert_files"},
+	{cm_store_ca_field_root_cert_nssdbs, "ca_root_cert_dbs"},
+	{cm_store_ca_field_other_root_cert_nssdbs, "ca_other_root_cert_dbs"},
+	{cm_store_ca_field_other_cert_nssdbs, "ca_other_cert_dbs"},
 };
 
 static enum cm_store_file_field
@@ -264,13 +368,17 @@ cm_store_should_ignore_file(const char *filename)
 static char **
 cm_store_file_read_lines(void *parent, FILE *fp)
 {
-	char buf[LINE_MAX], *s, *t, **lines, **tlines;
+	char *buf, *s, *t, **lines, **tlines;
 	int n_lines, trim, offset;
+	size_t buflen;
+
 	s = NULL;
 	lines = NULL;
 	n_lines = 0;
 	trim = 1;
-	while (fgets(buf, sizeof(buf), fp) == buf) {
+	buf = NULL;
+	buflen = 0;
+	while (getline(&buf, &buflen, fp) > 0) {
 		offset = 0;
 		switch (buf[0]) {
 		case '=':
@@ -312,6 +420,7 @@ cm_store_file_read_lines(void *parent, FILE *fp)
 			break;
 		}
 	}
+	free(buf);
 	/* If we were reading a line, append it to the list. */
 	if (s != NULL) {
 		tlines = talloc_realloc(parent, lines, char *, n_lines + 2);
@@ -369,7 +478,12 @@ free_if_empty_multi(void *parent, char *p)
 			k++;
 		}
 		s[i][k] = '\0';
-		i++;
+		if (k > 0) {
+			i++;
+		} else {
+			talloc_free(s[i]);
+			s[i] = NULL;
+		}
 		if (p[j] == '\0') {
 			break;
 		} else {
@@ -377,7 +491,66 @@ free_if_empty_multi(void *parent, char *p)
 		}
 	}
 	s[i] = NULL;
-	return s;
+	if (i > 0) {
+		return s;
+	} else {
+		talloc_free(s);
+		return NULL;
+	}
+}
+
+static struct cm_nickcert **
+parse_nickcert_list(void *parent, const char *s)
+{
+	struct cm_nickcert **ret = NULL, **tmp, *nc;
+	const char *p, *q;
+	int i = 0, j;
+
+	p = s;
+	while (*p != '\0') {
+		nc = talloc_ptrtype(parent, nc);
+		if (nc == NULL) {
+			return NULL;
+		}
+		memset(nc, 0, sizeof(*nc));
+		q = p + strcspn(p, "\r\n");
+		nc->cm_nickname = talloc_strndup(nc, p, q - p);
+		if (nc->cm_nickname == NULL) {
+			talloc_free(ret);
+			return NULL;
+		}
+		for (j = 0; nc->cm_nickname[j] != '\0'; j++) {
+			if (nc->cm_nickname[j] == '\\') {
+				memmove(nc->cm_nickname + j,
+					nc->cm_nickname + j + 1,
+					strlen(nc->cm_nickname + j));
+			}
+		}
+		p = q + strspn(q, "\r\n");
+		q = strstr(p, "-----END");
+		if (q == NULL) {
+			talloc_free(ret);
+			return NULL;
+		}
+		q += strcspn(q, "\r\n");
+		q += strspn(q, "\r\n");
+		nc->cm_cert = talloc_strndup(nc, p, q - p);
+		if (nc->cm_cert == NULL) {
+			talloc_free(ret);
+			return NULL;
+		}
+		tmp = talloc_realloc(parent, ret, struct cm_nickcert *, i + 2);
+		if (tmp == NULL) {
+			talloc_free(ret);
+			return NULL;
+		}
+		ret = tmp;
+		talloc_steal(ret, nc);
+		ret[i++] = nc;
+		ret[i] = NULL;
+		p = q;
+	}
+	return ret;
 }
 
 char *
@@ -393,12 +566,13 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 	char **s, *p;
 	int i;
 	enum cm_store_file_field field;
-	ret = talloc_ptrtype(parent, ret);
+
+	ret = cm_store_entry_new(parent);
 	if (ret != NULL) {
-		memset(ret, 0, sizeof(*ret));
 		s = cm_store_file_read_lines(ret, fp);
 		ret->cm_busname = cm_store_entry_next_busname(ret);
 		ret->cm_store_private = talloc_strdup(ret, filename);
+		ret->cm_template_ca_path_length = -1;
 		for (i = 0; (s != NULL) && (s[i] != NULL); i++) {
 			p = s[i];
 			field = cm_store_file_field_of_line(p);
@@ -406,12 +580,30 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 			case cm_store_file_field_invalid:
 			case cm_store_file_field_invalid_high:
 				break;
+			case cm_store_ca_field_aka:
 			case cm_store_ca_field_known_issuer_names:
 			case cm_store_ca_field_is_default:
 			case cm_store_ca_field_type:
 			case cm_store_ca_field_internal_serial:
 			case cm_store_ca_field_internal_issue_time:
 			case cm_store_ca_field_external_helper:
+			case cm_store_ca_field_root_certs:
+			case cm_store_ca_field_other_root_certs:
+			case cm_store_ca_field_other_certs:
+			case cm_store_ca_field_required_enroll_attributes:
+			case cm_store_ca_field_required_renewal_attributes:
+			case cm_store_ca_field_profiles:
+			case cm_store_ca_field_default_profile:
+			case cm_store_ca_field_pre_save_command:
+			case cm_store_ca_field_pre_save_uid:
+			case cm_store_ca_field_post_save_command:
+			case cm_store_ca_field_post_save_uid:
+			case cm_store_ca_field_root_cert_files:
+			case cm_store_ca_field_other_root_cert_files:
+			case cm_store_ca_field_other_cert_files:
+			case cm_store_ca_field_root_cert_nssdbs:
+			case cm_store_ca_field_other_root_cert_nssdbs:
+			case cm_store_ca_field_other_cert_nssdbs:
 				break;
 			case cm_store_file_field_id:
 				ret->cm_nickname = free_if_empty(p);
@@ -420,6 +612,19 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 				if (strcasecmp(s[i], "RSA") == 0) {
 					ret->cm_key_type.cm_key_algorithm =
 						cm_key_rsa;
+#ifdef CM_ENABLE_DSA
+				} else
+				if (strcasecmp(s[i], "DSA") == 0) {
+					ret->cm_key_type.cm_key_algorithm =
+						cm_key_dsa;
+#endif
+#ifdef CM_ENABLE_EC
+				} else
+				if ((strcasecmp(s[i], "ECDSA") == 0) ||
+				    (strcasecmp(s[i], "EC") == 0)) {
+					ret->cm_key_type.cm_key_algorithm =
+						cm_key_ecdsa;
+#endif
 				} else {
 					ret->cm_key_type.cm_key_algorithm =
 						cm_key_unspecified;
@@ -430,6 +635,19 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 				if (strcasecmp(s[i], "RSA") == 0) {
 					ret->cm_key_type.cm_key_gen_algorithm =
 						cm_key_rsa;
+#ifdef CM_ENABLE_DSA
+				} else
+				if (strcasecmp(s[i], "DSA") == 0) {
+					ret->cm_key_type.cm_key_gen_algorithm =
+						cm_key_dsa;
+#endif
+#ifdef CM_ENABLE_EC
+				} else
+				if ((strcasecmp(s[i], "ECDSA") == 0) ||
+				    (strcasecmp(s[i], "EC") == 0)) {
+					ret->cm_key_type.cm_key_gen_algorithm =
+						cm_key_ecdsa;
+#endif
 				} else {
 					ret->cm_key_type.cm_key_gen_algorithm =
 						cm_key_unspecified;
@@ -492,6 +710,9 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 			case cm_store_entry_field_key_pubkey:
 				ret->cm_key_pubkey = free_if_empty(p);
 				break;
+			case cm_store_entry_field_key_pubkey_info:
+				ret->cm_key_pubkey_info = free_if_empty(p);
+				break;
 			case cm_store_entry_field_cert_storage_type:
 				if (strcasecmp(p, "FILE") == 0) {
 					ret->cm_cert_storage_type =
@@ -521,11 +742,17 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 			case cm_store_entry_field_cert_nickname:
 				ret->cm_cert_nickname = free_if_empty(p);
 				break;
+			case cm_store_entry_field_cert_issuer_der:
+				ret->cm_cert_issuer_der = free_if_empty(p);
+				break;
 			case cm_store_entry_field_cert_issuer:
 				ret->cm_cert_issuer = free_if_empty(p);
 				break;
 			case cm_store_entry_field_cert_serial:
 				ret->cm_cert_serial = free_if_empty(p);
+				break;
+			case cm_store_entry_field_cert_subject_der:
+				ret->cm_cert_subject_der = free_if_empty(p);
 				break;
 			case cm_store_entry_field_cert_subject:
 				ret->cm_cert_subject = free_if_empty(p);
@@ -555,14 +782,45 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 				ret->cm_cert_principal =
 					free_if_empty_multi(ret, p);
 				break;
+			case cm_store_entry_field_cert_ipaddress:
+				ret->cm_cert_ipaddress =
+					free_if_empty_multi(ret, p);
+				break;
 			case cm_store_entry_field_cert_ku:
 				ret->cm_cert_ku = free_if_empty(p);
 				break;
 			case cm_store_entry_field_cert_eku:
 				ret->cm_cert_eku = free_if_empty(p);
 				break;
+			case cm_store_entry_field_cert_is_ca:
+				ret->cm_cert_is_ca = atoi(p) != 0;
+				talloc_free(p);
+				break;
+			case cm_store_entry_field_cert_ca_path_length:
+				ret->cm_cert_ca_path_length = atoi(p);
+				talloc_free(p);
+				break;
+			case cm_store_entry_field_cert_crl_distribution_point:
+				ret->cm_cert_crl_distribution_point =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_cert_freshest_crl:
+				ret->cm_cert_freshest_crl =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_cert_ocsp_location:
+				ret->cm_cert_ocsp_location =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_cert_ns_comment:
+				ret->cm_cert_ns_comment = free_if_empty(p);
+				break;
 			case cm_store_entry_field_cert_profile:
 				ret->cm_cert_profile = free_if_empty(p);
+				break;
+			case cm_store_entry_field_cert_no_ocsp_check:
+				ret->cm_cert_no_ocsp_check = atoi(p) != 0;
+				talloc_free(p);
 				break;
 			case cm_store_entry_field_last_expiration_check:
 				/* backward compatibility before we split them
@@ -583,6 +841,9 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 					cm_store_time_from_timestamp(p);
 				talloc_free(p);
 				break;
+			case cm_store_entry_field_template_subject_der:
+				ret->cm_template_subject_der = free_if_empty(p);
+				break;
 			case cm_store_entry_field_template_subject:
 				ret->cm_template_subject = free_if_empty(p);
 				break;
@@ -598,11 +859,45 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 				ret->cm_template_principal =
 					free_if_empty_multi(ret, p);
 				break;
+			case cm_store_entry_field_template_ipaddress:
+				ret->cm_template_ipaddress =
+					free_if_empty_multi(ret, p);
+				break;
 			case cm_store_entry_field_template_ku:
 				ret->cm_template_ku = free_if_empty(p);
 				break;
 			case cm_store_entry_field_template_eku:
 				ret->cm_template_eku = free_if_empty(p);
+				break;
+			case cm_store_entry_field_template_is_ca:
+				ret->cm_template_is_ca = atoi(p) != 0;
+				talloc_free(p);
+				break;
+			case cm_store_entry_field_template_ca_path_length:
+				ret->cm_template_ca_path_length = atoi(p);
+				talloc_free(p);
+				break;
+			case cm_store_entry_field_template_crl_distribution_point:
+				ret->cm_template_crl_distribution_point =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_template_freshest_crl:
+				ret->cm_template_freshest_crl =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_template_ocsp_location:
+				ret->cm_template_ocsp_location =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_template_ns_comment:
+				ret->cm_template_ns_comment = free_if_empty(p);
+				break;
+			case cm_store_entry_field_template_profile:
+				ret->cm_template_profile = free_if_empty(p);
+				break;
+			case cm_store_entry_field_template_no_ocsp_check:
+				ret->cm_template_no_ocsp_check = atoi(p) != 0;
+				talloc_free(p);
 				break;
 			case cm_store_entry_field_challenge_password:
 				ret->cm_challenge_password = free_if_empty(p);
@@ -628,9 +923,6 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 			case cm_store_entry_field_ca_nickname:
 				ret->cm_ca_nickname = free_if_empty(p);
 				break;
-			case cm_store_entry_field_ca_profile:
-				ret->cm_ca_profile = free_if_empty(p);
-				break;
 			case cm_store_entry_field_submitted:
 				ret->cm_submitted =
 					cm_store_time_from_timestamp(p);
@@ -645,6 +937,11 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 			case cm_store_entry_field_cert:
 				ret->cm_cert = free_if_empty(p);
 				break;
+			case cm_store_entry_field_cert_chain:
+				ret->cm_cert_chain =
+					parse_nickcert_list(ret, p);
+				talloc_free(p);
+				break;
 			case cm_store_entry_field_pre_certsave_command:
 				ret->cm_pre_certsave_command  = free_if_empty(p);
 				break;
@@ -656,6 +953,30 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
 				break;
 			case cm_store_entry_field_post_certsave_uid:
 				ret->cm_post_certsave_uid = free_if_empty(p);
+				break;
+			case cm_store_entry_field_root_cert_files:
+				ret->cm_root_cert_store_files =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_other_root_cert_files:
+				ret->cm_other_root_cert_store_files =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_other_cert_files:
+				ret->cm_other_cert_store_files =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_root_cert_nssdbs:
+				ret->cm_root_cert_store_nssdbs =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_other_root_cert_nssdbs:
+				ret->cm_other_root_cert_store_nssdbs =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_entry_field_other_cert_nssdbs:
+				ret->cm_other_cert_store_nssdbs =
+					free_if_empty_multi(ret, p);
 				break;
 			}
 		}
@@ -695,9 +1016,9 @@ cm_store_ca_read(void *parent, const char *filename, FILE *fp)
 	char **s, *p;
 	int i;
 	enum cm_store_file_field field;
-	ret = talloc_ptrtype(parent, ret);
+
+	ret = cm_store_ca_new(parent);
 	if (ret != NULL) {
-		memset(ret, 0, sizeof(*ret));
 		s = cm_store_file_read_lines(ret, fp);
 		ret->cm_busname = cm_store_ca_next_busname(ret);
 		ret->cm_store_private = talloc_strdup(ret, filename);
@@ -719,12 +1040,15 @@ cm_store_ca_read(void *parent, const char *filename, FILE *fp)
 			case cm_store_entry_field_key_pin:
 			case cm_store_entry_field_key_pin_file:
 			case cm_store_entry_field_key_pubkey:
+			case cm_store_entry_field_key_pubkey_info:
 			case cm_store_entry_field_cert_storage_type:
 			case cm_store_entry_field_cert_storage_location:
 			case cm_store_entry_field_cert_token:
 			case cm_store_entry_field_cert_nickname:
+			case cm_store_entry_field_cert_issuer_der:
 			case cm_store_entry_field_cert_issuer:
 			case cm_store_entry_field_cert_serial:
+			case cm_store_entry_field_cert_subject_der:
 			case cm_store_entry_field_cert_subject:
 			case cm_store_entry_field_cert_spki:
 			case cm_store_entry_field_cert_not_before:
@@ -732,18 +1056,36 @@ cm_store_ca_read(void *parent, const char *filename, FILE *fp)
 			case cm_store_entry_field_cert_hostname:
 			case cm_store_entry_field_cert_email:
 			case cm_store_entry_field_cert_principal:
+			case cm_store_entry_field_cert_ipaddress:
 			case cm_store_entry_field_cert_ku:
 			case cm_store_entry_field_cert_eku:
+			case cm_store_entry_field_cert_is_ca:
+			case cm_store_entry_field_cert_ca_path_length:
+			case cm_store_entry_field_cert_crl_distribution_point:
+			case cm_store_entry_field_cert_freshest_crl:
+			case cm_store_entry_field_cert_ocsp_location:
+			case cm_store_entry_field_cert_ns_comment:
 			case cm_store_entry_field_cert_profile:
+			case cm_store_entry_field_cert_no_ocsp_check:
 			case cm_store_entry_field_last_expiration_check:
 			case cm_store_entry_field_last_need_notify_check:
 			case cm_store_entry_field_last_need_enroll_check:
+			case cm_store_entry_field_template_subject_der:
 			case cm_store_entry_field_template_subject:
 			case cm_store_entry_field_template_hostname:
 			case cm_store_entry_field_template_email:
 			case cm_store_entry_field_template_principal:
+			case cm_store_entry_field_template_ipaddress:
 			case cm_store_entry_field_template_ku:
 			case cm_store_entry_field_template_eku:
+			case cm_store_entry_field_template_is_ca:
+			case cm_store_entry_field_template_ca_path_length:
+			case cm_store_entry_field_template_crl_distribution_point:
+			case cm_store_entry_field_template_freshest_crl:
+			case cm_store_entry_field_template_ocsp_location:
+			case cm_store_entry_field_template_ns_comment:
+			case cm_store_entry_field_template_profile:
+			case cm_store_entry_field_template_no_ocsp_check:
 			case cm_store_entry_field_challenge_password:
 			case cm_store_entry_field_csr:
 			case cm_store_entry_field_spkac:
@@ -751,18 +1093,27 @@ cm_store_ca_read(void *parent, const char *filename, FILE *fp)
 			case cm_store_entry_field_autorenew:
 			case cm_store_entry_field_monitor:
 			case cm_store_entry_field_ca_nickname:
-			case cm_store_entry_field_ca_profile:
 			case cm_store_entry_field_submitted:
 			case cm_store_entry_field_ca_cookie:
 			case cm_store_entry_field_ca_error:
 			case cm_store_entry_field_cert:
+			case cm_store_entry_field_cert_chain:
 			case cm_store_entry_field_pre_certsave_command:
 			case cm_store_entry_field_pre_certsave_uid:
 			case cm_store_entry_field_post_certsave_command:
 			case cm_store_entry_field_post_certsave_uid:
+			case cm_store_entry_field_root_cert_files:
+			case cm_store_entry_field_other_root_cert_files:
+			case cm_store_entry_field_other_cert_files:
+			case cm_store_entry_field_root_cert_nssdbs:
+			case cm_store_entry_field_other_root_cert_nssdbs:
+			case cm_store_entry_field_other_cert_nssdbs:
 				break;
 			case cm_store_file_field_id:
 				ret->cm_nickname = free_if_empty(p);
+				break;
+			case cm_store_ca_field_aka:
+				ret->cm_ca_aka = free_if_empty(p);
 				break;
 			case cm_store_ca_field_known_issuer_names:
 				ret->cm_ca_known_issuer_names =
@@ -793,6 +1144,72 @@ cm_store_ca_read(void *parent, const char *filename, FILE *fp)
 				break;
 			case cm_store_ca_field_external_helper:
 				ret->cm_ca_external_helper = free_if_empty(p);
+				break;
+			case cm_store_ca_field_root_certs:
+				ret->cm_ca_root_certs =
+					parse_nickcert_list(ret, p);
+				talloc_free(p);
+				break;
+			case cm_store_ca_field_other_root_certs:
+				ret->cm_ca_other_root_certs =
+					parse_nickcert_list(ret, p);
+				talloc_free(p);
+				break;
+			case cm_store_ca_field_other_certs:
+				ret->cm_ca_other_certs =
+					parse_nickcert_list(ret, p);
+				talloc_free(p);
+				break;
+			case cm_store_ca_field_required_enroll_attributes:
+				ret->cm_ca_required_enroll_attributes =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_ca_field_required_renewal_attributes:
+				ret->cm_ca_required_renewal_attributes =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_ca_field_profiles:
+				ret->cm_ca_profiles =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_ca_field_default_profile:
+				ret->cm_ca_default_profile = free_if_empty(p);
+				break;
+			case cm_store_ca_field_pre_save_command:
+				ret->cm_ca_pre_save_command = free_if_empty(p);
+				break;
+			case cm_store_ca_field_pre_save_uid:
+				ret->cm_ca_pre_save_uid = free_if_empty(p);
+				break;
+			case cm_store_ca_field_post_save_command:
+				ret->cm_ca_post_save_command = free_if_empty(p);
+				break;
+			case cm_store_ca_field_post_save_uid:
+				ret->cm_ca_post_save_uid = free_if_empty(p);
+				break;
+			case cm_store_ca_field_root_cert_files:
+				ret->cm_ca_root_cert_store_files =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_ca_field_other_root_cert_files:
+				ret->cm_ca_other_root_cert_store_files =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_ca_field_other_cert_files:
+				ret->cm_ca_other_cert_store_files =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_ca_field_root_cert_nssdbs:
+				ret->cm_ca_root_cert_store_nssdbs =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_ca_field_other_root_cert_nssdbs:
+				ret->cm_ca_other_root_cert_store_nssdbs =
+					free_if_empty_multi(ret, p);
+				break;
+			case cm_store_ca_field_other_cert_nssdbs:
+				ret->cm_ca_other_cert_store_nssdbs =
+					free_if_empty_multi(ret, p);
 				break;
 			}
 		}
@@ -847,7 +1264,16 @@ cm_store_file_write_str(FILE *fp, enum cm_store_file_field field, const char *s)
 	while (*p != '\0') {
 		q = p + strcspn(p, "\r\n");
 		fprintf(fp, " %.*s\n", (int) (q - p), p);
-		p = q + strspn(q, "\r\n");
+		if (*q == '\r') {
+			q++;
+		}
+		if (*q == '\n') {
+			q++;
+		}
+		if (p == q) {
+			break;
+		}
+		p = q;
 	}
 	if (ferror(fp)) {
 		return -1;
@@ -887,6 +1313,49 @@ cm_store_file_write_strs(FILE *fp, enum cm_store_file_field field, char **s)
 }
 
 static int
+cm_store_file_write_nickcert_list(FILE *fp, enum cm_store_file_field field,
+				  struct cm_nickcert **nc)
+{
+	const char *p, *q;
+	int i, j;
+
+	if ((nc == NULL) || (nc[0] == NULL)) {
+		return 0;
+	}
+	fprintf(fp, "%s=", cm_store_file_line_of_field(field));
+	for (i = 0; nc[i] != NULL; i++) {
+		if (i > 0) {
+			fputc(' ', fp);
+		}
+		for (j = 0; nc[i]->cm_nickname[j] != '\0'; j++) {
+			switch (nc[i]->cm_nickname[j]) {
+			case '\\':
+			case ',':
+				fputc('\\', fp);
+				/* fall through */
+			default:
+				fputc(nc[i]->cm_nickname[j], fp);
+				break;
+			}
+		}
+		if (ferror(fp)) {
+			return -1;
+		}
+		fprintf(fp, "\n");
+		p = nc[i]->cm_cert;
+		while (*p != '\0') {
+			q = p + strcspn(p, "\r\n");
+			fprintf(fp, " %.*s\n", (int) (q - p), p);
+			p = q + strspn(q, "\r\n");
+		}
+		if (ferror(fp)) {
+			return -1;
+		}
+	}
+	return 0;
+}
+
+static int
 cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 {
 	char timestamp[15];
@@ -908,6 +1377,18 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 		cm_store_file_write_str(fp, cm_store_entry_field_key_type,
 					"RSA");
 		break;
+#ifdef CM_ENABLE_DSA
+	case cm_key_dsa:
+		cm_store_file_write_str(fp, cm_store_entry_field_key_type,
+					"DSA");
+		break;
+#endif
+#ifdef CM_ENABLE_EC
+	case cm_key_ecdsa:
+		cm_store_file_write_str(fp, cm_store_entry_field_key_type,
+					"EC");
+		break;
+#endif
 	}
 	switch (entry->cm_key_type.cm_key_gen_algorithm) {
 	case cm_key_unspecified:
@@ -918,6 +1399,18 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 		cm_store_file_write_str(fp, cm_store_entry_field_key_gen_type,
 					"RSA");
 		break;
+#ifdef CM_ENABLE_DSA
+	case cm_key_dsa:
+		cm_store_file_write_str(fp, cm_store_entry_field_key_gen_type,
+					"DSA");
+		break;
+#endif
+#ifdef CM_ENABLE_EC
+	case cm_key_ecdsa:
+		cm_store_file_write_str(fp, cm_store_entry_field_key_gen_type,
+					"EC");
+		break;
+#endif
 	}
 	cm_store_file_write_int(fp, cm_store_entry_field_key_size,
 				entry->cm_key_type.cm_key_size);
@@ -955,6 +1448,8 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 				entry->cm_key_pin_file);
 	cm_store_file_write_str(fp, cm_store_entry_field_key_pubkey,
 				entry->cm_key_pubkey);
+	cm_store_file_write_str(fp, cm_store_entry_field_key_pubkey_info,
+				entry->cm_key_pubkey_info);
 
 	switch (entry->cm_cert_storage_type) {
 	case cm_cert_storage_file:
@@ -975,10 +1470,14 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 	cm_store_file_write_str(fp, cm_store_entry_field_cert_nickname,
 				entry->cm_cert_nickname);
 
+	cm_store_file_write_str(fp, cm_store_entry_field_cert_issuer_der,
+				entry->cm_cert_issuer_der);
 	cm_store_file_write_str(fp, cm_store_entry_field_cert_issuer,
 				entry->cm_cert_issuer);
 	cm_store_file_write_str(fp, cm_store_entry_field_cert_serial,
 				entry->cm_cert_serial);
+	cm_store_file_write_str(fp, cm_store_entry_field_cert_subject_der,
+				entry->cm_cert_subject_der);
 	cm_store_file_write_str(fp, cm_store_entry_field_cert_subject,
 				entry->cm_cert_subject);
 	cm_store_file_write_str(fp, cm_store_entry_field_cert_spki,
@@ -999,12 +1498,28 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 				 entry->cm_cert_email);
 	cm_store_file_write_strs(fp, cm_store_entry_field_cert_principal,
 				 entry->cm_cert_principal);
+	cm_store_file_write_strs(fp, cm_store_entry_field_cert_ipaddress,
+				 entry->cm_cert_ipaddress);
 	cm_store_file_write_str(fp, cm_store_entry_field_cert_ku,
 				entry->cm_cert_ku);
 	cm_store_file_write_str(fp, cm_store_entry_field_cert_eku,
 				entry->cm_cert_eku);
+	cm_store_file_write_int(fp, cm_store_entry_field_cert_is_ca,
+				entry->cm_cert_is_ca ? 1 : 0);
+	cm_store_file_write_int(fp, cm_store_entry_field_cert_ca_path_length,
+				entry->cm_cert_ca_path_length);
+	cm_store_file_write_strs(fp, cm_store_entry_field_cert_crl_distribution_point,
+				 entry->cm_cert_crl_distribution_point);
+	cm_store_file_write_strs(fp, cm_store_entry_field_cert_freshest_crl,
+				 entry->cm_cert_freshest_crl);
+	cm_store_file_write_strs(fp, cm_store_entry_field_cert_ocsp_location,
+				 entry->cm_cert_ocsp_location);
+	cm_store_file_write_str(fp, cm_store_entry_field_cert_ns_comment,
+				entry->cm_cert_ns_comment);
 	cm_store_file_write_str(fp, cm_store_entry_field_cert_profile,
 				entry->cm_cert_profile);
+	cm_store_file_write_int(fp, cm_store_entry_field_cert_no_ocsp_check,
+				entry->cm_cert_no_ocsp_check ? 1 : 0);
 
 	cm_store_file_write_str(fp, cm_store_entry_field_last_need_notify_check,
 				cm_store_timestamp_from_time(entry->cm_last_need_notify_check,
@@ -1012,6 +1527,8 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 	cm_store_file_write_str(fp, cm_store_entry_field_last_need_enroll_check,
 				cm_store_timestamp_from_time(entry->cm_last_need_enroll_check,
 							     timestamp));
+	cm_store_file_write_str(fp, cm_store_entry_field_template_subject_der,
+				entry->cm_template_subject_der);
 	cm_store_file_write_str(fp, cm_store_entry_field_template_subject,
 				entry->cm_template_subject);
 	cm_store_file_write_strs(fp, cm_store_entry_field_template_hostname,
@@ -1020,10 +1537,29 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 				 entry->cm_template_email);
 	cm_store_file_write_strs(fp, cm_store_entry_field_template_principal,
 				 entry->cm_template_principal);
+	cm_store_file_write_strs(fp, cm_store_entry_field_template_ipaddress,
+				 entry->cm_template_ipaddress);
 	cm_store_file_write_str(fp, cm_store_entry_field_template_ku,
 				entry->cm_template_ku);
 	cm_store_file_write_str(fp, cm_store_entry_field_template_eku,
 				entry->cm_template_eku);
+	cm_store_file_write_int(fp, cm_store_entry_field_template_is_ca,
+				entry->cm_template_is_ca ? 1 : 0);
+	cm_store_file_write_int(fp, cm_store_entry_field_template_ca_path_length,
+				entry->cm_template_ca_path_length);
+	cm_store_file_write_strs(fp, cm_store_entry_field_template_crl_distribution_point,
+				 entry->cm_template_crl_distribution_point);
+	cm_store_file_write_strs(fp, cm_store_entry_field_template_freshest_crl,
+				 entry->cm_template_freshest_crl);
+	cm_store_file_write_strs(fp,
+				 cm_store_entry_field_template_ocsp_location,
+				 entry->cm_template_ocsp_location);
+	cm_store_file_write_str(fp, cm_store_entry_field_template_ns_comment,
+				entry->cm_template_ns_comment);
+	cm_store_file_write_str(fp, cm_store_entry_field_template_profile,
+				entry->cm_template_profile);
+	cm_store_file_write_int(fp, cm_store_entry_field_template_no_ocsp_check,
+				entry->cm_template_no_ocsp_check ? 1 : 0);
 
 	cm_store_file_write_str(fp, cm_store_entry_field_challenge_password,
 				entry->cm_challenge_password);
@@ -1043,8 +1579,6 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 
 	cm_store_file_write_str(fp, cm_store_entry_field_ca_nickname,
 				entry->cm_ca_nickname);
-	cm_store_file_write_str(fp, cm_store_entry_field_ca_profile,
-				entry->cm_ca_profile);
 	cm_store_file_write_str(fp, cm_store_entry_field_submitted,
 				cm_store_timestamp_from_time(entry->cm_submitted,
 							      timestamp));
@@ -1053,6 +1587,8 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 	cm_store_file_write_str(fp, cm_store_entry_field_ca_error,
 				entry->cm_ca_error);
 	cm_store_file_write_str(fp, cm_store_entry_field_cert, entry->cm_cert);
+	cm_store_file_write_nickcert_list(fp, cm_store_entry_field_cert_chain,
+					  entry->cm_cert_chain);
 	cm_store_file_write_str(fp, cm_store_entry_field_pre_certsave_command,
 				entry->cm_pre_certsave_command);
 	cm_store_file_write_str(fp, cm_store_entry_field_pre_certsave_uid,
@@ -1061,6 +1597,20 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
 				entry->cm_post_certsave_command);
 	cm_store_file_write_str(fp, cm_store_entry_field_post_certsave_uid,
 				entry->cm_post_certsave_uid);
+
+	cm_store_file_write_strs(fp, cm_store_entry_field_root_cert_files,
+				 entry->cm_root_cert_store_files);
+	cm_store_file_write_strs(fp, cm_store_entry_field_other_root_cert_files,
+				 entry->cm_other_root_cert_store_files);
+	cm_store_file_write_strs(fp, cm_store_entry_field_other_cert_files,
+				 entry->cm_other_cert_store_files);
+	cm_store_file_write_strs(fp, cm_store_entry_field_root_cert_nssdbs,
+				 entry->cm_root_cert_store_nssdbs);
+	cm_store_file_write_strs(fp, cm_store_entry_field_other_root_cert_nssdbs,
+				 entry->cm_other_root_cert_store_nssdbs);
+	cm_store_file_write_strs(fp, cm_store_entry_field_other_cert_nssdbs,
+				 entry->cm_other_cert_store_nssdbs);
+
 	if (ferror(fp)) {
 		return -1;
 	}
@@ -1081,7 +1631,7 @@ cm_store_entry_delete(struct cm_store_entry *entry)
 			talloc_free(entry->cm_store_private);
 			entry->cm_store_private = NULL;
 		} else {
-			cm_log(1, "Failed to remove file \"%s\": %s.\n",
+			cm_log(0, "Failed to remove file \"%s\": %s.\n",
 			       filename, strerror(errno));
 		}
 	} else {
@@ -1123,7 +1673,7 @@ cm_store_entry_save(struct cm_store_entry *entry)
 	FILE *fp;
 	char timestamp[15], path[PATH_MAX];
 	int i, fd = -1, give_up;
-	const char *directory;
+	const char *directory, *dest;
 
 	if (entry->cm_store_private == NULL) {
 		cm_store_timestamp_from_time(cm_time(NULL), timestamp);
@@ -1183,11 +1733,19 @@ cm_store_entry_save(struct cm_store_entry *entry)
 	if (fp != NULL) {
 		if (cm_store_entry_write(fp, entry) == 0) {
 			fclose(fp);
-			rename(path, (const char *) entry->cm_store_private);
+			dest = (const char *) entry->cm_store_private;
+			if (rename(path, dest) != 0) {
+				cm_log(0, "Error renaming \"%s\" to \"%s\": "
+				       "%s.\n", path, dest, strerror(errno));
+				return -1;
+			}
 			return 0;
 		} else {
 			fclose(fp);
-			remove(path);
+			if (remove(path) != 0) {
+				cm_log(0, "Error removing \"%s\": %s.\n", path,
+				       strerror(errno));
+			}
 			return -1;
 		}
 	} else {
@@ -1225,6 +1783,11 @@ cm_store_get_all_entries(void *parent)
 					ret[j] = cm_store_entry_read(ret,
 								     globs.gl_pathv[i],
 								     fp);
+					if ((ret[j] != NULL) &&
+					    (ret[j]->cm_nickname == NULL)) {
+						talloc_free(ret[j]);
+						ret[j] = NULL;
+					}
 					if (ret[j] != NULL) {
 						/* Check for duplicate names. */
 						for (k = 0; k < j; k++) {
@@ -1262,6 +1825,7 @@ cm_store_ca_write(FILE *fp, struct cm_store_ca *ca)
 		p = ca->cm_nickname;
 	}
 	cm_store_file_write_str(fp, cm_store_file_field_id, p);
+	cm_store_file_write_str(fp, cm_store_ca_field_aka, ca->cm_ca_aka);
 	cm_store_file_write_strs(fp,
 				 cm_store_ca_field_known_issuer_names,
 				 ca->cm_ca_known_issuer_names);
@@ -1285,6 +1849,42 @@ cm_store_ca_write(FILE *fp, struct cm_store_ca *ca)
 					ca->cm_ca_external_helper);
 		break;
 	}
+	cm_store_file_write_nickcert_list(fp, cm_store_ca_field_root_certs,
+					  ca->cm_ca_root_certs);
+	cm_store_file_write_nickcert_list(fp, cm_store_ca_field_other_root_certs,
+					  ca->cm_ca_other_root_certs);
+	cm_store_file_write_nickcert_list(fp, cm_store_ca_field_other_certs,
+					  ca->cm_ca_other_certs);
+	cm_store_file_write_strs(fp,
+				 cm_store_ca_field_required_enroll_attributes,
+				 ca->cm_ca_required_enroll_attributes);
+	cm_store_file_write_strs(fp,
+				 cm_store_ca_field_required_renewal_attributes,
+				 ca->cm_ca_required_renewal_attributes);
+	cm_store_file_write_strs(fp, cm_store_ca_field_profiles,
+				 ca->cm_ca_profiles);
+	cm_store_file_write_str(fp, cm_store_ca_field_default_profile,
+				ca->cm_ca_default_profile);
+	cm_store_file_write_str(fp, cm_store_ca_field_pre_save_command,
+				ca->cm_ca_pre_save_command);
+	cm_store_file_write_str(fp, cm_store_ca_field_pre_save_uid,
+				ca->cm_ca_pre_save_uid);
+	cm_store_file_write_str(fp, cm_store_ca_field_post_save_command,
+				ca->cm_ca_post_save_command);
+	cm_store_file_write_str(fp, cm_store_ca_field_post_save_uid,
+				ca->cm_ca_post_save_uid);
+	cm_store_file_write_strs(fp, cm_store_ca_field_root_cert_files,
+				 ca->cm_ca_root_cert_store_files);
+	cm_store_file_write_strs(fp, cm_store_ca_field_other_root_cert_files,
+				 ca->cm_ca_other_root_cert_store_files);
+	cm_store_file_write_strs(fp, cm_store_ca_field_other_cert_files,
+				 ca->cm_ca_other_cert_store_files);
+	cm_store_file_write_strs(fp, cm_store_ca_field_root_cert_nssdbs,
+				 ca->cm_ca_root_cert_store_nssdbs);
+	cm_store_file_write_strs(fp, cm_store_ca_field_other_root_cert_nssdbs,
+				 ca->cm_ca_other_root_cert_store_nssdbs);
+	cm_store_file_write_strs(fp, cm_store_ca_field_other_cert_nssdbs,
+				 ca->cm_ca_other_cert_store_nssdbs);
 	if (ferror(fp)) {
 		return -1;
 	}
@@ -1321,7 +1921,7 @@ cm_store_ca_save(struct cm_store_ca *ca)
 	FILE *fp;
 	char timestamp[15], path[PATH_MAX];
 	int i, fd = -1, give_up;
-	const char *directory;
+	const char *directory, *dest;
 
 	if (ca->cm_store_private == NULL) {
 		cm_store_timestamp_from_time(cm_time(NULL), timestamp);
@@ -1380,12 +1980,21 @@ cm_store_ca_save(struct cm_store_ca *ca)
 	if (fp != NULL) {
 		if (cm_store_ca_write(fp, ca) == 0) {
 			fclose(fp);
-			rename(path, (const char *) ca->cm_store_private);
+			dest = (const char *) ca->cm_store_private;
+			if (rename(path, dest) != 0) {
+				cm_log(0, "Error renaming \"%s\" to \"%s\": "
+				       "%s.\n", path, dest, strerror(errno));
+				return -1;
+			}
+			return 0;
 		} else {
 			fclose(fp);
-			remove(path);
+			if (remove(path) != 0) {
+				cm_log(0, "Error removing \"%s\": %s.\n", path,
+				       strerror(errno));
+			}
+			return -1;
 		}
-		return 0;
 	} else {
 		cm_log(1, "Error opening \"%s\" for writing: %s.\n", path,
 		       strerror(errno));
@@ -1411,7 +2020,7 @@ cm_store_get_all_cas(void *parent)
 	if (glob(path, 0, NULL, &globs) != 0) {
 		globs.gl_pathc = 0;
 	}
-	ret = talloc_array_ptrtype(parent, ret, globs.gl_pathc + 5);
+	ret = talloc_array_ptrtype(parent, ret, globs.gl_pathc + 6);
 	if (ret != NULL) {
 		for (i = 0, j = 0; i < globs.gl_pathc; i++) {
 			p = globs.gl_pathv[i];
@@ -1423,6 +2032,11 @@ cm_store_get_all_cas(void *parent)
 				ret[j] = cm_store_ca_read(ret,
 							  globs.gl_pathv[i],
 							  fp);
+				if ((ret[j] != NULL) &&
+				    (ret[j]->cm_nickname == NULL)) {
+					talloc_free(ret[j]);
+					ret[j] = NULL;
+				}
 				if (ret[j] != NULL) {
 					/* Check for duplicate names. */
 					for (k = 0; k < j; k++) {
@@ -1497,7 +2111,8 @@ cm_store_get_all_cas(void *parent)
 			j++;
 		}
 #endif
-		/* Make sure we get at least one dogtag entry. */
+#ifdef WITH_IPA
+		/* Make sure we get at least 1 dogtag-ipa-renew-agent entry. */
 		for (k = 0; k < j; k++) {
 			if ((ret[k]->cm_ca_type == cm_ca_external) &&
 			    (strcmp(ret[k]->cm_nickname,
@@ -1515,6 +2130,27 @@ cm_store_get_all_cas(void *parent)
 								      CM_DOGTAG_IPA_RENEW_AGENT_HELPER_PATH);
 			j++;
 		}
+#endif
+#ifdef WITH_LOCAL
+		/* Make sure we get at least 1 dogtag-ipa-renew-agent entry. */
+		for (k = 0; k < j; k++) {
+			if ((ret[k]->cm_ca_type == cm_ca_external) &&
+			    (strcmp(ret[k]->cm_nickname,
+				    CM_LOCAL_CA_NAME) == 0)) {
+				break;
+			}
+		}
+		if (k == j) {
+			ret[j] = cm_store_ca_new(ret);
+			ret[j]->cm_busname = cm_store_ca_next_busname(ret[j]);
+			ret[j]->cm_nickname = talloc_strdup(ret[j],
+							    CM_LOCAL_CA_NAME);
+			ret[j]->cm_ca_type = cm_ca_external;
+			ret[j]->cm_ca_external_helper = talloc_strdup(ret[j],
+								      CM_LOCAL_HELPER_PATH);
+			j++;
+		}
+#endif
 		ret[j] = NULL;
 	}
 	if (globs.gl_pathc > 0) {
@@ -1523,12 +2159,50 @@ cm_store_get_all_cas(void *parent)
 	return ret;
 }
 
+static struct cm_nickcert **
+cm_store_maybe_dup_nickcert_list(void *parent, struct cm_nickcert **certs)
+{
+	struct cm_nickcert **ret = NULL, *nc;
+	int i;
+
+	if (certs == NULL) {
+		return NULL;
+	}
+	for (i = 0; certs[i] != NULL; i++) {
+		continue;
+	}
+	ret = talloc_array_ptrtype(parent, ret, i + 1);
+	if (ret == NULL) {
+		return NULL;
+	}
+	for (i = 0; certs[i] != NULL; i++) {
+		nc = talloc_ptrtype(parent, nc);
+		if (nc == NULL) {
+			talloc_free(ret);
+			return NULL;
+		}
+		memset(nc, 0, sizeof(*nc));
+		nc->cm_nickname = talloc_strdup(nc, certs[i]->cm_nickname);
+		nc->cm_cert = talloc_strdup(nc, certs[i]->cm_cert);
+		if ((nc->cm_nickname == NULL) || (nc->cm_cert == NULL)) {
+			talloc_free(ret);
+			return NULL;
+		}
+		ret[i] = nc;
+	}
+	ret[i] = NULL;
+	return ret;
+}
+
 struct cm_store_entry *
 cm_store_entry_dup(void *parent, struct cm_store_entry *entry)
 {
 	struct cm_store_entry *ret;
 
-	ret = talloc_ptrtype(parent, ret);
+	ret = cm_store_entry_new(parent);
+	if (ret == NULL) {
+		return ret;
+	}
 
 	ret->cm_busname = cm_store_maybe_strdup(ret, entry->cm_busname);
 	ret->cm_store_private =
@@ -1546,14 +2220,17 @@ cm_store_entry_dup(void *parent, struct cm_store_entry *entry)
 		ret->cm_key_pin = NULL;
 	}
 	ret->cm_key_pubkey = cm_store_maybe_strdup(ret, entry->cm_key_pubkey);
+	ret->cm_key_pubkey_info = cm_store_maybe_strdup(ret, entry->cm_key_pubkey_info);
 
 	ret->cm_cert_storage_type = entry->cm_cert_storage_type;
 	ret->cm_cert_storage_location = cm_store_maybe_strdup(ret, entry->cm_cert_storage_location);
 	ret->cm_cert_token = cm_store_maybe_strdup(ret, entry->cm_cert_token);
 	ret->cm_cert_nickname = cm_store_maybe_strdup(ret, entry->cm_cert_nickname);
 
+	ret->cm_cert_issuer_der = cm_store_maybe_strdup(ret, entry->cm_cert_issuer_der);
 	ret->cm_cert_issuer = cm_store_maybe_strdup(ret, entry->cm_cert_issuer);
 	ret->cm_cert_serial = cm_store_maybe_strdup(ret, entry->cm_cert_serial);
+	ret->cm_cert_subject_der = cm_store_maybe_strdup(ret, entry->cm_cert_subject_der);
 	ret->cm_cert_subject = cm_store_maybe_strdup(ret, entry->cm_cert_subject);
 	ret->cm_cert_spki = cm_store_maybe_strdup(ret, entry->cm_cert_spki);
 	ret->cm_cert_not_before = entry->cm_cert_not_before;
@@ -1561,22 +2238,40 @@ cm_store_entry_dup(void *parent, struct cm_store_entry *entry)
 	ret->cm_cert_hostname = cm_store_maybe_strdupv(ret, entry->cm_cert_hostname);
 	ret->cm_cert_email = cm_store_maybe_strdupv(ret, entry->cm_cert_email);
 	ret->cm_cert_principal = cm_store_maybe_strdupv(ret, entry->cm_cert_principal);
+	ret->cm_cert_ipaddress = cm_store_maybe_strdupv(ret, entry->cm_cert_ipaddress);
 	ret->cm_cert_ku = cm_store_maybe_strdup(ret, entry->cm_cert_ku);
 	ret->cm_cert_eku = cm_store_maybe_strdup(ret, entry->cm_cert_eku);
+	ret->cm_cert_is_ca = entry->cm_cert_is_ca;
+	ret->cm_cert_ca_path_length = entry->cm_cert_ca_path_length;
+	ret->cm_cert_crl_distribution_point = cm_store_maybe_strdupv(ret, entry->cm_cert_crl_distribution_point);
+	ret->cm_cert_freshest_crl = cm_store_maybe_strdupv(ret, entry->cm_cert_freshest_crl);
+	ret->cm_cert_ocsp_location = cm_store_maybe_strdupv(ret, entry->cm_cert_ocsp_location);
+	ret->cm_cert_ns_comment = cm_store_maybe_strdup(ret, entry->cm_cert_ns_comment);
 	ret->cm_cert_profile = cm_store_maybe_strdup(ret,
 						     entry->cm_cert_profile);
+	ret->cm_cert_no_ocsp_check = entry->cm_cert_no_ocsp_check;
 
 	ret->cm_last_need_notify_check = entry->cm_last_need_notify_check;
 	ret->cm_last_need_enroll_check = entry->cm_last_need_enroll_check;
 	ret->cm_notification_method = entry->cm_notification_method;
 	ret->cm_notification_destination = cm_store_maybe_strdup(ret, entry->cm_notification_destination);
 
+	ret->cm_template_subject_der = cm_store_maybe_strdup(ret, entry->cm_template_subject_der);
 	ret->cm_template_subject = cm_store_maybe_strdup(ret, entry->cm_template_subject);
 	ret->cm_template_hostname = cm_store_maybe_strdupv(ret, entry->cm_template_hostname);
 	ret->cm_template_email = cm_store_maybe_strdupv(ret, entry->cm_template_email);
 	ret->cm_template_principal = cm_store_maybe_strdupv(ret, entry->cm_template_principal);
+	ret->cm_template_ipaddress = cm_store_maybe_strdupv(ret, entry->cm_template_ipaddress);
 	ret->cm_template_ku = cm_store_maybe_strdup(ret, entry->cm_template_ku);
 	ret->cm_template_eku = cm_store_maybe_strdup(ret, entry->cm_template_eku);
+	ret->cm_template_is_ca = entry->cm_template_is_ca;
+	ret->cm_template_ca_path_length = entry->cm_template_ca_path_length;
+	ret->cm_template_crl_distribution_point = cm_store_maybe_strdupv(ret, entry->cm_template_crl_distribution_point);
+	ret->cm_template_freshest_crl = cm_store_maybe_strdupv(ret, entry->cm_template_freshest_crl);
+	ret->cm_template_ocsp_location = cm_store_maybe_strdupv(ret, entry->cm_template_ocsp_location);
+	ret->cm_template_ns_comment = cm_store_maybe_strdup(ret, entry->cm_template_ns_comment);
+	ret->cm_template_profile = cm_store_maybe_strdup(ret, entry->cm_template_profile);
+	ret->cm_template_no_ocsp_check = entry->cm_template_no_ocsp_check;
 
 	ret->cm_challenge_password = cm_store_maybe_strdup(ret, entry->cm_challenge_password);
 	ret->cm_csr = cm_store_maybe_strdup(ret, entry->cm_csr);
@@ -1585,15 +2280,21 @@ cm_store_entry_dup(void *parent, struct cm_store_entry *entry)
 	ret->cm_autorenew = entry->cm_autorenew;
 	ret->cm_monitor = entry->cm_monitor;
 	ret->cm_ca_nickname = cm_store_maybe_strdup(ret, entry->cm_ca_nickname);
-	ret->cm_ca_profile = cm_store_maybe_strdup(ret, entry->cm_ca_profile);
 	ret->cm_submitted = entry->cm_submitted;
 	ret->cm_ca_cookie = cm_store_maybe_strdup(ret, entry->cm_ca_cookie);
 	ret->cm_ca_error = cm_store_maybe_strdup(ret, entry->cm_ca_error);
 	ret->cm_cert = cm_store_maybe_strdup(ret, entry->cm_cert);
+	ret->cm_cert_chain = cm_store_maybe_dup_nickcert_list(ret, entry->cm_cert_chain);
 	ret->cm_pre_certsave_command = cm_store_maybe_strdup(ret, entry->cm_pre_certsave_command);
 	ret->cm_pre_certsave_uid = cm_store_maybe_strdup(ret, entry->cm_pre_certsave_uid);
 	ret->cm_post_certsave_command = cm_store_maybe_strdup(ret, entry->cm_post_certsave_command);
 	ret->cm_post_certsave_uid = cm_store_maybe_strdup(ret, entry->cm_post_certsave_uid);
+	ret->cm_root_cert_store_files = cm_store_maybe_strdupv(ret, entry->cm_root_cert_store_files);
+	ret->cm_other_root_cert_store_files = cm_store_maybe_strdupv(ret, entry->cm_other_root_cert_store_files);
+	ret->cm_other_cert_store_files = cm_store_maybe_strdupv(ret, entry->cm_other_cert_store_files);
+	ret->cm_root_cert_store_nssdbs = cm_store_maybe_strdupv(ret, entry->cm_other_cert_store_nssdbs);
+	ret->cm_other_root_cert_store_nssdbs = cm_store_maybe_strdupv(ret, entry->cm_other_cert_store_nssdbs);
+	ret->cm_other_cert_store_nssdbs = cm_store_maybe_strdupv(ret, entry->cm_other_cert_store_nssdbs);
 
 	return ret;
 }
@@ -1603,11 +2304,16 @@ cm_store_ca_dup(void *parent, struct cm_store_ca *ca)
 {
 	struct cm_store_ca *ret;
 
-	ret = talloc_ptrtype(parent, ret);
+	ret = cm_store_ca_new(parent);
+	if (ret == NULL) {
+		return NULL;
+	}
 	ret->cm_busname = cm_store_maybe_strdup(ret, ca->cm_busname);
 	ret->cm_store_private =
 		cm_store_maybe_strdup(ret, ca->cm_store_private);
 	ret->cm_nickname = cm_store_maybe_strdup(ret, ca->cm_nickname);
+	ret->cm_ca_aka = cm_store_maybe_strdup(ret, ca->cm_ca_aka);
+	ret->cm_ca_error = cm_store_maybe_strdup(ret, ca->cm_ca_error);
 	ret->cm_ca_known_issuer_names =
 		cm_store_maybe_strdupv(ret, ca->cm_ca_known_issuer_names);
 	ret->cm_ca_is_default = ca->cm_ca_is_default;
@@ -1619,5 +2325,44 @@ cm_store_ca_dup(void *parent, struct cm_store_ca *ca)
 	ret->cm_ca_internal_issue_time = ca->cm_ca_internal_issue_time;
 	ret->cm_ca_external_helper =
 		cm_store_maybe_strdup(ret, ca->cm_ca_external_helper);
+	ret->cm_ca_root_certs =
+		cm_store_maybe_dup_nickcert_list(ret, ca->cm_ca_root_certs);
+	ret->cm_ca_other_root_certs =
+		cm_store_maybe_dup_nickcert_list(ret,
+						 ca->cm_ca_other_root_certs);
+	ret->cm_ca_other_certs =
+		cm_store_maybe_dup_nickcert_list(ret, ca->cm_ca_other_certs);
+	ret->cm_ca_required_enroll_attributes =
+		cm_store_maybe_strdupv(ret,
+				       ca->cm_ca_required_enroll_attributes);
+	ret->cm_ca_required_renewal_attributes =
+		cm_store_maybe_strdupv(ret,
+				       ca->cm_ca_required_renewal_attributes);
+	ret->cm_ca_profiles = cm_store_maybe_strdupv(ret, ca->cm_ca_profiles);
+	ret->cm_ca_default_profile =
+		cm_store_maybe_strdup(ret, ca->cm_ca_default_profile);
+
+	ret->cm_ca_pre_save_command =
+		cm_store_maybe_strdup(ret, ca->cm_ca_pre_save_command);
+	ret->cm_ca_pre_save_uid =
+		cm_store_maybe_strdup(ret, ca->cm_ca_pre_save_uid);
+	ret->cm_ca_post_save_command =
+		cm_store_maybe_strdup(ret, ca->cm_ca_post_save_command);
+	ret->cm_ca_post_save_uid =
+		cm_store_maybe_strdup(ret, ca->cm_ca_post_save_uid);
+
+	ret->cm_ca_root_cert_store_files =
+		cm_store_maybe_strdupv(ret, ca->cm_ca_root_cert_store_files);
+	ret->cm_ca_other_root_cert_store_files =
+		cm_store_maybe_strdupv(ret, ca->cm_ca_other_root_cert_store_files);
+	ret->cm_ca_other_cert_store_files =
+		cm_store_maybe_strdupv(ret, ca->cm_ca_other_cert_store_files);
+	ret->cm_ca_root_cert_store_nssdbs =
+		cm_store_maybe_strdupv(ret, ca->cm_ca_other_cert_store_nssdbs);
+	ret->cm_ca_other_root_cert_store_nssdbs =
+		cm_store_maybe_strdupv(ret, ca->cm_ca_other_cert_store_nssdbs);
+	ret->cm_ca_other_cert_store_nssdbs =
+		cm_store_maybe_strdupv(ret, ca->cm_ca_other_cert_store_nssdbs);
+
 	return ret;
 }

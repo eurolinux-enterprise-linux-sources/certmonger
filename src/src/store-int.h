@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -33,6 +33,12 @@ struct cm_store_entry {
 		enum cm_key_algorithm {
 			cm_key_unspecified = 0,
 			cm_key_rsa = 1,
+#ifdef CM_ENABLE_DSA
+			cm_key_dsa,
+#endif
+#ifdef CM_ENABLE_EC
+			cm_key_ecdsa,
+#endif
 		} cm_key_algorithm, cm_key_gen_algorithm;
 		int cm_key_size, cm_key_gen_size;
 	} cm_key_type;
@@ -47,8 +53,10 @@ struct cm_store_entry {
 	char *cm_key_nickname;
 	char *cm_key_pin;
 	char *cm_key_pin_file;
-	/* Cached public key */
+	/* Cached plain public key (used for subject and authority key IDs) */
 	char *cm_key_pubkey;
+	/* Cached public key info (used in signing requests when using NSS) */
+	char *cm_key_pubkey_info;
 	/* Location of certificate [use-once default]
 	 * NSS,/etc/pki/nssdb,Server-Cert-default */
 	enum cm_cert_storage_type {
@@ -59,8 +67,10 @@ struct cm_store_entry {
 	char *cm_cert_token;
 	char *cm_cert_nickname;
 	/* Cached certificate issuer/serial/subject/spki/expiration */
+	char *cm_cert_issuer_der;
 	char *cm_cert_issuer;
 	char *cm_cert_serial;
+	char *cm_cert_subject_der;
 	char *cm_cert_subject;
 	char *cm_cert_spki;
 	time_t cm_cert_not_before;
@@ -68,9 +78,17 @@ struct cm_store_entry {
 	char **cm_cert_hostname;
 	char **cm_cert_email;
 	char **cm_cert_principal;
+	char **cm_cert_ipaddress;
 	char *cm_cert_ku;
 	char *cm_cert_eku;
+	unsigned int cm_cert_is_ca: 1;
+	int cm_cert_ca_path_length;
+	char **cm_cert_crl_distribution_point;
+	char **cm_cert_freshest_crl;
+	char **cm_cert_ocsp_location;
+	char *cm_cert_ns_comment;
 	char *cm_cert_profile;
+	unsigned int cm_cert_no_ocsp_check: 1;
 	time_t cm_last_need_notify_check;
 	time_t cm_last_need_enroll_check;
 	/* How to notify administrator: syslog(LOG_AUTHPRIV?), mail to root@? */
@@ -86,15 +104,34 @@ struct cm_store_entry {
 	/* CSR template information [or imported from existing certificate]
 	   * subject (cn=host name)
 	   * subjectaltname
+	   *  hostname
 	   *  email
 	   *  principal name
-	   * ku, eku */
+	   *  IP address
+	   * ku, eku
+	   * is_ca, ca_path_length
+	   * crl_distribution_points
+	   * freshest_crl
+	   * aia_ocsp_locations
+	   * nscomment
+	   * template
+	   */
+	char *cm_template_subject_der;
 	char *cm_template_subject;
 	char **cm_template_hostname;
 	char **cm_template_email;
 	char **cm_template_principal;
+	char **cm_template_ipaddress;
 	char *cm_template_ku;
 	char *cm_template_eku;
+	unsigned int cm_template_is_ca: 1;
+	int cm_template_ca_path_length;
+	char **cm_template_crl_distribution_point;
+	char **cm_template_freshest_crl;
+	char **cm_template_ocsp_location;
+	char *cm_template_ns_comment;
+	char *cm_template_profile;
+	unsigned int cm_template_no_ocsp_check: 1;
 	/* A challenge password, which may be included (in cleartext form!) in
 	 * a CSR. */
 	char *cm_challenge_password;
@@ -104,8 +141,8 @@ struct cm_store_entry {
 	char *cm_spkac;
 	/* Our idea of the state of the cert. */
 	enum cm_state {
-		CM_INVALID,
 		CM_NEED_KEY_PAIR, CM_GENERATING_KEY_PAIR,
+		CM_NEED_KEY_GEN_PERMS,
 		CM_NEED_KEY_GEN_PIN, CM_NEED_KEY_GEN_TOKEN, CM_HAVE_KEY_PAIR,
 		CM_NEED_KEYINFO, CM_READING_KEYINFO,
 		CM_NEED_KEYINFO_READ_PIN, CM_NEED_KEYINFO_READ_TOKEN,
@@ -117,12 +154,20 @@ struct cm_store_entry {
 		CM_CA_REJECTED, CM_CA_WORKING,
 		CM_NEED_TO_SAVE_CERT, CM_PRE_SAVE_CERT,
 		CM_START_SAVING_CERT, CM_SAVING_CERT,
+		CM_NEED_CERTSAVE_PERMS,
+		CM_NEED_TO_SAVE_CA_CERTS,
+		CM_START_SAVING_CA_CERTS, CM_SAVING_CA_CERTS,
+		CM_NEED_TO_SAVE_ONLY_CA_CERTS,
+		CM_START_SAVING_ONLY_CA_CERTS, CM_SAVING_ONLY_CA_CERTS,
+		CM_NEED_CA_CERT_SAVE_PERMS,
 		CM_NEED_TO_READ_CERT, CM_READING_CERT,
 		CM_SAVED_CERT, CM_POST_SAVED_CERT,
 		CM_MONITORING,
 		CM_NEED_TO_NOTIFY_VALIDITY, CM_NOTIFYING_VALIDITY,
 		CM_NEED_TO_NOTIFY_REJECTION, CM_NOTIFYING_REJECTION,
 		CM_NEED_TO_NOTIFY_ISSUED_FAILED, CM_NOTIFYING_ISSUED_FAILED,
+		CM_NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED,
+		CM_NOTIFYING_ONLY_CA_SAVE_FAILED,
 		CM_NEED_TO_NOTIFY_ISSUED_SAVED, CM_NOTIFYING_ISSUED_SAVED,
 		CM_NEED_GUIDANCE,
 		CM_NEWLY_ADDED,
@@ -133,6 +178,7 @@ struct cm_store_entry {
 		CM_NEWLY_ADDED_START_READING_CERT,
 		CM_NEWLY_ADDED_READING_CERT,
 		CM_NEWLY_ADDED_DECIDING,
+		CM_INVALID,
 	} cm_state;
 	/* Whether to autorenew-at-expiration */
 	unsigned int cm_autorenew:1;
@@ -140,9 +186,6 @@ struct cm_store_entry {
 	unsigned int cm_monitor:1;
 	/* Type and location of CA [or use default if NULL] */
 	char *cm_ca_nickname;
-	/* Name of the profile/template/certtype that we use to inform the CA
-	 * of the type of certificate that we want. */
-	char *cm_ca_profile;
 	/* Date of submission for in-progress submissions. */
 	time_t cm_submitted;
 	/* Value of CA cookie for in-progress submissions. */
@@ -151,6 +194,11 @@ struct cm_store_entry {
 	char *cm_ca_error;
 	/* The certificate, if we have one. */
 	char *cm_cert;
+	/* Certificates between ours and the CA's root, if there are any. */
+	struct cm_nickcert {
+		char *cm_nickname;	/* Suggested nickname. */
+		char *cm_cert;		/* PEM-format certificate. */
+	} **cm_cert_chain;
 	/* A command to run before we save the certificate. */
 	char *cm_pre_certsave_command;
 	/* The UID of the user as whom we run the above command. */
@@ -159,6 +207,14 @@ struct cm_store_entry {
 	char *cm_post_certsave_command;
 	/* The UID of the user as whom we run the above command. */
 	char *cm_post_certsave_uid;
+	/* Initially-empty lists of places where we the CA's roots, the CA's
+	 * other roots, and the CA's other certs and our chain. */
+	char **cm_root_cert_store_files;
+	char **cm_other_root_cert_store_files;
+	char **cm_other_cert_store_files;
+	char **cm_root_cert_store_nssdbs;
+	char **cm_other_root_cert_store_nssdbs;
+	char **cm_other_cert_store_nssdbs;
 };
 
 struct cm_store_ca {
@@ -169,6 +225,35 @@ struct cm_store_ca {
 	void *cm_store_private;
 	/* A persistent unique identifier or nickname. */
 	char *cm_nickname;
+	/* What the helper suggests it be called. */
+	char *cm_ca_aka;
+	/* We have multiple state machines. */
+	enum cm_ca_phase {
+		cm_ca_phase_identify = 0,
+		cm_ca_phase_certs,
+		cm_ca_phase_profiles,
+		cm_ca_phase_default_profile,
+		cm_ca_phase_enroll_reqs,
+		cm_ca_phase_renew_reqs,
+		cm_ca_phase_invalid,
+	} cm_ca_phase;
+	/* Data refresh state. */
+	enum cm_ca_phase_state {
+		CM_CA_IDLE = 0,
+		CM_CA_NEED_TO_REFRESH,
+		CM_CA_REFRESHING,
+		CM_CA_DATA_UNREACHABLE,
+		CM_CA_NEED_TO_SAVE_DATA,
+		CM_CA_PRE_SAVE_DATA,
+		CM_CA_START_SAVING_DATA,
+		CM_CA_SAVING_DATA,
+		CM_CA_NEED_POST_SAVE_DATA,
+		CM_CA_POST_SAVE_DATA,
+		CM_CA_SAVED_DATA,
+		CM_CA_NEED_TO_ANALYZE,
+		CM_CA_ANALYZING,
+		CM_CA_DISABLED,
+	} cm_ca_state[cm_ca_phase_invalid];
 	/* A list of issuer names.  If no CA is specified when we create a new
 	 * request, and the certificate already exists and was issued by one of
 	 * these names, we'll use this CA. */
@@ -186,15 +271,52 @@ struct cm_store_ca {
 	int cm_ca_internal_force_issue_time:1;
 	time_t cm_ca_internal_issue_time;
 	char *cm_ca_external_helper;
+	/* An error message from the CA, hopefully a useful one. */
+	char *cm_ca_error;
+	/* "The" root, at the top of the chain of trust. */
+	struct cm_nickcert **cm_ca_root_certs;
+	/* A possibly-empty list of other trusted roots, for whatever reason. */
+	struct cm_nickcert **cm_ca_other_root_certs;
+	/* A possibly-empty list of other certificates which we might need when
+	 * constructing chains.  If our issuer isn't self-signed, then it
+	 * should show up in this list. */
+	struct cm_nickcert **cm_ca_other_certs;
+	/* A list of attributes which the CA requires us to supply with
+	 * requests for new certificates, which we should in turn require of
+	 * our clients. */
+	char **cm_ca_required_enroll_attributes;
+	char **cm_ca_required_renewal_attributes;
+	/* A list of enrollment profiles which are supported, and a default. */
+	char **cm_ca_profiles;
+	char *cm_ca_default_profile;
+	/* A command to run before we save data to wherever it goes. */
+	char *cm_ca_pre_save_command;
+	/* The UID of the user as whom we run the above command. */
+	char *cm_ca_pre_save_uid;
+	/* A command to run after we save data to wherever it goes. */
+	char *cm_ca_post_save_command;
+	/* The UID of the user as whom we run the above command. */
+	char *cm_ca_post_save_uid;
+	/* Initially-empty lists of places where we store our roots, other
+	 * roots, and other certs. */
+	char **cm_ca_root_cert_store_files;
+	char **cm_ca_other_root_cert_store_files;
+	char **cm_ca_other_cert_store_files;
+	char **cm_ca_root_cert_store_nssdbs;
+	char **cm_ca_other_root_cert_store_nssdbs;
+	char **cm_ca_other_cert_store_nssdbs;
 };
 
 const char *cm_store_state_as_string(enum cm_state state);
 enum cm_state cm_store_state_from_string(const char *name);
+const char *cm_store_ca_state_as_string(enum cm_ca_phase_state state);
+enum cm_ca_phase_state cm_store_ca_state_from_string(const char *name);
+const char *cm_store_ca_phase_as_string(enum cm_ca_phase phase);
+enum cm_ca_phase cm_store_ca_phase_from_string(const char *name);
 
 char *cm_store_entry_next_busname(void *parent);
 struct cm_store_entry *cm_store_files_entry_read(void *parent,
 						 const char *filename);
 char *cm_store_ca_next_busname(void *parent);
-struct cm_store_ca *cm_store_files_ca_read(void *parent,
-					   const char *filename);
+struct cm_store_ca *cm_store_files_ca_read(void *parent, const char *filename);
 #endif

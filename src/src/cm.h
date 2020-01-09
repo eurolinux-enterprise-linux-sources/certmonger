@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2011 Red Hat, Inc.
+ * Copyright (C) 2009,2011,2012,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,9 +22,10 @@ struct cm_context;
 struct cm_store_entry;
 struct cm_store_ca;
 struct tevent_context;
+enum cm_ca_phase;
 
 int cm_init(struct tevent_context *parent, struct cm_context **context,
-	    int idle_timeout);
+	    int idle_timeout, const char *gate_command);
 int cm_start_all(struct cm_context *context);
 void cm_reset_timeout(struct cm_context *context);
 int cm_keep_going(struct cm_context *context);
@@ -46,9 +47,15 @@ struct cm_store_ca *cm_get_ca_by_busname(struct cm_context *c,
 				         const char *busname);
 int cm_add_ca(struct cm_context *context, struct cm_store_ca *new_ca);
 int cm_remove_ca(struct cm_context *context, const char *nickname);
-dbus_bool_t cm_restart_one(struct cm_context *c, const char *nickname);
-dbus_bool_t cm_stop_one(struct cm_context *c, const char *nickname);
-dbus_bool_t cm_start_one(struct cm_context *c, const char *nickname);
+dbus_bool_t cm_restart_entry(struct cm_context *c, const char *nickname);
+dbus_bool_t cm_stop_entry(struct cm_context *c, const char *nickname);
+dbus_bool_t cm_start_entry(struct cm_context *c, const char *nickname);
+dbus_bool_t cm_restart_ca(struct cm_context *c, const char *nickname,
+		          enum cm_ca_phase);
+dbus_bool_t cm_stop_ca(struct cm_context *c, const char *nickname,
+		       enum cm_ca_phase);
+dbus_bool_t cm_start_ca(struct cm_context *c, const char *nickname,
+		        enum cm_ca_phase);
 
 void *cm_get_conn_ptr(struct cm_context *context);
 void cm_set_conn_ptr(struct cm_context *context, void *ptr);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010 Red Hat, Inc.
+ * Copyright (C) 2010,2012,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,6 +34,7 @@ enum cm_notification_method;
 enum cm_key_storage_type;
 enum cm_cert_storage_type;
 
+enum cm_key_algorithm cm_prefs_preferred_key_algorithm(void);
 enum cm_prefs_cipher cm_prefs_preferred_cipher(void);
 enum cm_prefs_digest cm_prefs_preferred_digest(void);
 int cm_prefs_notify_ttls(const time_t **ttls, unsigned int *n_ttls);
@@ -45,6 +46,8 @@ const char *cm_prefs_validity_period(void);
 int cm_prefs_monitor(void);
 int cm_prefs_autorenew(void);
 int cm_prefs_populate_unique_id(void);
+const char *cm_prefs_nss_ca_trust(void);
+const char *cm_prefs_nss_other_trust(void);
 
 const char *cm_prefs_dogtag_ee_url(void);
 const char *cm_prefs_dogtag_agent_url(void);

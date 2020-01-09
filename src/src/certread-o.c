@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <nss.h>
@@ -47,6 +48,7 @@
 
 struct cm_certread_state {
 	struct cm_certread_state_pvt pvt;
+	struct cm_store_entry *entry;
 	struct cm_subproc_state *subproc;
 };
 
@@ -60,6 +62,12 @@ cm_certread_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	char buf[LINE_MAX];
 	unsigned char *der;
 	long error;
+
+	if (entry->cm_cert_storage_location == NULL) {
+		cm_log(1, "Error reading certificate: no location "
+		       "specified.\n");
+		_exit(1);
+	}
 
 	util_o_init();
 	ERR_load_crypto_strings();
@@ -109,31 +117,27 @@ cm_certread_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 /* Check if something changed, for example we finished reading the data we need
  * from the cert. */
 static int
-cm_certread_o_ready(struct cm_store_entry *entry,
-		    struct cm_certread_state *state)
+cm_certread_o_ready(struct cm_certread_state *state)
 {
-	return cm_subproc_ready(entry, state->subproc);
+	return cm_subproc_ready(state->subproc);
 }
 
 /* Get a selectable-for-read descriptor we can poll for status changes. */
 static int
-cm_certread_o_get_fd(struct cm_store_entry *entry,
-		     struct cm_certread_state *state)
+cm_certread_o_get_fd(struct cm_certread_state *state)
 {
-	return cm_subproc_get_fd(entry, state->subproc);
+	return cm_subproc_get_fd(state->subproc);
 }
 
 /* Clean up after reading the certificate. */
 static void
-cm_certread_o_done(struct cm_store_entry *entry,
-		   struct cm_certread_state *state)
+cm_certread_o_done(struct cm_certread_state *state)
 {
 	if (state->subproc != NULL) {
-		cm_certread_read_data_from_buffer(entry,
-						  cm_subproc_get_msg(entry,
-								     state->subproc,
+		cm_certread_read_data_from_buffer(state->entry,
+						  cm_subproc_get_msg(state->subproc,
 								     NULL));
-		cm_subproc_done(entry, state->subproc);
+		cm_subproc_done(state->subproc);
 	}
 	talloc_free(state);
 }
@@ -154,7 +158,8 @@ cm_certread_o_start(struct cm_store_entry *entry)
 		state->pvt.ready = cm_certread_o_ready;
 		state->pvt.get_fd= cm_certread_o_get_fd;
 		state->pvt.done= cm_certread_o_done;
-		state->subproc = cm_subproc_start(cm_certread_o_main,
+		state->entry = entry;
+		state->subproc = cm_subproc_start(cm_certread_o_main, state,
 						  NULL, entry, NULL);
 		if (state->subproc == NULL) {
 			talloc_free(state);

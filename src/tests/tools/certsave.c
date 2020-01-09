@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2011 Red Hat, Inc.
+ * Copyright (C) 2009,2011,2013 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,7 @@
 #include "../../src/log.h"
 #include "../../src/store.h"
 #include "../../src/store-int.h"
+#include "tools.h"
 
 static void
 wait_to_read(int fd)
@@ -53,6 +54,7 @@ main(int argc, char **argv)
 	const char *ctype;
 	cm_log_set_method(cm_log_stderr);
 	cm_log_set_level(3);
+	cm_set_fips_from_env();
 	parent = talloc_new(NULL);
 	if (argc > 1) {
 		entry = cm_store_files_entry_read(parent, argv[1]);
@@ -68,17 +70,17 @@ main(int argc, char **argv)
 	state = cm_certsave_start(entry);
 	if (state != NULL) {
 		for (;;) {
-			fd = cm_certsave_get_fd(entry, state);
+			fd = cm_certsave_get_fd(state);
 			if (fd != -1) {
 				wait_to_read(fd);
 			} else {
 				sleep(1);
 			}
-			if (cm_certsave_ready(entry, state) == 0) {
+			if (cm_certsave_ready(state) == 0) {
 				break;
 			}
 		}
-		if (cm_certsave_saved(entry, state) == 0) {
+		if (cm_certsave_saved(state) == 0) {
 			ret = 0;
 		} else {
 			ctype = "unknown";
@@ -90,11 +92,28 @@ main(int argc, char **argv)
 				ctype = "NSS";
 				break;
 			}
-			printf("Failed to save (%s:%s).\n",
-			       ctype, entry->cm_cert_storage_location);
+			if (cm_certsave_conflict_subject(state) == 0) {
+				printf("Failed to save (%s:%s), "
+				       "subject name conflict.\n",
+				       ctype, entry->cm_cert_storage_location);
+			} else
+			if (cm_certsave_conflict_nickname(state) == 0) {
+				printf("Failed to save (%s:%s), "
+				       "certificate nickname conflict.\n",
+				       ctype, entry->cm_cert_storage_location);
+			} else
+			if (cm_certsave_permissions_error(state) == 0) {
+				printf("Failed to save (%s:%s), "
+				       "filesystem permissions error.\n",
+				       ctype, entry->cm_cert_storage_location);
+			} else {
+				printf("Failed to save (%s:%s), "
+				       "don't know why.\n",
+				       ctype, entry->cm_cert_storage_location);
+			}
 			ret = 1;
 		}
-		cm_certsave_done(entry, state);
+		cm_certsave_done(state);
 	} else {
 		printf("Failed to start.\n");
 		ret = 1;

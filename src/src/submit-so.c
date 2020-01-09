@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2009,2010,2011 Red Hat, Inc.
- * 
+ * Copyright (C) 2009,2010,2011,2012,2014 Red Hat, Inc.
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -23,6 +23,7 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <nss.h>
@@ -45,40 +46,26 @@
 #include "store-int.h"
 #include "submit.h"
 #include "submit-int.h"
+#include "submit-o.h"
 #include "submit-u.h"
 #include "subproc.h"
 #include "tm.h"
 #include "util-o.h"
-
-struct cm_submit_state {
-	struct cm_submit_state_pvt pvt;
-	struct cm_subproc_state *subproc;
-};
 
 static int
 cm_submit_so_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		  void *userdata)
 {
 	FILE *keyfp, *pem;
-	RSA *rsa;
 	EVP_PKEY *pkey;
-	X509_REQ *req;
 	X509 *cert;
-	BIO *bio;
-	ASN1_INTEGER *seriali;
-	BASIC_CONSTRAINTS *basic;
-	unsigned char *seriald, *basicd;
-	const unsigned char *serialtmp, *basictmp;
-	char *serial, *pin;
-	int status, seriall, basicl;
+	char *pin;
+	int status;
 	long error;
 	char buf[LINE_MAX];
 	time_t lifedelta;
 	long life;
 	time_t now;
-#ifdef HAVE_UUID
-	unsigned char uuid[16];
-#endif
 
 	util_o_init();
 	ERR_load_crypto_strings();
@@ -105,66 +92,12 @@ cm_submit_so_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		pkey = EVP_PKEY_new();
 		if (pkey != NULL) {
 			if (cm_pin_read_for_key(entry, &pin) == 0) {
-				rsa = PEM_read_RSAPrivateKey(keyfp, NULL, NULL, pin);
-				if (rsa != NULL) {
-					EVP_PKEY_assign_RSA(pkey, rsa); /* pkey owns rsa now */
-					bio = BIO_new_mem_buf(entry->cm_csr,
-							      strlen(entry->cm_csr));
-					if (bio != NULL) {
-						req = PEM_read_bio_X509_REQ(bio, NULL,
-									    NULL, NULL);
-						if (req != NULL) {
-							cert = X509_REQ_to_X509(req,
-										0,
-										pkey);
-							ASN1_TIME_set(cert->cert_info->validity->notBefore, now);
-							ASN1_TIME_set(cert->cert_info->validity->notAfter, now + life);
-							X509_set_version(cert, 2);
-							/* set the serial number */
-							cm_log(3, "Setting certificate serial number \"%s\".\n",
-							       ca->cm_ca_internal_serial);
-							serial = cm_store_serial_to_der(ca, ca->cm_ca_internal_serial);
-							seriall = strlen(serial) / 2;
-							seriald = talloc_size(ca, seriall);
-							cm_store_hex_to_bin(serial, seriald, seriall);
-							serialtmp = seriald;
-							seriali = d2i_ASN1_INTEGER(NULL, &serialtmp, seriall);
-							X509_set_serialNumber(cert, seriali);
-#ifdef HAVE_UUID
-							if (cm_prefs_populate_unique_id()) {
-								if (cm_submit_uuid_new(uuid) == 0) {
-									cert->cert_info->subjectUID = M_ASN1_BIT_STRING_new();
-									if (cert->cert_info->subjectUID != NULL) {
-										ASN1_BIT_STRING_set(cert->cert_info->subjectUID, uuid, 16);
-										cert->cert_info->issuerUID = M_ASN1_BIT_STRING_new();
-										if (cert->cert_info->issuerUID != NULL) {
-											ASN1_BIT_STRING_set(cert->cert_info->issuerUID, uuid, 16);
-										}
-									}
-								}
-							}
-#endif
-							/* add basic constraints */
-							cert->cert_info->extensions = X509_REQ_get_extensions(req);
-							basicl = strlen(CM_BASIC_CONSTRAINT_NOT_CA) / 2;
-							basicd = talloc_size(ca, basicl);
-							cm_store_hex_to_bin(CM_BASIC_CONSTRAINT_NOT_CA, basicd, basicl);
-							basictmp = basicd;
-							basic = d2i_BASIC_CONSTRAINTS(NULL, &basictmp, basicl);
-							X509_add1_ext_i2d(cert, NID_basic_constraints, basic, 1, 0);
-							/* finish up */
-							X509_sign(cert, pkey,
-								  cm_prefs_ossl_hash());
-							status = 0;
-						} else {
-							cm_log(1, "Error reading "
-							       "signing request.\n");
-						}
-						BIO_free(bio);
-					} else {
-						cm_log(1, "Error parsing signing "
-						       "request.\n");
-					}
+				pkey = PEM_read_PrivateKey(keyfp, NULL, NULL, pin);
+				if (pkey != NULL) {
+					status = cm_submit_o_sign(ca, entry->cm_csr,
+								  NULL, pkey,
+								  ca->cm_ca_internal_serial,
+								  now, life, &cert);
 				} else {
 					cm_log(1, "Error reading private key from "
 					       "'%s': %s.\n",
@@ -203,22 +136,15 @@ cm_submit_so_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	return 0;
 }
 
-/* Get a selectable-for-read descriptor we can poll for status changes. */
-static int
-cm_submit_so_get_fd(struct cm_store_entry *entry, struct cm_submit_state *state)
-{
-	return cm_subproc_get_fd(entry, state->subproc);
-}
-
 /* Save CA-specific identifier for our submitted request. */
 static int
-cm_submit_so_save_ca_cookie(struct cm_store_entry *entry,
-			    struct cm_submit_state *state)
+cm_submit_so_save_ca_cookie(struct cm_submit_state *state)
 {
-	talloc_free(entry->cm_ca_cookie);
-	entry->cm_ca_cookie = talloc_strdup(entry,
-					    entry->cm_key_storage_location);
-	if (entry->cm_ca_cookie == NULL) {
+	talloc_free(state->entry->cm_ca_cookie);
+	state->entry->cm_ca_cookie =
+		talloc_strdup(state->entry,
+			      state->entry->cm_key_storage_location);
+	if (state->entry->cm_ca_cookie == NULL) {
 		cm_log(1, "Out of memory.\n");
 		return ENOMEM;
 	}
@@ -227,21 +153,22 @@ cm_submit_so_save_ca_cookie(struct cm_store_entry *entry,
 
 /* Check if an attempt to submit has finished. */
 static int
-cm_submit_so_ready(struct cm_store_entry *entry, struct cm_submit_state *state)
+cm_submit_so_ready(struct cm_submit_state *state)
 {
-	return cm_subproc_ready(entry, state->subproc);
+	return cm_subproc_ready(state->subproc);
 }
 
 /* Check if the certificate was issued. */
 static int
-cm_submit_so_issued(struct cm_store_entry *entry, struct cm_submit_state *state)
+cm_submit_so_issued(struct cm_submit_state *state)
 {
 	const char *msg;
-	msg = cm_subproc_get_msg(entry, state->subproc, NULL);
+
+	msg = cm_subproc_get_msg(state->subproc, NULL);
 	if ((strstr(msg, "-----BEGIN CERTIFICATE-----") != NULL) &&
 	    (strstr(msg, "-----END CERTIFICATE-----") != NULL)) {
-		talloc_free(entry->cm_cert);
-		entry->cm_cert = talloc_strdup(entry, msg);
+		talloc_free(state->entry->cm_cert);
+		state->entry->cm_cert = talloc_strdup(state->entry, msg);
 		return 0;
 	}
 	return -1;
@@ -249,34 +176,44 @@ cm_submit_so_issued(struct cm_store_entry *entry, struct cm_submit_state *state)
 
 /* Check if the signing request was rejected. */
 static int
-cm_submit_so_rejected(struct cm_store_entry *entry,
-		      struct cm_submit_state *state)
+cm_submit_so_rejected(struct cm_submit_state *state)
 {
-	return -1; /* it never gets rejected */
+	int status;
+
+	status = cm_subproc_get_exitstatus(state->subproc);
+	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 2)) {
+		return -1; /* it should never get rejected */
+	}
+	return 0;
 }
 
 /* Check if the CA was unreachable. */
 static int
-cm_submit_so_unreachable(struct cm_store_entry *entry,
-			 struct cm_submit_state *state)
+cm_submit_so_unreachable(struct cm_submit_state *state)
 {
 	return -1; /* uh, we're the CA */
 }
 
 /* Check if the CA was unconfigured. */
 static int
-cm_submit_so_unconfigured(struct cm_store_entry *entry,
-			  struct cm_submit_state *state)
+cm_submit_so_unconfigured(struct cm_submit_state *state)
+{
+	return -1; /* uh, we're the CA */
+}
+
+/* Check if the CA is something we can ask for certificates. */
+static int
+cm_submit_so_unsupported(struct cm_submit_state *state)
 {
 	return -1; /* uh, we're the CA */
 }
 
 /* Done talking to the CA. */
 static void
-cm_submit_so_done(struct cm_store_entry *entry, struct cm_submit_state *state)
+cm_submit_so_done(struct cm_submit_state *state)
 {
 	if (state->subproc != NULL) {
-		cm_subproc_done(entry, state->subproc);
+		cm_subproc_done(state->subproc);
 	}
 	talloc_free(state);
 }
@@ -294,16 +231,17 @@ cm_submit_so_start(struct cm_store_ca *ca, struct cm_store_entry *entry)
 	state = talloc_ptrtype(entry, state);
 	if (state != NULL) {
 		memset(state, 0, sizeof(*state));
-		state->pvt.get_fd = cm_submit_so_get_fd;
-		state->pvt.save_ca_cookie = cm_submit_so_save_ca_cookie;
-		state->pvt.ready = cm_submit_so_ready;
-		state->pvt.issued = cm_submit_so_issued;
-		state->pvt.rejected = cm_submit_so_rejected;
-		state->pvt.unreachable = cm_submit_so_unreachable;
-		state->pvt.unconfigured = cm_submit_so_unconfigured;
-		state->pvt.done = cm_submit_so_done;
-		state->pvt.delay = -1;
-		state->subproc = cm_subproc_start(cm_submit_so_main,
+		state->entry = entry;
+		state->save_ca_cookie = cm_submit_so_save_ca_cookie;
+		state->ready = cm_submit_so_ready;
+		state->issued = cm_submit_so_issued;
+		state->rejected = cm_submit_so_rejected;
+		state->unreachable = cm_submit_so_unreachable;
+		state->unconfigured = cm_submit_so_unconfigured;
+		state->unsupported = cm_submit_so_unsupported;
+		state->done = cm_submit_so_done;
+		state->delay = -1;
+		state->subproc = cm_subproc_start(cm_submit_so_main, state,
 						  ca, entry, NULL);
 		if (state->subproc == NULL) {
 			talloc_free(state);

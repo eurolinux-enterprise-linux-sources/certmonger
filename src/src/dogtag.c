@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,9 @@
 #include "config.h"
 
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -28,21 +30,23 @@
 
 #include <krb5.h>
 
-#include <openssl/bn.h>
-#include <openssl/pem.h>
-#include <openssl/x509.h>
+#include <nss.h>
+#include <cert.h>
 
 #include <dbus/dbus.h>
 
 #include <talloc.h>
 
+#include "log.h"
 #include "prefs.h"
+#include "store.h"
 #include "submit-d.h"
 #include "submit-e.h"
 #include "submit-h.h"
 #include "submit-u.h"
 #include "util.h"
-#include "util-o.h"
+#include "util-m.h"
+#include "util-n.h"
 
 #ifdef ENABLE_NLS
 #include <libintl.h>
@@ -73,8 +77,10 @@ help(const char *cmd)
 		"\t[-S state]\n"
 		"\t[-T profile]\n"
 		"\t[-v]\n"
+		"\t[-N]\n"
+		"\t[-V dogtag_version]\n"
 		"\t[csrfile]\n",
-		strchr(cmd, '/') ?  strrchr(cmd, '/') + 1 : cmd);
+		strchr(cmd, '/') ? strrchr(cmd, '/') + 1 : cmd);
 }
 
 static char *
@@ -108,24 +114,22 @@ statevar(const char *state, const char *what)
 static char *
 serial_hex_from_cert(const char *cert)
 {
-	X509 *c;
-	BIGNUM *bn;
-	BIO *mem;
+	CERTCertificate *c;
+	char *ret = NULL, *pem;
 
 	if ((cert != NULL) && (strlen(cert) > 0)) {
-		mem = BIO_new_mem_buf((void *) cert, -1);
-		if (mem != NULL) {
-			c = PEM_read_bio_X509(mem, NULL, NULL, NULL);
+		pem = talloc_strdup(NULL, cert);
+		if (pem != NULL) {
+			c = CERT_DecodeCertFromPackage(pem, strlen(pem));
 			if (c != NULL) {
-				bn = ASN1_INTEGER_to_BN(X509_get_serialNumber(c),
-							NULL);
-				if (bn != NULL) {
-					return BN_bn2hex(bn);
-				}
+				ret = cm_store_hex_from_bin(NULL,
+							    c->serialNumber.data,
+							    c->serialNumber.len);
+				CERT_DestroyCertificate(c);
 			}
 		}
 	}
-	return NULL;
+	return ret;
 }
 
 int
@@ -143,19 +147,38 @@ main(int argc, char **argv)
 	const char *tmp = NULL, *results = NULL;
 	struct cm_submit_h_context *hctx;
 	void *ctx;
-	int c, verbose = 0, i;
-	int eeport = 9180, agentport = 9443;
+	int c, verbose = 0, force_new = 0, force_renew = 0, i;
+	int eeport, agentport;
 	enum { op_none, op_submit, op_check, op_approve, op_retrieve } op = op_none;
 	dbus_bool_t can_agent, use_agent, missing_args = FALSE;
 	struct dogtag_default **defaults;
 	enum cm_external_status ret;
+	NSSInitContext *nctx;
+	const char *es;
+	const char *mode = CM_OP_SUBMIT;
+
+	if (getenv(CM_SUBMIT_OPERATION_ENV) != NULL) {
+		mode = getenv(CM_SUBMIT_OPERATION_ENV);
+	}
+	if ((strcasecmp(mode, CM_OP_SUBMIT) == 0) ||
+	    (strcasecmp(mode, CM_OP_POLL) == 0)) {
+		/* fall through */
+	} else
+	if (strcasecmp(mode, CM_OP_IDENTIFY) == 0) {
+		printf("Dogtag (%s %s)\n", PACKAGE_NAME, PACKAGE_VERSION);
+		return 0;
+	} else {
+		/* unsupported request */
+		return CM_SUBMIT_STATUS_OPERATION_NOT_SUPPORTED;
+	}
 
 #ifdef ENABLE_NLS
 	bindtextdomain(PACKAGE, MYLOCALEDIR);
 #endif
+
 	savedstate = getenv(CM_SUBMIT_COOKIE_ENV);
 
-	while ((c = getopt(argc, argv, "E:A:d:n:i:C:c:k:p:P:s:D:S:T:v")) != -1) {
+	while ((c = getopt(argc, argv, "E:A:d:n:i:C:c:k:p:P:s:D:S:T:vV:NR")) != -1) {
 		switch (c) {
 		case 'E':
 			eeurl = optarg;
@@ -189,7 +212,7 @@ main(int argc, char **argv)
 			serial = optarg;
 			break;
 		case 's':
-			serial = util_o_dec_from_hex(optarg);
+			serial = util_dec_from_hex(optarg);
 			break;
 		case 'S':
 			savedstate = optarg;
@@ -200,11 +223,40 @@ main(int argc, char **argv)
 		case 'v':
 			verbose++;
 			break;
+		case 'V':
+			dogtag_version = optarg;
+			break;
+		case 'N':
+			force_new++;
+			force_renew = 0;
+			break;
+		case 'R':
+			force_renew++;
+			force_new = 0;
+			break;
 		default:
 			help(argv[0]);
-			return CM_STATUS_UNCONFIGURED;
+			return CM_SUBMIT_STATUS_UNCONFIGURED;
 			break;
 		}
+	}
+
+	umask(S_IRWXG | S_IRWXO);
+
+	nctx = NSS_InitContext(CM_DEFAULT_CERT_STORAGE_LOCATION,
+			       NULL, NULL, NULL, NULL,
+			       NSS_INIT_NOCERTDB |
+			       NSS_INIT_READONLY |
+			       NSS_INIT_NOROOTINIT |
+			       NSS_INIT_NOMODDB);
+	if (nctx == NULL) {
+		cm_log(1, "Unable to initialize NSS.\n");
+		_exit(1);
+	}
+	es = util_n_fips_hook();
+	if (es != NULL) {
+		cm_log(1, "Error putting NSS into FIPS mode: %s\n", es);
+		_exit(1);
 	}
 
 	ctx = talloc_new(NULL);
@@ -214,19 +266,22 @@ main(int argc, char **argv)
 		host = get_config_entry(ipaconfig,
 					"global",
 					"host");
-		dogtag_version = get_config_entry(ipaconfig,
-						  "global",
-						  "dogtag_version");
+		if (dogtag_version == NULL) {
+			dogtag_version = get_config_entry(ipaconfig,
+							  "global",
+							  "dogtag_version");
+		}
 	} else {
 		host = NULL;
 		dogtag_version = NULL;
 	}
 
-	if (dogtag_version != NULL) {
-		if (atof(dogtag_version) >= 10) {
-			eeport = 8080;
-			agentport = 8443;
-		}
+	if ((dogtag_version != NULL) && (atof(dogtag_version) >= 10)) {
+		eeport = 8080;
+		agentport = 8443;
+	} else {
+		eeport = 9180;
+		agentport = 9443;
 	}
 
 	if (eeurl == NULL) {
@@ -246,12 +301,15 @@ main(int argc, char **argv)
 		}
 	}
 	if (template == NULL) {
-		template = cm_prefs_dogtag_profile();
+		template = getenv(CM_SUBMIT_PROFILE_ENV);
 		if (template == NULL) {
-			/* Maybe we should ask the server for which profiles
-			 * it supports, but for now we just assume that this
-			 * one hasn't been removed. */
-			template = "caServerCert";
+			template = cm_prefs_dogtag_profile();
+			if (template == NULL) {
+				/* Maybe we should ask the server for which
+				 * profiles it supports, but for now we just
+				 * assume that this one hasn't been removed. */
+				template = "caServerCert";
+			}
 		}
 	}
 	if (serial == NULL) {
@@ -260,7 +318,7 @@ main(int argc, char **argv)
 			if (cm_prefs_dogtag_renew()) {
 				serial = serial_hex_from_cert(tmp);
 				if (serial != NULL) {
-					serial = util_o_dec_from_hex(serial);
+					serial = util_dec_from_hex(serial);
 				}
 			}
 		}
@@ -300,6 +358,10 @@ main(int argc, char **argv)
 	} else {
 		can_agent = FALSE;
 	}
+	if (force_renew && (serial == NULL)) {
+		printf(_("Requested renewal, but no serial number provided.\n"));
+		missing_args = TRUE;
+	}
 	if (eeurl == NULL) {
 		printf(_("No end-entity URL (-E) given, and no default known.\n"));
 		missing_args = TRUE;
@@ -314,7 +376,11 @@ main(int argc, char **argv)
 	}
 	if (missing_args) {
 		help(argv[0]);
-		return CM_STATUS_UNCONFIGURED;
+		return CM_SUBMIT_STATUS_UNCONFIGURED;
+	}
+	if (NSS_ShutdownContext(nctx) != SECSuccess) {
+		printf(_("Error shutting down NSS.\n"));
+		return CM_SUBMIT_STATUS_UNREACHABLE;
 	}
 
 	/* Figure out where we are in the multi-step process. */
@@ -343,12 +409,12 @@ main(int argc, char **argv)
 	switch (op) {
 	case op_none:
 		printf(_("Internal error: unknown state.\n"));
-		return CM_STATUS_UNCONFIGURED;
+		return CM_SUBMIT_STATUS_UNCONFIGURED;
 		break;
 	case op_submit:
 		url = talloc_asprintf(ctx, "%s/profileSubmit", eeurl);
 		template = cm_submit_u_url_encode(template);
-		if (serial != NULL) {
+		if ((serial != NULL) && (strlen(serial) > 0) && !force_new) {
 			/* Renew-by-serial. */
 			serial = cm_submit_u_url_encode(serial);
 			params = talloc_asprintf(ctx,
@@ -371,7 +437,7 @@ main(int argc, char **argv)
 			if ((csr == NULL) || (strlen(csr) == 0)) {
 				printf(_("Unable to read signing request.\n"));
 				help(argv[0]);
-				return CM_STATUS_UNCONFIGURED;
+				return CM_SUBMIT_STATUS_UNCONFIGURED;
 			}
 			csr = cm_submit_u_url_encode(csr);
 			params = talloc_asprintf(ctx,
@@ -510,17 +576,17 @@ main(int argc, char **argv)
 			       cm_submit_h_result_code(hctx),
 			       lasturl);
 		}
-		return CM_STATUS_UNREACHABLE;
+		return CM_SUBMIT_STATUS_UNREACHABLE;
 	}
 	if (results == NULL) {
 		printf(_("Internal error: no response to \"%s?%s\".\n"),
 		       lasturl, lastparams);
-		return CM_STATUS_REJECTED;
+		return CM_SUBMIT_STATUS_REJECTED;
 	}
 	switch (op) {
 	case op_none:
 		printf(_("Internal error: unknown state.\n"));
-		return CM_STATUS_UNCONFIGURED;
+		return CM_SUBMIT_STATUS_UNCONFIGURED;
 		break;
 	case op_submit:
 		ret = cm_submit_d_submit_eval(ctx, results, lasturl,
@@ -579,5 +645,5 @@ main(int argc, char **argv)
 		return ret;
 		break;
 	}
-	return CM_STATUS_UNCONFIGURED;
+	return CM_SUBMIT_STATUS_UNCONFIGURED;
 }

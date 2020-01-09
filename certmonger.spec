@@ -6,6 +6,12 @@
 %global	sysvinit 1
 %endif
 
+%if 0%{?fedora} > 15 && 0%{?fedora} < 20
+%global systemdsysv 1
+%else
+%global systemdsysv 0
+%endif
+
 %if 0%{?fedora} > 14 || 0%{?rhel} > 6
 %global tmpfiles 1
 %else
@@ -19,8 +25,8 @@
 %endif
 
 Name:		certmonger
-Version:	0.61
-Release:	3%{?dist}
+Version:	0.75.13
+Release:	1%{?dist}
 Summary:	Certificate status monitor and PKI enrollment client
 
 Group:		System Environment/Daemons
@@ -28,17 +34,10 @@ License:	GPLv3+
 URL:		http://certmonger.fedorahosted.org
 Source0:	http://fedorahosted.org/released/certmonger/certmonger-%{version}.tar.gz
 Source1:	http://fedorahosted.org/released/certmonger/certmonger-%{version}.tar.gz.sig
-Patch0:		certmonger-0.61-bitfields.patch
-Patch1:		certmonger-0.61-locks1.patch
-Patch2:		certmonger-0.61-locks2.patch
-Patch3:		certmonger-0.61-locks3.patch
-Patch4:		certmonger-0.61-locks4.patch
-Patch5:		certmonger-0.61-lockstest1.patch
-Patch6:		certmonger-0.61-lockstest2.patch
-Patch7:		certmonger-0.61-lockstest3.patch
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
-BuildRequires:	dbus-devel, nspr-devel, nss-devel, openssl-devel
+BuildRequires:	openldap-devel
+BuildRequires:	dbus-devel, nspr-devel, nss-devel, openssl-devel, libidn-devel
 %if 0%{?fedora} >= 12 || 0%{?rhel} >= 6
 BuildRequires:  libuuid-devel
 %else
@@ -67,6 +66,8 @@ BuildRequires:	/usr/bin/dbus-launch
 #  for dos2unix
 BuildRequires:	/usr/bin/dos2unix
 BuildRequires:	/usr/bin/unix2dos
+#  for which
+BuildRequires:	/usr/bin/which
 
 # we need a running system bus
 Requires:	dbus
@@ -74,14 +75,24 @@ Requires:	dbus
 %if %{systemd}
 BuildRequires:	systemd-units
 Requires(post):	systemd-units
-Requires(preun):	systemd-units
+Requires(preun):	systemd-units, dbus, sed
 Requires(postun):	systemd-units
+%endif
+
+%if %{systemdsysv}
 Requires(post):	systemd-sysv
+%global systemdsysvsave \
+# Save the current service runlevel info, in case the user wants \
+# to apply the enabled status manually later, by running \
+#   "systemd-sysv-convert --apply certmonger". \
+%{_bindir}/systemd-sysv-convert --save certmonger >/dev/null 2>&1 ||:
+%else
+%global systemdsysvsave %{nil}
 %endif
 
 %if %{sysvinit}
 Requires(post):	/sbin/chkconfig, /sbin/service
-Requires(preun):	/sbin/chkconfig, /sbin/service
+Requires(preun):	/sbin/chkconfig, /sbin/service, dbus, sed
 %endif
 
 %if 0%{?fedora} >= 15
@@ -95,15 +106,6 @@ system enrolled with a certificate authority (CA) and keeping it enrolled.
 
 %prep
 %setup -q
-%patch0 -p1 -b .bitfields
-%patch1 -p1 -b .locks1
-%patch2 -p1 -b .locks2
-%patch3 -p1 -b .locks3
-%patch4 -p1 -b .locks4
-%patch5 -p1 -b .lockstest1
-%patch6 -p1 -b .lockstest2
-%patch7 -p1 -b .lockstest3
-chmod +x tests/021-resume/run.sh
 %if 0%{?rhel} > 0
 # Enabled by default for RHEL for bug #765600, still disabled by default for
 # Fedora pending a similar bug report there.
@@ -121,7 +123,8 @@ sed -i 's,^# chkconfig: - ,# chkconfig: 345 ,g' sysvinit/certmonger.in
 %if %{tmpfiles}
 	--enable-tmpfiles \
 %endif
-	--with-tmpdir=/var/run/certmonger
+	--with-homedir=/var/run/certmonger \
+	--with-tmpdir=/var/run/certmonger --enable-pie --enable-now
 # For some reason, some versions of xmlrpc-c-config in Fedora and RHEL just
 # tell us about libxmlrpc_client, but we need more.  Work around.
 make %{?_smp_mflags} XMLRPC_LIBS="-lxmlrpc_client -lxmlrpc_util -lxmlrpc"
@@ -151,6 +154,22 @@ fi
 %if %{sysvinit}
 /sbin/chkconfig --add certmonger
 %endif
+
+%triggerin -- certmonger < 0.58
+if test $1 -gt 1 ; then
+	# If the daemon is running, remove knowledge of the dogtag renewer.
+	objpath=`dbus-send --system --reply-timeout=10000 --dest=org.fedorahosted.certmonger --print-reply=o /org/fedorahosted/certmonger org.fedorahosted.certmonger.find_ca_by_nickname string:dogtag-ipa-renew-agent 2> /dev/null | sed -r 's,^ +,,g' || true`
+	if test -n "$objpath" ; then
+		dbus-send --system --dest=org.fedorahosted.certmonger --print-reply /org/fedorahosted/certmonger org.fedorahosted.certmonger.remove_known_ca objpath:"$objpath" >/dev/null 2> /dev/null
+	fi
+	# Remove the data file, in case it isn't running.
+	for cafile in %{_localstatedir}/lib/certmonger/cas/* ; do
+		if grep -q '^id=dogtag-ipa-renew-agent$' "$cafile" ; then
+			rm -f "$cafile"
+		fi
+	done
+fi
+exit 0
 
 %postun
 %if %{systemd}
@@ -183,10 +202,7 @@ exit 0
 
 %if %{systemd}
 %triggerun -- certmonger < 0.43
-# Save the current service runlevel info, in case the user wants to apply
-# the enabled status manually later, by running
-#   "systemd-sysv-convert --apply certmonger".
-%{_bindir}/systemd-sysv-convert --save certmonger >/dev/null 2>&1 ||:
+%{systemdsysvsave}
 # Do this because the old package's %%postun doesn't know we need to do it.
 /sbin/chkconfig --del certmonger >/dev/null 2>&1 || :
 # Do this because the old package's %%postun wouldn't have tried.
@@ -198,7 +214,7 @@ exit 0
 %defattr(-,root,root,-)
 %doc README LICENSE STATUS doc/*.txt
 %config(noreplace) %{_sysconfdir}/dbus-1/system.d/*
-%config(noreplace) %{_datadir}/dbus-1/services/*
+%{_datadir}/dbus-1/services/*
 %dir %{_sysconfdir}/certmonger
 %config(noreplace) %{_sysconfdir}/certmonger/certmonger.conf
 %dir /var/run/certmonger
@@ -211,20 +227,308 @@ exit 0
 %{sysvinitdir}/certmonger
 %endif
 %if %{tmpfiles}
-%attr(0644,root,root) %config(noreplace) /etc/tmpfiles.d/certmonger.conf
+%attr(0644,root,root) %config(noreplace) %{_tmpfilesdir}/certmonger.conf
 %endif
 %if %{systemd}
-%config(noreplace) %{_unitdir}/*
+%{_unitdir}/*
 %endif
 
 %changelog
-* Wed Jan  9 2013 Nalin Dahyabhai <nalin@redhat.com> 0.61-3
-- backport changes from 0.63/0.64/0.65 to broaden the scope of locks which
-  certmonger uses internally to keep it from doing to much with the outside
-  world (#893611)
+* Mon Aug 18 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.13-1
+- add a missing test case file (whoops)
 
-* Tue Nov 27 2012 Nalin Dahyabhai <nalin@redhat.com> 0.61-2
-- rebuild
+* Mon Aug 18 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.12-1
+- correct encoding/decoding of variant-typed data which we receive and send
+  as part of the org.freedesktop.DBus.Properties interface over the bus, and
+  add some tests for them (based on patch from David Kupka, ticket #36)
+
+* Tue Aug 12 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.11-1
+- when getcert is passed a -a flag, to indicate that CA root certificates
+  should be stored in the specified database, don't ignore locations which
+  don't include a storage scheme (#1129537)
+- when called to 'start-tracking' with the -a or -F flags, if we have
+  applicable certificates on-hand for a CA that we're either told to use
+  or which we decide is the correct one, save the certificates (#1129696)
+
+* Tue Aug  5 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.10-1
+- when attempting to contact an IPA LDAP server, if no "ldap_uri" is set in
+  default.conf, and no "host" is set either, try to construct the server URI
+  using the "server" setting (#1126985)
+
+* Thu Jul 31 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.9-1
+- avoid potential use-after-free after a CA is removed dynamically (thanks to
+  Keenan Brock) (#1125342)
+- add a "external-helper" property to CA objects
+
+* Mon Jul 21 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.8-1
+- add a 'refresh' option to the getcert command
+- add a '-a' flag to the getcert command's 'refresh-ca' option
+
+* Thu Jul 17 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.7-2
+- reintroduce package Requires: on systemd-sysv on F19 and EL6 and older,
+  conditionalized it so that it's ignored on newer releases, and make
+  whether or not we call systemd-sysv-convert in triggers depend on that,
+  too (#1104138)
+
+* Thu Jul 17 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.7-1
+- fix an inconsistency in how we parse cookie values returned by CA helpers,
+  in that single-line values would lose the end-of-line after a daemon
+  restart, but not before
+- handle timeout values and exit status values when calling CA helpers
+  in non-SUBMIT, non-POLL modes (#1118468)
+- rework how we save CA certificates so that we save CA certificates associated
+  with end-entity certificates when we save that end-entity certificate, which
+  requires running all of the involved pre- and post-save commands
+- drop package Requires: on systemd-sysv (#1104138)
+
+* Thu Jun 26 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.6-1
+- avoid potential use-after-free and read overrun after a CA is added
+  dynamically (thanks to Jan Cholasta)
+
+* Fri Jun 20 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.5-1
+- documentation updates
+
+* Fri Jun 20 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.4-2
+- add a %%trigger to remove knowledge of the "dogtag-ipa-renew-agent" CA
+  when we detect certmonger versions prior to 0.58 being installed, to
+  avoid cases where some older versions choke on CAs with nicknames that
+  contain characters that can't legally be part of a D-Bus name (#948993)
+
+* Thu Jun 19 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.4-1
+- fix creation and packaging of the "local" CA's data directory
+
+* Wed Jun 18 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.3-1
+- read and cache whether or not we saw a noOCSPcheck extension in certificates
+- documentation updates
+
+* Mon Jun 16 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.2-1
+- when generating keys using OpenSSL, if key generation fails, try
+  again with the default key size, in case we're in FIPS mode
+- documentation updates
+
+* Sat Jun 14 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.1-1
+- log the state in 'getcert status' verbose mode
+
+* Fri Jun 13 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75-1
+- add a -w (wait) flag to the getcert's request/resubmit/start-tracking
+  commands, and add a non-waiting status command
+
+* Wed Jun 11 2014 Nalin Dahyabhai <nalin@redhat.com> 0.74.96-1
+- make the trust settings we apply to CA-supplied certificates while
+  saving them to NSS databases run-time configurable
+- fix compiling against EL5-era OpenSSL
+- when saving CA certificates we pull from an IPA server, nickname
+  it using the realm name with " IPA CA" appended rather than just
+  naming it "IPA CA"
+- fix the local signer so that when it issues itself a new certificate,
+  it uses the same subject name
+- add a -w flag to getcert's request, resubmit, and start-tracking
+  commands, telling it to wait until either the certificate is issued,
+  we get to a state where we know that we won't be able to get one, or
+  we are waiting for a CA
+
+* Mon Jun  9 2014 Nalin Dahyabhai <nalin@redhat.com> 0.74.95-1
+- add the "local" signer, a local toy CA that signs anything you'll
+  ask it to sign
+
+* Sat Jun 07 2014 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0.74-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_21_Mass_Rebuild
+
+* Fri Jun  6 2014 Nalin Dahyabhai <nalin@redhat.com> 0.74.94-1
+- fix self-test errors that we trigger with new OpenSSL
+- fix a build error that would sometimes happen when we're told to
+  build PIE binaries
+- quiet a compile warning
+
+* Thu Jun  5 2014 Nalin Dahyabhai <nalin@redhat.com> 0.74.93-1
+- add some self-tests
+- simplify the internal submit-to-CA logic
+- fixes for more problems found through static analysis
+
+* Tue Jun  3 2014 Nalin Dahyabhai <nalin@redhat.com> 0.74.92-1
+- retrieve CA information from CAs, if the helpers can do so, and
+  add a command to explicitly refresh that data: "getcert refresh-ca"
+- offer to save CA certificates to files and databases, when specified with
+  new -a and -F flags to getcert request/resubmit/start-tracking (#1098208,
+  trac #31)
+- add IP address subject alternate names when getcert request/resubmit
+  is passed the -A option (trac #35)
+- read and cache the freshestCRL extension in certificates
+- properly interpret KDC-unreachable errors encountered in the IPA
+  submission error as a server-unreachable error that we will retry,
+  rather than a misconfiguration error which we won't
+- don't let tests get tripped up by new formatting used in dos2unix status
+  messages (#1099080)
+- updated translations
+- be explicit that we are going to use bashisms in test scripts by calling
+  the shell interpreter as 'bash' rather than 'sh' (trac #27)
+
+* Thu Apr  3 2014 Nalin Dahyabhai <nalin@redhat.com> 0.74-1
+- also save state when we exit due to SIGHUP
+- don't get tripped up when enrollment helpers hand us certificates which
+  include CRLF line terminators (ticket #25)
+- be tolerant of certificate issuer names, subject names, DNS, email, and
+  Kerberos principal namem subjectAltNames, and crl distribution point URLs
+  that contain newlines
+- read and cache the certificate template extension in certificates
+- enforce different minimum key sizes depending on the type of key we're
+  trying to generate
+- store DER versions of subject, issuer and template subject, if we have
+  them (Jan Cholasta, ticket #26)
+- when generating signing requests with subject names that don't quite parse
+  as subject names, encode what we're given as PrintableString rather than
+  as a UTF8String
+- always chdir() to a known location at startup, even if we're not becoming
+  a daemon
+- fix a couple of memory leaks (static analysis)
+- add missing buildrequires: on which
+
+* Thu Feb 20 2014 Nalin Dahyabhai <nalin@redhat.com> 0.73-1
+- updates to 0.73
+  - getcert no longer claims to be stuck when a CA is unreachable,
+    because the daemon isn't actually stuck
+
+* Mon Feb 17 2014 Nalin Dahyabhai <nalin@redhat.com>
+- updates to 0.73
+  - also pass the key type to enrollment helpers in the environment as
+    a the value of "CERTMONGER_KEY_TYPE"
+
+* Mon Feb 10 2014 Nalin Dahyabhai <nalin@redhat.com>
+- move the tmpfiles.d file from /etc/tmpfiles.d to %%{_tmpfilesdir},
+  where it belongs
+
+* Mon Feb 10 2014 Nalin Dahyabhai <nalin@redhat.com>
+- updates for 0.73
+  - set the flag to encode EC public key parameters using named curves
+    instead of the default of all-the-details when using OpenSSL
+  - don't break when NSS supports secp521r1 but OpenSSL doesn't
+  - also pass the CA nickname to enrollment helpers in the environment as
+    a text value in "CERTMONGER_CA_NICKNAME", so they can use that value
+    when reading configuration settings
+  - also pass the SPKAC value to enrollment helpers in the environment as
+    a base64 value in "CERTMONGER_SPKAC"
+  - also pass the request's SubjectPublicKeyInfo value to enrollment helpers
+    in the environment as a base64 value in "CERTMONGER_SPKI"
+  - when generating signing requests using NSS, be more accommodating of
+    requested subject names that don't parse properly
+
+* Mon Feb  3 2014 Nalin Dahyabhai <nalin@redhat.com> 0.72-1
+- update to 0.72
+  - support generating DSA parameters and keys on sufficiently-new OpenSSL
+    and NSS
+  - support generating EC keys when OpenSSL and NSS support it, using key
+    size to select the curve to use from among secp256r1, secp384r1,
+    secp521r1 (which are the ones that are usually available, though
+    secp521r1 isn't always, even if the other two are)
+  - stop trying to cache public key parameters at all and instead cache public
+    key info properly
+  - encode the friendlyName attribute in signing requests as a BMPString,
+    not as a PrintableString
+  - catch more filesystem permissions problems earlier (more of #996581)
+
+* Mon Jan 27 2014 Nalin Dahyabhai <nalin@redhat.com> 0.71-1
+- check for cases where we fail to allocate memory while reading a request
+  or CA entry from disk (John Haxby)
+- only handle one watch at a time, which should avoid abort() during
+  attempts to reconnect to the message bus after losing our connection
+  to it (#1055521)
+
+* Fri Jan 24 2014 Daniel Mach <dmach@redhat.com> - 0.70-2
+- Mass rebuild 2014-01-24
+
+* Thu Jan  2 2014 Nalin Dahyabhai <nalin@redhat.com> 0.70-1
+- add a --with-homedir option to configure, and use it, since subprocesses
+  which we run and which use NSS may attempt to write to $HOME/.pki, and
+  0.69's strategy of setting that to "/" was rightly hitting SELinux policy
+  denials (#1047798)
+
+* Fri Dec 27 2013 Daniel Mach <dmach@redhat.com> - 0.69-2
+- Mass rebuild 2013-12-27
+
+* Mon Dec  9 2013 Nalin Dahyabhai <nalin@redhat.com> 0.69-1
+- tweak how we decide whether we're on the master or a minion when we're
+  told to use certmaster as a CA
+- clean up one of the tests so that it doesn't have to work around internal
+  logging producing duplicate messages
+- when logging errors while setting up to contact xmlrpc servers, explicitly
+  note that the error is client-side
+- don't abort() due to incorrect locking when an attempt to save an issued
+  certificate to the designated location fails (part of #1032760/#1033333,
+  ticket #22)
+- when reading an issued certificate from an enrollment helper, ignore
+  noise before or after the certificate itself (more of #1032760/1033333,
+  ticket #22)
+- run subprocesses in a cleaned-up environment (more of #1032760/1033333,
+  ticket #22)
+- clear the ca-error that we saved when we had an error talking to the CA if we
+  subsequently succeed in talking to the CA
+- various other static-analysis fixes
+
+* Thu Aug 29 2013 Nalin Dahyabhai <nalin@redhat.com> 0.68-1
+- notice when the OpenSSL RNG isn't seeded
+- notice when saving certificates or keys fails due to filesystem-related
+  permission denial (#996581)
+
+* Tue Aug  6 2013 Nalin Dahyabhai <nalin@redhat.com> 0.67-3
+- pull up a patch from master to adapt self-tests to certutil's diagnostic
+  output having changed (#992050)
+
+* Sat Aug 03 2013 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0.67-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_20_Mass_Rebuild
+
+* Mon Mar 11 2013 Nalin Dahyabhai <nalin@redhat.com> 0.67-1
+- when saving certificates to NSS databases, try to preserve the trust
+  value assigned to a previously-present certificate with the same nickname
+  and subject, if one is found
+- when saving certificates to NSS databases, also prune certificates from
+  the database which have both the same nickname and subject as the one
+  we're adding, to avoid tripping up tools that only fetch one certificate
+  by nickname
+
+* Wed Feb 13 2013 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0.65-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_19_Mass_Rebuild
+
+* Wed Jan 23 2013 Nalin Dahyabhai <nalin@redhat.com> 0.66-1
+- build as position-independent executables with early binding (#883966)
+- also don't tag the unit file as a configuration file (internal tooling)
+
+* Wed Jan 23 2013 Nalin Dahyabhai <nalin@redhat.com> 0.65-2
+- don't tag the D-Bus session .service file as a configuration file (internal
+  tooling)
+
+* Tue Jan  8 2013 Nalin Dahyabhai <nalin@redhat.com> 0.65-1
+- fix a crash in the self-tests
+
+* Tue Jan  8 2013 Nalin Dahyabhai <nalin@redhat.com> 0.64-1
+- at startup, if we resume the state machine for a given certificate to a state
+  which expects to have the newly-added lock already acquired, acquire it
+  before moving on with the certificate's work (still aimed at fixing #883484)
+
+* Tue Dec 18 2012 Nalin Dahyabhai <nalin@redhat.com> 0.63-1
+- serialize access to NSS databases and the running of pre- and post-save
+  commands which might also access them (possibly fixing part of #883484)
+
+* Thu Nov 29 2012 Nalin Dahyabhai <nalin@redhat.com> 0.62-1
+- add a -u flag to getcert to enable requesting a keyUsage extension value
+- request subjectKeyIdentifier extensions from CAs, and include them in
+  self-signed certificates
+- request basicConstraints from CAs, defaulting to requests for end-entity
+  certificates
+- when requesting CA certificates, also request authorityKeyIdentifier
+- add support for requesting CRL distribution point and authorityInfoAccess
+  extensions that specify OCSP responder locations
+- don't crash when OpenSSL can't build a template certificate from a request
+  when we're in FIPS mode
+- put NSS in FIPS mode, when the system booted that way, except when we're
+  trying to write certificates to a database
+- fix CSR generation and self-signing in FIPS mode with NSS
+- fix self-signing in FIPS mode with OpenSSL
+- new languages from the translation team: mai, ml, nn, ga
+
+* Tue Nov 27 2012 Nalin Dahyabhai <nalin@redhat.com> 0.61-3
+- backport change from git to not choke if X509_REQ_to_X509() fails when we're
+  self-signing using OpenSSL
+- backport another change from git to represent this as a CA-rejected error
 
 * Mon Sep 24 2012 Nalin Dahyabhai <nalin@redhat.com> 0.61-1
 - fix a regression in reading old request tracking files where the
@@ -257,11 +561,11 @@ exit 0
   doesn't become stop1/save1/stop2/start1/save2/start2 when we're stopping
   a service while we muck with more than one of its certificates
 
-* Fri Jun 12 2012 Nalin Dahyabhai <nalin@redhat.com>
+* Fri Jun 15 2012 Nalin Dahyabhai <nalin@redhat.com>
 - add a command option (-T) to getcert for specifying which enrollment
   profile to tell a CA that we're using, in case it cares (#10)
 
-* Thu Jun 12 2012 Nalin Dahyabhai <nalin@redhat.com> 0.57-1
+* Thu Jun 14 2012 Nalin Dahyabhai <nalin@redhat.com> 0.57-1
 - clarify that the command passed to getcert -C is a "post"-save command
 - add a "pre"-save command option to getcert, specified with the -B flag (#9)
 - after we notify of an impending not-valid-after approaching, don't do it
@@ -278,14 +582,14 @@ exit 0
   argument when we're missing a required argument, not that the option is
   invalid (broken since 0.51, #796542)
 
-* Wed Feb 16 2012 Nalin Dahyabhai <nalin@redhat.com> 0.55-1
+* Wed Feb 15 2012 Nalin Dahyabhai <nalin@redhat.com> 0.55-1
 - allow root to use our implementation of org.freedesktop.DBus.Properties
 - take more care to not emit useless PropertiesChanged signals
 
-* Wed Feb 16 2012 Nalin Dahyabhai <nalin@redhat.com> 0.54-1
+* Wed Feb 15 2012 Nalin Dahyabhai <nalin@redhat.com> 0.54-1
 - fix setting the group ID when spawning the post-save command
 
-* Tue Feb 15 2012 Nalin Dahyabhai <nalin@redhat.com> 0.53-1
+* Tue Feb 14 2012 Nalin Dahyabhai <nalin@redhat.com> 0.53-1
 - large changes to the D-Bus glue, exposing a lot of data which we were
   providing via D-Bus getter methods as properties, and providing more
   accurate introspection data
@@ -634,7 +938,7 @@ exit 0
   - fix handling of the pid file when we write one (by actually giving it
     contents)
 
-* Wed Nov 24 2009 Nalin Dahyabhai <nalin@redhat.com> 0.14-1
+* Wed Nov 25 2009 Nalin Dahyabhai <nalin@redhat.com> 0.14-1
 - update to 0.14
   - check key and certificate location at add-time to make sure they're
     absolute paths to files or directories, as appropriate

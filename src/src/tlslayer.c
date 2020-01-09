@@ -69,11 +69,13 @@ cm_tls_null(const char *hostport)
 	if (ret == NULL) {
 		return NULL;
 	}
+	memset(ret, 0, sizeof(*ret));
 	pvt = talloc_ptrtype(ret, pvt);
 	if (pvt == NULL) {
 		talloc_free(ret);
 		return NULL;
 	}
+	memset(pvt, 0, sizeof(*pvt));
 	hp = talloc_strdup(ret, hostport);
 	if (hp == NULL) {
 		talloc_free(ret);
@@ -144,6 +146,7 @@ cm_tls_connect(const char *hostport,
 				trusted_ca_db,
 				client_db,
 				client_nickname);
+#ifdef HAVE_OPENSSL
 	} else
 	if (!trusted_ca_db && !client_db && !client_nickname) {
 		fprintf(stderr, "OpenSSL!\n");
@@ -152,6 +155,7 @@ cm_tls_connect(const char *hostport,
 				trusted_ca_dir,
 				client_cert_file,
 				client_key_file);
+#endif
 	} else {
 		return NULL;
 	}

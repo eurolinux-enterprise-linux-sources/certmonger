@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2011,2012 Red Hat, Inc.
+ * Copyright (C) 2009,2011,2012,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -18,7 +18,10 @@
 #include "config.h"
 
 #include <sys/types.h>
+#include <sys/param.h>
+#include <arpa/inet.h>
 #include <ctype.h>
+#include <iconv.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -28,13 +31,18 @@
 #include "store.h"
 #include "store-int.h"
 
-static struct {
+#define BASE64_ALPHABET "ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
+			"abcdefghijklmnopqrstuvwxyz" \
+			"0123456789" \
+			"+/="
+
+static const struct {
 	const char *name;
 	enum cm_state state;
 } cm_state_names[] = {
-	{"INVALID", CM_INVALID},
 	{"NEED_KEY_PAIR", CM_NEED_KEY_PAIR},
 	{"GENERATING_KEY_PAIR", CM_GENERATING_KEY_PAIR},
+	{"NEED_KEY_GEN_PERMS", CM_NEED_KEY_GEN_PERMS},
 	{"NEED_KEY_GEN_PIN", CM_NEED_KEY_GEN_PIN},
 	{"NEED_KEY_GEN_TOKEN", CM_NEED_KEY_GEN_TOKEN},
 	{"HAVE_KEY_PAIR", CM_HAVE_KEY_PAIR},
@@ -59,6 +67,7 @@ static struct {
 	{"PRE_SAVE_CERT", CM_PRE_SAVE_CERT},
 	{"START_SAVING_CERT", CM_START_SAVING_CERT},
 	{"SAVING_CERT", CM_SAVING_CERT},
+	{"NEED_CERTSAVE_PERMS", CM_NEED_CERTSAVE_PERMS},
 	{"NEED_TO_READ_CERT", CM_NEED_TO_READ_CERT},
 	{"READING_CERT", CM_READING_CERT},
 	{"SAVED_CERT", CM_SAVED_CERT},
@@ -70,6 +79,10 @@ static struct {
 	{"NOTIFYING_REJECTION", CM_NOTIFYING_REJECTION},
 	{"NEED_TO_NOTIFY_ISSUED_FAILED", CM_NEED_TO_NOTIFY_ISSUED_FAILED},
 	{"NOTIFYING_ISSUED_FAILED", CM_NOTIFYING_ISSUED_FAILED},
+	{"NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED", CM_NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED},
+	{"NOTIFYING_ONLY_CA_SAVE_FAILED", CM_NOTIFYING_ONLY_CA_SAVE_FAILED},
+	{"NEED_TO_SAVE_CA_CERTS", CM_NEED_TO_SAVE_CA_CERTS},
+	{"NEED_TO_SAVE_ONLY_CA_CERTS", CM_NEED_TO_SAVE_ONLY_CA_CERTS},
 	{"NEED_TO_NOTIFY_ISSUED_SAVED", CM_NEED_TO_NOTIFY_ISSUED_SAVED},
 	{"NOTIFYING_ISSUED_SAVED", CM_NOTIFYING_ISSUED_SAVED},
 	{"NEED_GUIDANCE", CM_NEED_GUIDANCE},
@@ -81,6 +94,12 @@ static struct {
 	{"NEWLY_ADDED_START_READING_CERT", CM_NEWLY_ADDED_START_READING_CERT},
 	{"NEWLY_ADDED_READING_CERT", CM_NEWLY_ADDED_READING_CERT},
 	{"NEWLY_ADDED_DECIDING", CM_NEWLY_ADDED_DECIDING},
+	{"START_SAVING_CA_CERTS", CM_START_SAVING_CA_CERTS},
+	{"SAVING_CA_CERTS", CM_SAVING_CA_CERTS},
+	{"START_SAVING_ONLY_CA_CERTS", CM_START_SAVING_ONLY_CA_CERTS},
+	{"SAVING_ONLY_CA_CERTS", CM_SAVING_ONLY_CA_CERTS},
+	{"NEED_CA_CERT_SAVE_PERMS", CM_NEED_CA_CERT_SAVE_PERMS},
+	{"INVALID", CM_INVALID},
 	/* old names */
 	{"NEED_TO_NOTIFY", CM_NEED_TO_NOTIFY_VALIDITY},
 	{"NOTIFYING", CM_NOTIFYING_VALIDITY},
@@ -88,6 +107,128 @@ static struct {
 	{"NEWLY_ADDED_READING_KEYI", CM_NEWLY_ADDED_READING_KEYINFO},
 	{"NEWLY_ADDED_NEED_KEYI_READ_PIN", CM_NEWLY_ADDED_NEED_KEYINFO_READ_PIN},
 };
+
+static const struct {
+	const char *name;
+	enum cm_ca_phase_state state;
+} cm_ca_state_names[] = {
+	{"IDLE", CM_CA_IDLE},
+	{"NEED_TO_REFRESH", CM_CA_NEED_TO_REFRESH},
+	{"REFRESHING", CM_CA_REFRESHING},
+	{"UNREACHABLE", CM_CA_DATA_UNREACHABLE},
+	{"NEED_TO_SAVE_DATA", CM_CA_NEED_TO_SAVE_DATA},
+	{"PRE_SAVE_DATA", CM_CA_PRE_SAVE_DATA},
+	{"START_SAVING_DATA", CM_CA_START_SAVING_DATA},
+	{"SAVING_DATA", CM_CA_SAVING_DATA,},
+	{"NEED_POST_SAVE_DATA", CM_CA_NEED_POST_SAVE_DATA},
+	{"POST_SAVE_DATA", CM_CA_POST_SAVE_DATA},
+	{"SAVED_DATA", CM_CA_SAVED_DATA},
+	{"NEED_TO_ANALYZE", CM_CA_NEED_TO_ANALYZE},
+	{"ANALYZING", CM_CA_ANALYZING},
+	{"DISABLED", CM_CA_DISABLED},
+};
+
+static const struct {
+	const char *name;
+	enum cm_ca_phase phase;
+} cm_ca_phase_names[] = {
+	{"identify", cm_ca_phase_identify},
+	{"certs", cm_ca_phase_certs},
+	{"profiles", cm_ca_phase_profiles},
+	{"default_profile", cm_ca_phase_default_profile},
+	{"enrollment_reqs", cm_ca_phase_enroll_reqs},
+	{"renewal_reqs", cm_ca_phase_renew_reqs},
+	{"invalid", cm_ca_phase_invalid},
+};
+
+const char *
+cm_store_ca_state_as_string(enum cm_ca_phase_state state)
+{
+	unsigned int i;
+
+	for (i = 0;
+	     i < sizeof(cm_ca_state_names) / sizeof(cm_ca_state_names[0]);
+	     i++) {
+		if (cm_ca_state_names[i].state == state) {
+			return cm_ca_state_names[i].name;
+		}
+	}
+	return "UNKNOWN";
+}
+
+const char *
+cm_store_ca_phase_as_string(enum cm_ca_phase phase)
+{
+	unsigned int i;
+
+	for (i = 0;
+	     i < sizeof(cm_ca_phase_names) / sizeof(cm_ca_phase_names[0]);
+	     i++) {
+		if (cm_ca_phase_names[i].phase == phase) {
+			return cm_ca_phase_names[i].name;
+		}
+	}
+	return "invalid";
+}
+
+const char *
+cm_store_state_as_string(enum cm_state state)
+{
+	unsigned int i;
+	for (i = 0;
+	     i < sizeof(cm_state_names) / sizeof(cm_state_names[0]);
+	     i++) {
+		if (cm_state_names[i].state == state) {
+			return cm_state_names[i].name;
+		}
+	}
+	return "UNKNOWN";
+}
+
+enum cm_ca_phase_state
+cm_store_ca_state_from_string(const char *name)
+{
+	unsigned i;
+
+	for (i = 0;
+	     i < sizeof(cm_ca_state_names) / sizeof(cm_ca_state_names[0]);
+	     i++) {
+		if (strcasecmp(cm_ca_state_names[i].name, name) == 0) {
+			return cm_ca_state_names[i].state;
+		}
+	}
+	return CM_CA_DISABLED;
+}
+
+enum cm_ca_phase
+cm_store_ca_phase_from_string(const char *name)
+{
+	unsigned int i;
+
+	for (i = 0;
+	     i < sizeof(cm_ca_phase_names) / sizeof(cm_ca_phase_names[0]);
+	     i++) {
+		if (strcasecmp(cm_ca_phase_names[i].name, name) == 0) {
+			return cm_ca_phase_names[i].phase;
+		}
+	}
+	return cm_ca_phase_invalid;
+}
+
+enum cm_state
+cm_store_state_from_string(const char *name)
+{
+	unsigned int i;
+
+	for (i = 0;
+	     i < sizeof(cm_state_names) / sizeof(cm_state_names[0]);
+	     i++) {
+		if (strcasecmp(cm_state_names[i].name, name) == 0) {
+			return cm_state_names[i].state;
+		}
+	}
+	return CM_INVALID;
+}
 
 char *
 cm_store_maybe_strdup(void *parent, const char *s)
@@ -116,34 +257,6 @@ cm_store_maybe_strdupv(void *parent, char **s)
 		}
 	}
 	return ret;
-}
-
-const char *
-cm_store_state_as_string(enum cm_state state)
-{
-	unsigned int i;
-	for (i = 0;
-	     i < sizeof(cm_state_names) / sizeof(cm_state_names[0]);
-	     i++) {
-		if (cm_state_names[i].state == state) {
-			return cm_state_names[i].name;
-		}
-	}
-	return "UNKNOWN";
-}
-
-enum cm_state
-cm_store_state_from_string(const char *name)
-{
-	unsigned int i;
-	for (i = 0;
-	     i < sizeof(cm_state_names) / sizeof(cm_state_names[0]);
-	     i++) {
-		if (strcasecmp(cm_state_names[i].name, name) == 0) {
-			return cm_state_names[i].state;
-		}
-	}
-	return CM_INVALID;
 }
 
 /* Generic routines. */
@@ -237,7 +350,7 @@ cm_store_timestamp_from_time(time_t when, char timestamp[15])
 }
 
 char *
-cm_store_timestamp_from_time_for_display(time_t when, char timestamp[21])
+cm_store_timestamp_from_time_for_display(time_t when, char timestamp[25])
 {
 	struct tm tm;
 	if ((when != 0) && (gmtime_r(&when, &tm) == &tm)) {
@@ -245,7 +358,7 @@ cm_store_timestamp_from_time_for_display(time_t when, char timestamp[21])
 			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 			tm.tm_hour, tm.tm_min, tm.tm_sec);
 	} else {
-		strcpy(timestamp, "19700101000000");
+		strcpy(timestamp, "1970-01-01 00:00:00 UTC");
 	}
 	return timestamp;
 }
@@ -320,6 +433,10 @@ cm_store_hex_from_bin(void *parent, const unsigned char *serial, int length)
 	const char *hexchars = "0123456789ABCDEF";
 	char *ret;
 	int i;
+
+	if (length < 0) {
+		length = strlen((const char *) serial);
+	}
 	ret = talloc_zero_size(parent, length * 2 + 1);
 	for (i = 0; i < length; i++) {
 		ret[i * 2] = hexchars[(serial[i] >> 4) & 0x0f];
@@ -350,11 +467,12 @@ cm_store_serial_to_der(void *parent, const char *serial)
 /* Convert hex chars to fill a buffer.  Input characters which don't belong are
  * treated as zeros.  We stop when we run out of input characters or run out of
  * space in the output buffer. */
-void
+int
 cm_store_hex_to_bin(const char *serial, unsigned char *buf, int length)
 {
 	const char *p, *q, *chars = "0123456789abcdef";
 	unsigned char *b, u;
+
 	p = serial;
 	b = buf;
 	u = 0;
@@ -379,6 +497,7 @@ cm_store_hex_to_bin(const char *serial, unsigned char *buf, int length)
 			break;
 		}
 	}
+	return b - buf;
 }
 
 char *
@@ -441,4 +560,250 @@ cm_store_set_if_not_set_as(void *parent, char ***dest, char **src)
 			*dest = ret;
 		}
 	}
+}
+
+int
+cm_store_utf8_to_bmp_string(char *s,
+			    unsigned char **bmp,
+			    unsigned int *len)
+{
+	iconv_t conv;
+	unsigned int i;
+	const unsigned char *u;
+	uint16_t *u16;
+	char *inbuf, *outbuf;
+	size_t inleft, outleft, res, space;
+
+	*bmp = NULL;
+	conv = iconv_open("UTF16BE", "UTF8");
+	if (conv != NULL) {
+		inbuf = s;
+		space = strlen(s) * 4;
+		*bmp = malloc(space);
+		outbuf = (char *) *bmp;
+		if (outbuf == NULL) {
+			iconv_close(conv);
+			return -1;
+		}
+		memset(*bmp, 0, space);
+		inleft = strlen(s);
+		outleft = space;
+		res = iconv(conv, &inbuf, &inleft, &outbuf, &outleft);
+		iconv_close(conv);
+		switch (res) {
+		case (size_t) -1:
+			return -1;
+			break;
+		default:
+			*len = space - outleft;
+			return 0;
+			break;
+		}
+	} else {
+		/* Impressively wrong. */
+		u16 = malloc((strlen(s) + 1) * 2);
+		if (u16 == NULL) {
+			return -1;
+		}
+		u = (const unsigned char *) s;
+		for (i = 0; u[i] != '\0'; i++) {
+			u16[i] = htons(u[i]);
+		}
+		*bmp = (unsigned char *) u16;
+		*len = i * 2;
+	}
+	return 0;
+}
+
+char *
+cm_store_utf8_from_bmp_string(unsigned char *bmp, unsigned int len)
+{
+	iconv_t conv;
+	char *inbuf, *outbuf, *s;
+	size_t inleft, outleft, res, space;
+
+	conv = iconv_open("UTF8", "UTF16BE");
+	if (conv != NULL) {
+		inbuf = (char *) bmp;
+		space = len * 3;
+		s = malloc(space);
+		outbuf = s;
+		if (outbuf == NULL) {
+			iconv_close(conv);
+			return NULL;
+		}
+		memset(s, '\0', space);
+		inleft = len;
+		outleft = space;
+		res = iconv(conv, &inbuf, &inleft, &outbuf, &outleft);
+		iconv_close(conv);
+		switch (res) {
+		case (size_t) -1:
+			free(s);
+			return NULL;
+			break;
+		default:
+			return s;
+			break;
+		}
+	}
+	return NULL;
+}
+
+char *
+cm_store_base64_from_bin(void *parent, unsigned char *buf, int length)
+{
+	char *p, *ret;
+	int max, i, j;
+	uint32_t acc;
+
+	if (length < 0) {
+		length = strlen((const char *) buf);
+	}
+
+	max = 4 * howmany(length, 3) + 1;
+	p = malloc(max);
+	if (p == NULL) {
+		return NULL;
+	}
+
+	for (i = 0, j = 0, acc = 0; i < length; i++) {
+		acc = (acc << 8) | buf[i];
+		if ((i % 3) == 2) {
+			p[j++] = BASE64_ALPHABET[(acc >> 18) & 0x3f];
+			p[j++] = BASE64_ALPHABET[(acc >> 12) & 0x3f];
+			p[j++] = BASE64_ALPHABET[(acc >>  6) & 0x3f];
+			p[j++] = BASE64_ALPHABET[(acc >>  0) & 0x3f];
+			acc = 0;
+		}
+	}
+	switch (i % 3) {
+	case 0:
+		break;
+	case 1:
+		acc = (acc << 8) | 0;
+		acc = (acc << 8) | 0;
+		p[j++] = BASE64_ALPHABET[(acc >> 18) & 0x3f];
+		p[j++] = BASE64_ALPHABET[(acc >> 12) & 0x3f];
+		p[j++] = '=';
+		p[j++] = '=';
+		break;
+	case 2:
+		acc = (acc << 8) | 0;
+		p[j++] = BASE64_ALPHABET[(acc >> 18) & 0x3f];
+		p[j++] = BASE64_ALPHABET[(acc >> 12) & 0x3f];
+		p[j++] = BASE64_ALPHABET[(acc >>  6) & 0x3f];
+		p[j++] = '=';
+		break;
+	}
+	p[j++] = '\0';
+
+	ret = talloc_strdup(parent, p);
+	free(p);
+	return ret;
+}
+
+int
+cm_store_base64_to_bin(const char *serial, int insize,
+		       unsigned char *buf, int length)
+{
+	const char *p, *q, *chars = BASE64_ALPHABET;
+	unsigned char *b;
+	uint32_t u, count;
+
+	u = 0;
+	count = 0;
+	if (insize < 0) {
+		insize = strlen(serial);
+	}
+	for (p = serial, b = buf;
+	     (((p - serial) < insize) && (*p != '\0') && (*p != '=') &&
+	      ((b - buf) < length));
+	     p++) {
+		q = strchr(chars, *p);
+		if (q != NULL) {
+			switch (count % 4) {
+			case 0:
+				u = q - chars;
+				break;
+			case 1:
+				u = (u << 6) | (q - chars);
+				break;
+			case 2:
+				u = (u << 6) | (q - chars);
+				break;
+			case 3:
+				u = (u << 6) | (q - chars);
+				*b++ = (u >> 16) & 0xff;
+				if (b - buf >= length) {
+					break;
+				}
+				*b++ = (u >>  8) & 0xff;
+				if (b - buf >= length) {
+					break;
+				}
+				*b++ = (u >>  0) & 0xff;
+				u = 0;
+				break;
+			}
+			count++;
+		}
+	}
+	switch (count % 4) {
+	case 0:
+	case 1:
+		break;
+	case 2:
+		u = (u << 12);
+		*b++ = (u >> 16) & 0xff;
+		break;
+	case 3:
+		u = (u <<  6);
+		*b++ = (u >> 16) & 0xff;
+		if (b - buf >= length) {
+			break;
+		}
+		*b++ = (u >>  8) & 0xff;
+		break;
+	}
+	return b - buf;
+}
+
+char *
+cm_store_base64_as_bin(void *parent, const char *serial, int size, int *length)
+{
+	unsigned char *buf;
+	ssize_t l;
+
+	if (size < 0) {
+		size = strlen(serial);
+	}
+	l = howmany(size, 4) * 3 + 1;
+	buf = talloc_size(parent, l);
+	if (buf != NULL) {
+		l = cm_store_base64_to_bin(serial, size, buf, l - 1);
+		buf[l] = '\0';
+		if (length != NULL) {
+			*length = l;
+		}
+	}
+	return (char *) buf;
+}
+
+char *
+cm_store_base64_from_hex(void *parent, const char *s)
+{
+	unsigned char *buf;
+	char *ret;
+	unsigned int length;
+
+	length = strlen(s) / 2;
+	buf = malloc(length);
+	if (buf == NULL) {
+		return NULL;
+	}
+	length = cm_store_hex_to_bin(s, buf, length);
+	ret = cm_store_base64_from_bin(parent, buf, length);
+	free(buf);
+	return ret;
 }

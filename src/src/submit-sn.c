@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2012,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,6 +23,7 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <nss.h>
@@ -49,11 +50,6 @@
 #include "submit-u.h"
 #include "subproc.h"
 
-struct cm_submit_state {
-	struct cm_submit_state_pvt pvt;
-	struct cm_subproc_state *subproc;
-};
-
 static int
 cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		  void *userdata)
@@ -63,8 +59,7 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	const char *p, *q;
 	SECStatus error;
 	SECItem *esdata = NULL, *ecert = NULL;
-	struct cm_keyiread_n_ctx_and_key *privkey;
-	SECKEYPublicKey *pubkey;
+	struct cm_keyiread_n_ctx_and_keys *keys;
 	CERTCertificate *ucert = NULL;
 	CERTCertExtension **extensions;
 	CERTCertificateRequest *req = NULL, sreq;
@@ -76,10 +71,11 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	SECOidData *sigoid, *extoid, *basicoid;
 	int i, serial_length, basic_length;
 	unsigned char btrue = 0xff;
+	PRBool found_basic;
 
 	/* Start up NSS and open the database. */
-	privkey = cm_keyiread_n_get_private_key(entry, 0);
-	if (privkey == NULL) {
+	keys = cm_keyiread_n_get_keys(entry, 0);
+	if (keys == NULL) {
 		cm_log(1, "Unable to locate private key for self-signing.\n");
 		_exit(2);
 	}
@@ -119,12 +115,7 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	} else {
 		data = &sdata;
 	}
-	pubkey = SECKEY_ConvertToPublicKey(privkey->key);
-	if (pubkey == NULL) {
-		cm_log(1, "Unable to convert private key to public key.\n");
-		_exit(1);
-	}
-	sigoid = SECOID_FindOIDByTag(cm_prefs_nss_sig_alg(pubkey));
+	sigoid = SECOID_FindOIDByTag(cm_prefs_nss_sig_alg(keys->privkey));
 	if (sigoid == NULL) {
 		cm_log(1, "Internal error resolving signature OID.\n");
 		_exit(1);
@@ -188,9 +179,10 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		serial_length = strlen(serial) / 2;
 		ucert->serialNumber.data = PORT_ArenaZAlloc(arena,
 							    serial_length);
+		serial_length = cm_store_hex_to_bin(serial,
+						    ucert->serialNumber.data,
+						    serial_length);
 		ucert->serialNumber.len = serial_length;
-		cm_store_hex_to_bin(serial,
-				    ucert->serialNumber.data, serial_length);
 	} else {
 		cm_log(1, "Unable to set certificate serial number.\n");
 		_exit(1);
@@ -242,41 +234,53 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		cm_log(1, "Unable to get basic constraints OID.\n");
 		_exit(1);
 	}
-	/* Count the number of extensions. */
+	/* Count the number of extensions and whether or not we requested a
+	 * basicConstraints extension. */
+	found_basic = PR_FALSE;
 	if (ucert->extensions == NULL) {
 		i = 0;
 	} else {
 		for (i = 0; ucert->extensions[i] != NULL; i++) {
-			continue;
+			if (SECITEM_ItemsAreEqual(&ucert->extensions[i]->id,
+						  &basicoid->oid)) {
+				found_basic = PR_TRUE;
+			}
 		}
 	}
-	/* Allocate space for one more. */
+	/* Allocate space for one more extension. */
 	extensions = PORT_ArenaZAlloc(arena, (i + 2) * sizeof(extensions[0]));
 	if (extensions != NULL) {
 		memcpy(extensions, ucert->extensions,
 		       i * sizeof(extensions[0]));
-		extensions[i] = PORT_ArenaZAlloc(arena, sizeof(*(extensions[i])));
+		if (found_basic) {
+			extensions[i] = NULL;
+		} else {
+			extensions[i] = PORT_ArenaZAlloc(arena, sizeof(*(extensions[i])));
+		}
 		extensions[i + 1] = NULL;
 		ucert->extensions = extensions;
 	}
 	/* Add basic constraints. */
-	if ((extensions != NULL) && (extensions[i] != NULL)) {
+	if ((extensions != NULL) && (extensions[i] != NULL) && !found_basic) {
 		extensions[i]->id = basicoid->oid;
 		extensions[i]->critical.data = &btrue;
 		extensions[i]->critical.len = 1;
 		basic_length = strlen(CM_BASIC_CONSTRAINT_NOT_CA) / 2;
 		extensions[i]->value.data = PORT_ArenaZAlloc(arena, basic_length);
 		extensions[i]->value.len = basic_length;
-		cm_store_hex_to_bin(CM_BASIC_CONSTRAINT_NOT_CA, extensions[i]->value.data, extensions[i]->value.len);
+		basic_length = cm_store_hex_to_bin(CM_BASIC_CONSTRAINT_NOT_CA,
+						   extensions[i]->value.data,
+						   extensions[i]->value.len);
+		extensions[i]->value.len = basic_length;
 	}
-	/* Encode the certificate. */
+	/* Encode the certificate into a tbsCertificate. */
 	ecert = SEC_ASN1EncodeItem(arena, NULL, ucert,
 				   CERT_CertificateTemplate);
 	if (ecert == NULL) {
 		cm_log(1, "Error encoding certificate structure.\n");
 		_exit(1);
 	}
-	/* Create a signed certificate. */
+	/* Create a signature. */
 	memset(&scert, 0, sizeof(scert));
 	scert.data = *ecert;
 	if (SECOID_SetAlgorithmID(arena, &scert.signatureAlgorithm,
@@ -285,7 +289,7 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		_exit(1);
 	}
 	if (SEC_SignData(&scert.signature, ecert->data, ecert->len,
-			 privkey->key, sigoid->offset) != SECSuccess) {
+			 keys->privkey, sigoid->offset) != SECSuccess) {
 		cm_log(1, "Unable to generate signature.\n");
 		_exit(1);
 	}
@@ -300,7 +304,7 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		cm_log(1, "Unable to encode signed certificate.\n");
 		_exit(1);
 	}
-	/* Encode the certificate. */
+	/* Encode the certificate as base64. */
 	b64 = NSSBase64_EncodeItem(arena, NULL, -1, ecert);
 	if (b64 == NULL) {
 		cm_log(1, "Unable to b64-encode certificate.\n");
@@ -322,11 +326,13 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	fprintf(status, "-----END CERTIFICATE-----\n");
 	fclose(status);
 
-	SECKEY_DestroyPublicKey(pubkey);
-	SECKEY_DestroyPrivateKey(privkey->key);
+	if (keys->pubkey != NULL) {
+		SECKEY_DestroyPublicKey(keys->pubkey);
+	}
+	SECKEY_DestroyPrivateKey(keys->privkey);
 	PORT_FreeArena(arena, PR_TRUE);
-	error = NSS_ShutdownContext(privkey->ctx);
-	PORT_FreeArena(privkey->arena, PR_TRUE);
+	error = NSS_ShutdownContext(keys->ctx);
+	PORT_FreeArena(keys->arena, PR_TRUE);
 	if (error != SECSuccess) {
 		cm_log(1, "Error shutting down NSS.\n");
 	}
@@ -334,22 +340,15 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	return 0;
 }
 
-/* Get a selectable-for-read descriptor we can poll for status changes. */
-static int
-cm_submit_sn_get_fd(struct cm_store_entry *entry, struct cm_submit_state *state)
-{
-	return cm_subproc_get_fd(entry, state->subproc);
-}
-
 /* Save CA-specific identifier for our submitted request. */
 static int
-cm_submit_sn_save_ca_cookie(struct cm_store_entry *entry,
-			    struct cm_submit_state *state)
+cm_submit_sn_save_ca_cookie(struct cm_submit_state *state)
 {
-	talloc_free(entry->cm_ca_cookie);
-	entry->cm_ca_cookie = talloc_strdup(entry,
-					    entry->cm_key_storage_location);
-	if (entry->cm_ca_cookie == NULL) {
+	talloc_free(state->entry->cm_ca_cookie);
+	state->entry->cm_ca_cookie =
+		talloc_strdup(state->entry,
+			      state->entry->cm_key_storage_location);
+	if (state->entry->cm_ca_cookie == NULL) {
 		cm_log(1, "Out of memory.\n");
 		return ENOMEM;
 	}
@@ -358,26 +357,27 @@ cm_submit_sn_save_ca_cookie(struct cm_store_entry *entry,
 
 /* Check if an attempt to submit has completed. */
 static int
-cm_submit_sn_ready(struct cm_store_entry *entry, struct cm_submit_state *state)
+cm_submit_sn_ready(struct cm_submit_state *state)
 {
-	return cm_subproc_ready(entry, state->subproc);
+	return cm_subproc_ready(state->subproc);
 }
 
 /* Check if the certificate was issued. */
 static int
-cm_submit_sn_issued(struct cm_store_entry *entry, struct cm_submit_state *state)
+cm_submit_sn_issued(struct cm_submit_state *state)
 {
 	const char *msg;
 	int status;
-	status = cm_subproc_get_exitstatus(entry, state->subproc);
+
+	status = cm_subproc_get_exitstatus(state->subproc);
 	if (!WIFEXITED(status) || (WEXITSTATUS(status) != 0)) {
 		return -1;
 	}
-	msg = cm_subproc_get_msg(entry, state->subproc, NULL);
+	msg = cm_subproc_get_msg(state->subproc, NULL);
 	if ((strstr(msg, "-----BEGIN CERTIFICATE-----") != NULL) &&
 	    (strstr(msg, "-----END CERTIFICATE-----") != NULL)) {
-		talloc_free(entry->cm_cert);
-		entry->cm_cert = talloc_strdup(entry, msg);
+		talloc_free(state->entry->cm_cert);
+		state->entry->cm_cert = talloc_strdup(state->entry, msg);
 		return 0;
 	}
 	return -1;
@@ -385,34 +385,38 @@ cm_submit_sn_issued(struct cm_store_entry *entry, struct cm_submit_state *state)
 
 /* Check if the signing request was rejected. */
 static int
-cm_submit_sn_rejected(struct cm_store_entry *entry,
-		      struct cm_submit_state *state)
+cm_submit_sn_rejected(struct cm_submit_state *state)
 {
 	return -1; /* it never gets rejected */
 }
 
 /* Check if the CA was unreachable. */
 static int
-cm_submit_sn_unreachable(struct cm_store_entry *entry,
-			 struct cm_submit_state *state)
+cm_submit_sn_unreachable(struct cm_submit_state *state)
 {
 	return -1; /* uh, we're the CA */
 }
 
 /* Check if the CA was unconfigured. */
 static int
-cm_submit_sn_unconfigured(struct cm_store_entry *entry,
-			  struct cm_submit_state *state)
+cm_submit_sn_unconfigured(struct cm_submit_state *state)
+{
+	return -1; /* uh, we're the CA */
+}
+
+/* Check if the CA is something we can ask for certificates. */
+static int
+cm_submit_sn_unsupported(struct cm_submit_state *state)
 {
 	return -1; /* uh, we're the CA */
 }
 
 /* Done talking to the CA. */
 static void
-cm_submit_sn_done(struct cm_store_entry *entry, struct cm_submit_state *state)
+cm_submit_sn_done(struct cm_submit_state *state)
 {
 	if (state->subproc != NULL) {
-		cm_subproc_done(entry, state->subproc);
+		cm_subproc_done(state->subproc);
 	}
 	talloc_free(state);
 }
@@ -422,6 +426,7 @@ struct cm_submit_state *
 cm_submit_sn_start(struct cm_store_ca *ca, struct cm_store_entry *entry)
 {
 	struct cm_submit_state *state;
+
 	if (entry->cm_key_storage_type != cm_key_storage_nssdb) {
 		cm_log(1, "Wrong submission method: only keys stored "
 		       "in an NSS database can be used.\n");
@@ -430,16 +435,17 @@ cm_submit_sn_start(struct cm_store_ca *ca, struct cm_store_entry *entry)
 	state = talloc_ptrtype(entry, state);
 	if (state != NULL) {
 		memset(state, 0, sizeof(*state));
-		state->pvt.get_fd = cm_submit_sn_get_fd;
-		state->pvt.save_ca_cookie = cm_submit_sn_save_ca_cookie;
-		state->pvt.ready = cm_submit_sn_ready;
-		state->pvt.issued = cm_submit_sn_issued;
-		state->pvt.rejected = cm_submit_sn_rejected;
-		state->pvt.unreachable = cm_submit_sn_unreachable;
-		state->pvt.unconfigured = cm_submit_sn_unconfigured;
-		state->pvt.done = cm_submit_sn_done;
-		state->pvt.delay = -1;
-		state->subproc = cm_subproc_start(cm_submit_sn_main,
+		state->save_ca_cookie = cm_submit_sn_save_ca_cookie;
+		state->ready = cm_submit_sn_ready;
+		state->issued = cm_submit_sn_issued;
+		state->rejected = cm_submit_sn_rejected;
+		state->unreachable = cm_submit_sn_unreachable;
+		state->unconfigured = cm_submit_sn_unconfigured;
+		state->unsupported = cm_submit_sn_unsupported;
+		state->done = cm_submit_sn_done;
+		state->delay = -1;
+		state->entry = entry;
+		state->subproc = cm_subproc_start(cm_submit_sn_main, state,
 						  ca, entry, NULL);
 		if (state->subproc == NULL) {
 			talloc_free(state);

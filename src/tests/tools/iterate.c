@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,21 +27,29 @@
 #include <talloc.h>
 #include <unistd.h>
 
+#include <dbus/dbus.h>
+
 #include "../../src/iterate.h"
 #include "../../src/log.h"
 #include "../../src/store.h"
 #include "../../src/store-int.h"
+#include "tools.h"
 
 static void
 wait_to_read(int fd)
 {
 	fd_set rfds;
 	struct timeval tv;
-	FD_ZERO(&rfds);
-	FD_SET(fd, &rfds);
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
-	select(fd + 1, &rfds, NULL, NULL, &tv);
+
+	if (fd >= 0) {
+		FD_ZERO(&rfds);
+		FD_SET(fd, &rfds);
+		tv.tv_sec = 1;
+		tv.tv_usec = 0;
+		select(fd + 1, &rfds, NULL, NULL, &tv);
+	} else {
+		sleep(1);
+	}
 }
 
 struct cm_context {
@@ -68,18 +76,26 @@ int
 main(int argc, char **argv)
 {
 	struct cm_store_entry *entry;
-	struct cm_context cm;
+	struct cm_context *cm;
 	enum cm_state old_state;
 	int readfd, delay;
 	void *parent, *istate;
-	char *p, *q, *states, *tmp;
+	char *p, *q, *continue_states, *stop_states, *tmp;
+	const char *state;
 	enum cm_time when;
+
 	cm_log_set_method(cm_log_stderr);
 	cm_log_set_level(3);
+	cm_set_fips_from_env();
 	parent = talloc_new(NULL);
+	cm = talloc_ptrtype(parent, cm);
+	if (cm == NULL) {
+		return 1;
+	}
+	memset(cm, 0, sizeof(*cm));
 	if (argc > 3) {
-		cm.ca = cm_store_files_ca_read(parent, argv[1]);
-		if (cm.ca == NULL) {
+		cm->ca = cm_store_files_ca_read(parent, argv[1]);
+		if (cm->ca == NULL) {
 			printf("Error reading %s: %s.\n", argv[1],
 			       strerror(errno));
 			return 1;
@@ -91,57 +107,135 @@ main(int argc, char **argv)
 			return 1;
 		}
 		if ((entry->cm_ca_nickname == NULL) ||
-		    (cm.ca->cm_nickname == NULL) ||
+		    (cm->ca->cm_nickname == NULL) ||
 		    (strcasecmp(entry->cm_ca_nickname,
-				cm.ca->cm_nickname) != 0)) {
-			talloc_free(cm.ca);
-			cm.ca = NULL;
+				cm->ca->cm_nickname) != 0)) {
+			talloc_free(cm->ca);
+			cm->ca = NULL;
 		}
-		states = argv[3];
+		continue_states = argv[3];
+		stop_states = NULL;
+		if ((argc > 4) && (strlen(argv[4]) > 0)) {
+			stop_states = argv[4];
+			if (strlen(continue_states) == 0) {
+				continue_states = NULL;
+			}
+		}
 	} else {
 		printf("Specify a CA file and an entry file as the first "
-		       "two arguments, and a list of states as the third.\n");
-		return 1;
-	}
-	if (cm_iterate_init(entry, &istate) != 0) {
-		printf("Error initializing.\n");
+		       "two arguments, a list of continue states as the "
+		       "third, and perhaps a list of stop states as the "
+		       "fourth.\n");
 		return 1;
 	}
 	old_state = entry->cm_state;
-	printf("%s\n-START-\n",
-	       cm_store_state_as_string(entry->cm_state));
+	state = cm_store_state_as_string(entry->cm_state);
+	if (cm_iterate_entry_init(entry, &istate) != 0) {
+		printf("Error initializing.\n");
+		return 1;
+	}
+	if (old_state != entry->cm_state) {
+		printf("%s\n-(RESET)-\n", state);
+	}
+	old_state = CM_INVALID;
+	state = cm_store_state_as_string(entry->cm_state);
+	printf("%s\n-START-\n", state);
 	fflush(NULL);
-	p = states;
-	while (cm_iterate(entry, cm.ca, &cm, get_ca_by_index, get_n_cas,
-			  NULL, NULL, istate, &when, &delay, &readfd) == 0) {
-		/* Check if this state is in our continue-states list. */
-		for (p = states; *p != '\0'; p = q + strspn(q, ",")) {
-			q = p + strcspn(p, ",");
-			tmp = talloc_strndup(parent, p, q - p);
-			if (entry->cm_state ==
-			    cm_store_state_from_string(tmp)) {
-				if (entry->cm_state != old_state) {
-					printf("%s\n", tmp);
-				}
-				fflush(NULL);
-				talloc_free(tmp);
-				break;
+	while (cm_iterate_entry(entry, cm->ca, cm, get_ca_by_index, get_n_cas,
+				NULL, NULL, NULL, NULL, istate, &when, &delay,
+				&readfd) == 0) {
+		state = cm_store_state_as_string(entry->cm_state);
+		switch (when) {
+		case cm_time_now:
+			if (entry->cm_state != old_state) {
+				printf("%s\n", state);
+			} else {
+				printf("%s (now)\n", state);
 			}
-			talloc_free(tmp);
-		}
-		if (when == cm_time_delay) {
-			printf("delay=%ld\n", (long) delay);
-		}
-		/* If we didn't find a match, stop here. */
-		if (*p == '\0') {
-			printf("%s\n-STOP-\n",
-			       cm_store_state_as_string(entry->cm_state));
-			fflush(NULL);
+			break;
+		case cm_time_soon:
+			if (entry->cm_state != old_state) {
+				printf("%s\n", state);
+			} else {
+				printf("%s (soon)\n", state);
+			}
+			break;
+		case cm_time_soonish:
+			if (entry->cm_state != old_state) {
+				printf("%s\n", state);
+			} else {
+				printf("%s (soonish)\n", state);
+			}
+			break;
+		case cm_time_delay:
+			if (entry->cm_state != old_state) {
+				printf("delay=%ld\n%s\n", (long) delay,
+				       state);
+			} else {
+				printf("delay=%ld (again)\n%s (again)\n",
+				       (long) delay, state);
+			}
+			break;
+		case cm_time_no_time:
+			if (entry->cm_state != old_state) {
+				printf("%s\n", state);
+			}
 			break;
 		}
-		/* Reset 'p' so that it's not an empty string. */
-		p = states;
-		old_state = entry->cm_state;
+		if ((entry->cm_state == old_state) &&
+		    ((when != cm_time_no_time) || (readfd == -1))) {
+			/* If we didn't change state, stop. */
+			printf("-STUCK- (%d:%ld)\n", when, (long) delay);
+			fflush(NULL);
+			state = NULL;
+			break;
+		}
+		if (stop_states != NULL) {
+			/* Check if this state is in our stop-states list. */
+			for (p = stop_states;
+			     *p != '\0';
+			     p = q + strspn(q, ",")) {
+				q = p + strcspn(p, ",");
+				tmp = talloc_strndup(parent, p, q - p);
+				if (entry->cm_state ==
+				    cm_store_state_from_string(tmp)) {
+					fflush(NULL);
+					talloc_free(tmp);
+					break;
+				}
+				talloc_free(tmp);
+			}
+			if (*p != '\0') {
+				/* We found a match.  Stop here. */
+				printf("-STOP-\n");
+				fflush(NULL);
+				state = NULL;
+				break;
+			}
+		}
+		/* Check if this state is in our continue-states list. */
+		if (continue_states != NULL) {
+			for (p = continue_states;
+			     *p != '\0';
+			     p = q + strspn(q, ",")) {
+				q = p + strcspn(p, ",");
+				tmp = talloc_strndup(parent, p, q - p);
+				if (entry->cm_state ==
+				    cm_store_state_from_string(tmp)) {
+					fflush(NULL);
+					talloc_free(tmp);
+					break;
+				}
+				talloc_free(tmp);
+			}
+			/* If we didn't find a match, stop here. */
+			if (*p == '\0') {
+				printf("-STOP-\n");
+				fflush(NULL);
+				state = NULL;
+				break;
+			}
+		}
 		/* Wait. */
 		switch (when) {
 		case cm_time_now:
@@ -159,13 +253,14 @@ main(int argc, char **argv)
 			wait_to_read(readfd);
 			break;
 		}
+		state = cm_store_state_as_string(entry->cm_state);
+		old_state = entry->cm_state;
 	}
-	if (*p != '\0') {
-		printf("%s\n-ERROR-\n",
-		       cm_store_state_as_string(entry->cm_state));
+	if (state != NULL) {
+		printf("-ERROR-\n");
 		fflush(NULL);
 	}
-	cm_iterate_done(entry, istate);
+	cm_iterate_entry_done(entry, istate);
 	talloc_free(parent);
 	return 0;
 }

@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/bash -e
 
 cd "$tmpdir"
 
@@ -28,11 +28,17 @@ id-pkinit-KPKdc
 id-pkix
 id-pkix.1
 id-pkix.3
+id-pkix-ocsp-nocheck
+id-pe.1
+id-ce.35
+id-ce.14
+id-qt.2
 '
 oids='
 1.3.6.1.5
 1.3.6.1.5.5
 1.3.6.1.5.5.7
+1.3.6.1.5.5.7.48.1.5
 1.3.6.1.5.2
 1.3.6.1.5.2.3
 1.3.6.1.4.1.311.20.2.2

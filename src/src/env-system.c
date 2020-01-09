@@ -30,6 +30,12 @@
 #include "tdbus.h"
 
 char *
+cm_env_home_dir(void)
+{
+	return CM_HOMEDIR;
+}
+
+char *
 cm_env_config_dir(void)
 {
 	char *ret;
@@ -58,6 +64,20 @@ cm_env_ca_dir(void)
 	ret = getenv(CM_STORE_CAS_DIRECTORY_ENV);
 	if (ret == NULL) {
 		ret = CM_STORE_CAS_DIRECTORY;
+	}
+	return ret;
+}
+
+char *
+cm_env_local_ca_dir(void)
+{
+	static char *ret = NULL;
+
+	if (ret == NULL) {
+		ret = getenv(CM_STORE_LOCAL_CA_DIRECTORY_ENV);
+		if (ret == NULL) {
+			ret = CM_STORE_LOCAL_CA_DIRECTORY;
+		}
 	}
 	return ret;
 }

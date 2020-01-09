@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010,2011,2012 Red Hat, Inc.
+ * Copyright (C) 2010,2011,2012,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -461,4 +461,53 @@ cm_prefs_dogtag_sslpinfile(void)
 	}
 #endif
 	return pinfile;
+}
+
+enum cm_key_algorithm
+cm_prefs_preferred_key_algorithm(void)
+{
+	char *keytype;
+	keytype = cm_prefs_config(NULL, "key_type");
+	if (keytype != NULL) {
+		if (strcasecmp(keytype, "RSA") == 0) {
+			free(keytype);
+			return cm_key_rsa;
+		}
+#ifdef CM_ENABLE_DSA
+		else if (strcasecmp(keytype, "DSA") == 0) {
+			free(keytype);
+			return cm_key_dsa;
+		}
+#endif
+#ifdef CM_ENABLE_EC
+		else if ((strcasecmp(keytype, "ECDSA") == 0) ||
+			 (strcasecmp(keytype, "EC") == 0)) {
+			free(keytype);
+			return cm_key_rsa;
+		}
+#endif
+	}
+	return CM_DEFAULT_PUBKEY_TYPE;
+}
+
+const char *
+cm_prefs_nss_ca_trust(void)
+{
+	static const char *trust;
+
+	if (trust == NULL) {
+		trust = cm_prefs_config(NULL, "nss_ca_trust");
+	}
+	return trust;
+}
+
+const char *
+cm_prefs_nss_other_trust(void)
+{
+	static const char *trust;
+
+	if (trust == NULL) {
+		trust = cm_prefs_config(NULL, "nss_other_trust");
+	}
+	return trust;
 }

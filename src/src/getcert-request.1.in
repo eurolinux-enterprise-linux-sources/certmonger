@@ -1,4 +1,4 @@
-.TH certmonger 1 "14 June 2012" "certmonger Manual"
+.TH certmonger 1 "30 May 2014" "certmonger Manual"
 
 .SH NAME
 getcert
@@ -53,6 +53,11 @@ for testing.
 
 .SH KEY GENERATION OPTIONS
 .TP
+\fB\-G\fR TYPE
+In case a new key pair needs to be generated, this option specifies the
+type of the keys to be generated.  If not specified, a reasonable default
+(currently \fIRSA\fR) will be used.
+.TP
 \fB\-g\fR BITS
 In case a new key pair needs to be generated, this option specifies the
 size of the key.  If not specified, a reasonable default (currently
@@ -95,6 +100,28 @@ service as an additional name.
 Set the subject name to include in the signing request.  The default
 used is CN=\fIhostname\fR, where \fIhostname\fR is the local hostname.
 .TP
+\fB\-u\fR keyUsage
+Add an extensionRequest for the specified keyUsage to the
+signing request.  The keyUsage value is expected to be one of these names:
+
+digitalSignature
+
+nonRepudiation
+
+keyEncipherment
+
+dataEncipherment
+
+keyAgreement
+
+keyCertSign
+
+cRLSign
+
+encipherOnly
+
+decipherOnly
+.TP
 \fB\-U\fR EKU
 Add an extensionRequest for the specified extendedKeyUsage to the
 signing request.  The EKU value is expected to be an object identifier
@@ -130,20 +157,49 @@ address as its value, to the signing request.
 \fB\-D\fR DNSNAME
 Add an extensionRequest for a subjectAltName, with the specified DNS name
 as its value, to the signing request.
+.TP
+\fB\-A\fR ADDRESS
+Add an extensionRequest for a subjectAltName, with the specified IP address
+as its value, to the signing request.
 
 .SH OTHER OPTIONS
 .TP
-\fB\-B\fR command
-When ever the certificate is saved to the specified location, run the
-specified command as the client user before saving the certificate.
+\fB\-B\fR COMMAND
+When ever the certificate or the CA's certificates are saved to the
+specified locations, run the specified command as the client user before
+saving the certificates.
 .TP
-\fB\-C\fR command
-When ever the certificate is saved to the specified location, run the
-specified command as the client user after saving the certificate.
+\fB\-C\fR COMMAND
+When ever the certificate or the CA's certificates are saved to the
+specified locations, run the specified command as the client user after
+saving the certificates.
+.TP
+\fB\-a\fR DIR
+When ever the certificate is saved to the specified location, if root
+certificates for the CA are available, save them to the specified NSS database.
+.TP
+\fB\-F\fR FILE
+When ever the certificate is saved to the specified location, if root
+certificates for the CA are available, and when the local copies of the
+CA's root certificates are updated, save them to the specified file.
+.TP
+\fB\-w\fR
+Wait for the certificate to be issued and saved, or for the attempt to obtain
+one to fail.
 .TP
 \fB\-v\fR
 Be verbose about errors.  Normally, the details of an error received from
 the daemon will be suppressed if the client can make a diagnostic suggestion.
+
+.SH NOTES
+Locations specified for key and certificate storage need to be
+accessible to the \fIcertmonger\fR daemon process.  When run as a system
+daemon on a system which uses a mandatory access control mechanism such
+as SELinux, the system policy must ensure that the daemon is allowed to
+access the locations where certificates and keys that it will manage
+will be stored (these locations are typically labeled as \fIcert_t\fR or
+an equivalent).  More SELinux-specific information can be found in the
+\fIselinux.txt\fR documentation file for this package.
 
 .SH BUGS
 Please file tickets for any that you find at https://fedorahosted.org/certmonger/
@@ -153,8 +209,13 @@ Please file tickets for any that you find at https://fedorahosted.org/certmonger
 \fBgetcert\fR(1)
 \fBgetcert-list\fR(1)
 \fBgetcert-list-cas\fR(1)
+\fBgetcert-refresh\fR(1)
+\fBgetcert-refresh-ca\fR(1)
 \fBgetcert-resubmit\fR(1)
 \fBgetcert-start-tracking\fR(1)
+\fBgetcert-status\fR(1)
 \fBgetcert-stop-tracking\fR(1)
 \fBcertmonger-certmaster-submit\fR(8)
 \fBcertmonger-ipa-submit\fR(8)
+\fBcertmonger-local-submit\fR(8)
+\fBcertmonger_selinux\fR(8)

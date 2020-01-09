@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2012 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2012,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -54,7 +54,69 @@ get_error_message(krb5_context ctx, krb5_error_code kcode)
 }
 
 char *
-cm_submit_x_make_ccache(const char *ktname, const char *principal)
+cm_submit_x_ccache_realm(char **msg)
+{
+	krb5_context ctx;
+	krb5_ccache ccache;
+	krb5_principal princ;
+	krb5_error_code kret;
+	krb5_data *data;
+	char *ret;
+
+	if (msg != NULL) {
+		*msg = NULL;
+	}
+
+	kret = krb5_init_context(&ctx);
+	if (kret != 0) {
+		fprintf(stderr, "Error initializing Kerberos: %s.\n",
+			ret = get_error_message(ctx, kret));
+		if (msg != NULL) {
+			*msg = ret;
+		}
+		return NULL;
+	}
+	kret = krb5_cc_default(ctx, &ccache);
+	if (kret != 0) {
+		fprintf(stderr, "Error resolving default ccache: %s.\n",
+			ret = get_error_message(ctx, kret));
+		if (msg != NULL) {
+			*msg = ret;
+		}
+		return NULL;
+	}
+	kret = krb5_cc_get_principal(ctx, ccache, &princ);
+	if (kret != 0) {
+		fprintf(stderr, "Error reading default principal: %s.\n",
+			ret = get_error_message(ctx, kret));
+		if (msg != NULL) {
+			*msg = ret;
+		}
+		return NULL;
+	}
+	data = krb5_princ_realm(ctx, princ);
+	if (data == NULL) {
+		fprintf(stderr, "Error retrieving principal realm.\n");
+		if (msg != NULL) {
+			*msg = "Error retrieving principal realm.\n";
+		}
+		return NULL;
+	}
+	ret = malloc(data->length + 1);
+	if (ret == NULL) {
+		fprintf(stderr, "Out of memory for principal realm.\n");
+		if (msg != NULL) {
+			*msg = "Out of memory for principal realm.\n";
+		}
+		return NULL;
+	}
+	memcpy(ret, data->data, data->length);
+	ret[data->length] = '\0';
+	return ret;
+}
+
+krb5_error_code
+cm_submit_x_make_ccache(const char *ktname, const char *principal, char **msg)
 {
 	krb5_context ctx;
 	krb5_keytab keytab;
@@ -65,11 +127,18 @@ cm_submit_x_make_ccache(const char *ktname, const char *principal)
 	krb5_get_init_creds_opt gicopts, *gicoptsp;
 	char tgs[LINE_MAX], *ret;
 
+	if (msg != NULL) {
+		*msg = NULL;
+	}
+
 	kret = krb5_init_context(&ctx);
 	if (kret != 0) {
-		fprintf(stderr, "Error initializing Kerberos: %s.\n",
-			ret = get_error_message(ctx, kret));
-		return ret;
+		ret = get_error_message(ctx, kret);
+		fprintf(stderr, "Error initializing Kerberos: %s.\n", ret);
+		if (msg != NULL) {
+			*msg = ret;
+		}
+		return kret;
 	}
 	if (ktname != NULL) {
 		kret = krb5_kt_resolve(ctx, ktname, &keytab);
@@ -79,7 +148,10 @@ cm_submit_x_make_ccache(const char *ktname, const char *principal)
 	if (kret != 0) {
 		fprintf(stderr, "Error resolving keytab: %s.\n",
 			ret = get_error_message(ctx, kret));
-		return ret;
+		if (msg != NULL) {
+			*msg = ret;
+		}
+		return kret;
 	}
 	princ = NULL;
 	if (principal != NULL) {
@@ -87,7 +159,10 @@ cm_submit_x_make_ccache(const char *ktname, const char *principal)
 		if (kret != 0) {
 			fprintf(stderr, "Error parsing \"%s\": %s.\n",
 				principal, ret = get_error_message(ctx, kret));
-			return ret;
+			if (msg != NULL) {
+				*msg = ret;
+			}
+			return kret;
 		}
 	} else {
 		kret = krb5_sname_to_principal(ctx, NULL, NULL,
@@ -95,7 +170,10 @@ cm_submit_x_make_ccache(const char *ktname, const char *principal)
 		if (kret != 0) {
 			fprintf(stderr, "Error building client name: %s.\n",
 				ret = get_error_message(ctx, kret));
-			return ret;
+			if (msg != NULL) {
+				*msg = ret;
+			}
+			return kret;
 		}
 	}
 	strcpy(tgs, KRB5_TGS_NAME);
@@ -113,7 +191,10 @@ cm_submit_x_make_ccache(const char *ktname, const char *principal)
 	if (kret != 0) {
 		fprintf(stderr, "Internal error: %s.\n",
 			ret = get_error_message(ctx, kret));
-		return ret;
+		if (msg != NULL) {
+			*msg = ret;
+		}
+		return kret;
 	}
 #else
 	krb5_get_init_creds_opt_init(&gicopts);
@@ -128,7 +209,10 @@ cm_submit_x_make_ccache(const char *ktname, const char *principal)
 	if (kret != 0) {
 		fprintf(stderr, "Error obtaining initial credentials: %s.\n",
 			ret = get_error_message(ctx, kret));
-		return ret;
+		if (msg != NULL) {
+			*msg = ret;
+		}
+		return kret;
 	}
 	ccache = NULL;
 	kret = krb5_cc_resolve(ctx, "MEMORY:" PACKAGE_NAME "_submit",
@@ -139,21 +223,27 @@ cm_submit_x_make_ccache(const char *ktname, const char *principal)
 	if (kret != 0) {
 		fprintf(stderr, "Error initializing credential cache: %s.\n",
 			ret = get_error_message(ctx, kret));
-		return ret;
+		if (msg != NULL) {
+			*msg = ret;
+		}
+		return kret;
 	}
 	kret = krb5_cc_store_cred(ctx, ccache, &creds);
 	if (kret != 0) {
 		fprintf(stderr,
 			"Error storing creds in credential cache: %s.\n",
 			ret = get_error_message(ctx, kret));
-		return ret;
+		if (msg != NULL) {
+			*msg = ret;
+		}
+		return kret;
 	}
 	krb5_cc_close(ctx, ccache);
 	krb5_kt_close(ctx, keytab);
 	krb5_free_principal(ctx, princ);
 	krb5_free_context(ctx);
 	putenv("KRB5CCNAME=MEMORY:" PACKAGE_NAME "_submit");
-	return NULL;
+	return 0;
 }
 
 struct cm_submit_x_context {
@@ -165,7 +255,8 @@ struct cm_submit_x_context {
 	xmlrpc_client *client;
 	const char *method;
 	xmlrpc_value *params, *namedarg, *results;
-	int fault_occurred:1, fault_code;
+	unsigned int fault_occurred:1;
+	int fault_code;
 	const char *fault_text;
 };
 
@@ -695,7 +786,7 @@ main(int argc, char **argv)
 				strchr(argv[0], '/') ?
 				strrchr(argv[0], '/') + 1 :
 				argv[0]);
-			return CM_STATUS_UNCONFIGURED;
+			return CM_SUBMIT_STATUS_UNCONFIGURED;
 			break;
 		}
 	}
@@ -711,15 +802,20 @@ main(int argc, char **argv)
 			strchr(argv[0], '/') ?
 			strrchr(argv[0], '/') + 1 :
 			argv[0]);
-		return CM_STATUS_UNCONFIGURED;
+		return CM_SUBMIT_STATUS_UNCONFIGURED;
 	}
-	ret = CM_STATUS_UNREACHABLE;
+	ret = CM_SUBMIT_STATUS_UNREACHABLE;
 
 	/* Read the CSR from the environment, or from the command-line. */
 	csr = getenv(CM_SUBMIT_CSR_ENV);
 	if (csr == NULL) {
 		csr = cm_submit_u_from_file((optind < argc) ?
 					    argv[optind++] : NULL);
+		if (csr == NULL) {
+			fprintf(stderr,
+				"Error reading certificate signing request.\n");
+			return CM_SUBMIT_STATUS_UNCONFIGURED;
+		}
 	}
 
 	/* Clean up the CSR. */
@@ -765,7 +861,7 @@ main(int argc, char **argv)
 			       cm_submit_x_delegate_off);
 	if (ctx == NULL) {
 		fprintf(stderr, "Error setting up for XMLRPC.\n");
-		return CM_STATUS_UNCONFIGURED;
+		return CM_SUBMIT_STATUS_UNCONFIGURED;
 	}
 
 	/* Both servers take the CSR, in their preferred format, first. */
@@ -774,7 +870,7 @@ main(int argc, char **argv)
 	/* Maybe we need a ccache. */
 	if (k5 || (kpname != NULL) || (ktname != NULL)) {
 		if (!make_ccache ||
-		    (cm_submit_x_make_ccache(ktname, kpname) == 0)) {
+		    (cm_submit_x_make_ccache(ktname, kpname, NULL) == 0)) {
 			k5 = TRUE;
 		}
 	}

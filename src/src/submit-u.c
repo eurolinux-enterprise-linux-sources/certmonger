@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <krb5.h>
@@ -39,10 +40,10 @@
 #include "log.h"
 #include "submit-u.h"
 
-#define BASE64_ALPHABET "0123456789" \
-			"ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
+#define BASE64_ALPHABET "ABCDEFGHIJKLMNOPQRSTUVWXYZ" \
 			"abcdefghijklmnopqrstuvwxyz" \
-			"/+="
+			"0123456789" \
+			"+/="
 
 static char *
 my_stpcpy(char *dest, char *src)
@@ -86,6 +87,7 @@ cm_submit_u_from_file(const char *filename)
 				if (fp != stdin) {
 					fclose(fp);
 				}
+				free(csr);
 				return NULL;
 			}
 			memcpy(my_stpcpy(p, csr), buf, sizeof(buf));
@@ -190,6 +192,9 @@ cm_submit_u_pem_from_base64(const char *what, int dos, const char *base64)
 	int i;
 
 	tmp = strdup(base64);
+	if (tmp == NULL) {
+		return NULL;
+	}
 	for (p = tmp, q = base64; *q != '\0'; q++) {
 		if (strchr(BASE64_ALPHABET, *q)) {
 			*p++ = *q;
@@ -221,6 +226,7 @@ cm_submit_u_pem_from_base64(const char *what, int dos, const char *base64)
 		p = stpcpy(p, what);
 		strcpy(p, dos ? "-----\r\n" : "-----\n");
 	}
+	free(tmp);
 	return ret;
 }
 

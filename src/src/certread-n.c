@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -32,6 +32,7 @@
 #include <certdb.h>
 #include <pk11pub.h>
 #include <prerror.h>
+#include <secerr.h>
 
 #include <krb5.h>
 
@@ -46,20 +47,22 @@
 #include "store.h"
 #include "store-int.h"
 #include "subproc.h"
+#include "util-n.h"
 
 struct cm_certread_state {
 	struct cm_certread_state_pvt pvt;
+	struct cm_store_entry *entry;
 	struct cm_subproc_state *subproc;
 };
 struct cm_certread_n_settings {
-	int readwrite:1;
+	unsigned int readwrite:1;
 };
 
 static int
 cm_certread_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		   void *userdata)
 {
-	int status = 1, readwrite;
+	int status = 1, readwrite, ec;
 	const char *token;
 	char *pin;
 	PLArenaPool *arena;
@@ -75,6 +78,19 @@ cm_certread_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	struct cm_pin_cb_data cb_data;
 	PRTime before_a, after_a, before_b, after_b;
 	FILE *fp;
+	const char *es;
+
+	if (entry->cm_cert_storage_location == NULL) {
+		cm_log(1, "Error reading certificate: no location "
+		       "specified.\n");
+		_exit(1);
+	}
+	if (entry->cm_cert_nickname == NULL) {
+		cm_log(1, "Error reading certificate: no nickname "
+		       "specified.\n");
+		_exit(1);
+	}
+
 	/* Open the status descriptor for stdio. */
 	fp = fdopen(fd, "w");
 	if (fp == NULL) {
@@ -89,9 +105,62 @@ cm_certread_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			      (readwrite ? 0 : NSS_INIT_READONLY) |
 			      NSS_INIT_NOROOTINIT |
 			      NSS_INIT_NOMODDB);
+	ec = PORT_GetError();
 	if (ctx == NULL) {
+		if ((ec == SEC_ERROR_BAD_DATABASE) && readwrite) {
+			switch (errno) {
+			case EACCES:
+			case EPERM:
+				ec = PR_NO_ACCESS_RIGHTS_ERROR;
+				break;
+			default:
+				/* Sigh.  Not a lot of detail.  Check if we
+				 * succeed in read-only mode, which we'll
+				 * interpret as lack of write permissions. */
+				ctx = NSS_InitContext(entry->cm_key_storage_location,
+						      NULL, NULL, NULL, NULL,
+						      NSS_INIT_READONLY |
+						      NSS_INIT_NOROOTINIT |
+						      NSS_INIT_NOMODDB);
+				if (ctx != NULL) {
+					error = NSS_ShutdownContext(ctx);
+					if (error != SECSuccess) {
+						cm_log(1, "Error shutting down "
+						       "NSS.\n");
+					}
+					ctx = NULL;
+					ec = PR_NO_ACCESS_RIGHTS_ERROR;
+				}
+				break;
+			}
+		}
+		if (ec != 0) {
+			es = PR_ErrorToName(ec);
+		} else {
+			es = NULL;
+		}
+		if (es != NULL) {
+			cm_log(1, "Unable to open NSS database '%s': %s.\n",
+			       entry->cm_cert_storage_location, es);
+		} else {
+			cm_log(1, "Unable to open NSS database '%s'.\n",
+			       entry->cm_cert_storage_location);
+		}
+		switch (ec) {
+		case PR_NO_ACCESS_RIGHTS_ERROR: /* EACCES or EPERM */
+			status = CM_SUB_STATUS_ERROR_PERMS;
+			break;
+		default:
+			status = CM_SUB_STATUS_ERROR_INITIALIZING;
+			break;
+		}
 		cm_log(1, "Unable to open NSS database.\n");
-		_exit(1);
+		_exit(status);
+	}
+	es = util_n_fips_hook();
+	if (es != NULL) {
+		cm_log(1, "Error putting NSS into FIPS mode: %s\n", es);
+		_exit(CM_SUB_STATUS_ERROR_INITIALIZING);
 	}
 	/* Allocate a memory pool. */
 	arena = PORT_NewArena(sizeof(double));
@@ -119,7 +188,7 @@ cm_certread_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	cert = NULL;
 	if (cm_pin_read_for_cert(entry, &pin) != 0) {
 		cm_log(1, "Error reading PIN for cert db.\n");
-		_exit(CM_STATUS_ERROR_AUTH);
+		_exit(CM_SUB_STATUS_ERROR_AUTH);
 	}
 	PK11_SetPasswordFunc(&cm_pin_read_for_cert_nss_cb);
 	for (sle = slotlist->head;
@@ -228,7 +297,7 @@ cm_certread_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 								error = SEC_DeletePermCertificate(cert);
 								if (error != SECSuccess) {
 									cm_log(3, "Error deleting old certificate: %s.\n",
-									       PR_ErrorToString(error, PR_LANGUAGE_I_DEFAULT));
+									       PR_ErrorToName(error));
 								}
 							}
 							CERT_DestroyCertificate(cert);
@@ -280,7 +349,7 @@ cm_certread_n_parse(struct cm_store_entry *entry,
 	CERTCertificate *cert, **certs;
 	NSSInitContext *ctx;
 	char *p;
-	const char *nl;
+	const char *nl, *es;
 	unsigned int i;
 
 	/* Initialize the library. */
@@ -292,6 +361,11 @@ cm_certread_n_parse(struct cm_store_entry *entry,
 			      NSS_INIT_NOMODDB);
 	if (ctx == NULL) {
 		cm_log(1, "Unable to initialize NSS.\n");
+		_exit(1);
+	}
+	es = util_n_fips_hook();
+	if (es != NULL) {
+		cm_log(1, "Error putting NSS into FIPS mode: %s\n", es);
 		_exit(1);
 	}
 	/* Allocate a memory pool. */
@@ -323,17 +397,22 @@ cm_certread_n_parse(struct cm_store_entry *entry,
 	cert = certs[0];
 	/* Pick out the interesting bits. */
 	/* Issuer name */
+	talloc_free(entry->cm_cert_issuer_der);
+	entry->cm_cert_issuer_der = cm_store_hex_from_bin(entry,
+							  cert->derIssuer.data,
+							  cert->derIssuer.len);
 	talloc_free(entry->cm_cert_issuer);
 	entry->cm_cert_issuer = talloc_strdup(entry, cert->issuerName);
 	/* Serial number */
 	talloc_free(entry->cm_cert_serial);
 	item = cert->serialNumber;
-	entry->cm_cert_serial = talloc_zero_size(entry, item.len * 2 + 1);
-	for (i = 0; i < item.len; i++) {
-		sprintf(entry->cm_cert_serial + i * 2, "%02x",
-			item.data[i] & 0xff);
-	}
+	entry->cm_cert_serial = cm_store_hex_from_bin(entry, item.data,
+						      item.len);
 	/* Subject name */
+	talloc_free(entry->cm_cert_subject_der);
+	item = cert->derSubject;
+	entry->cm_cert_subject_der = cm_store_hex_from_bin(entry, item.data,
+							   item.len);
 	talloc_free(entry->cm_cert_subject);
 	entry->cm_cert_subject = talloc_strdup(entry, cert->subjectName);
 	/* Subject Public Key Info, encoded into a blob. */
@@ -348,11 +427,8 @@ cm_certread_n_parse(struct cm_store_entry *entry,
 		}
 		_exit(1);
 	}
-	entry->cm_cert_spki = talloc_zero_size(entry, items->len * 2 + 1);
-	for (i = 0; i < items->len; i++) {
-		sprintf(entry->cm_cert_spki + i * 2, "%02x",
-			items->data[i] & 0xff);
-	}
+	entry->cm_cert_spki = cm_store_hex_from_bin(entry, items->data,
+						    items->len);
 	/* Not-before date. */
 	p = talloc_strndup(entry, (char *) cert->validity.notBefore.data,
 			   cert->validity.notBefore.len);
@@ -378,6 +454,9 @@ cm_certread_n_parse(struct cm_store_entry *entry,
 	/* Principal name from subjectAltName extension. */
 	talloc_free(entry->cm_cert_principal);
 	entry->cm_cert_principal = NULL;
+	/* IP address from subjectAltName extension. */
+	talloc_free(entry->cm_cert_ipaddress);
+	entry->cm_cert_ipaddress = NULL;
 	/* Key usage from keyUsage extension. */
 	talloc_free(entry->cm_cert_ku);
 	entry->cm_cert_ku = NULL;
@@ -413,31 +492,28 @@ cm_certread_n_parse(struct cm_store_entry *entry,
 /* Check if something changed, for example we finished reading the data we need
  * from the cert. */
 static int
-cm_certread_n_ready(struct cm_store_entry *entry,
-		    struct cm_certread_state *state)
+cm_certread_n_ready(struct cm_certread_state *state)
 {
-	return cm_subproc_ready(entry, state->subproc);
+	return cm_subproc_ready(state->subproc);
 }
 
 /* Get a selectable-for-read descriptor we can poll for status changes. */
 static int
-cm_certread_n_get_fd(struct cm_store_entry *entry,
-		     struct cm_certread_state *state)
+cm_certread_n_get_fd(struct cm_certread_state *state)
 {
-	return cm_subproc_get_fd(entry, state->subproc);
+	return cm_subproc_get_fd(state->subproc);
 }
 
 /* Clean up after reading the certificate. */
 static void
-cm_certread_n_done(struct cm_store_entry *entry,
-		   struct cm_certread_state *state)
+cm_certread_n_done(struct cm_certread_state *state)
 {
+	const char *msg;
+
 	if (state->subproc != NULL) {
-		cm_certread_read_data_from_buffer(entry,
-						  cm_subproc_get_msg(entry,
-								     state->subproc,
-								     NULL));
-		cm_subproc_done(entry, state->subproc);
+		msg = cm_subproc_get_msg(state->subproc, NULL);
+		cm_certread_read_data_from_buffer(state->entry, msg);
+		cm_subproc_done(state->subproc);
 	}
 	talloc_free(state);
 }
@@ -461,7 +537,8 @@ cm_certread_n_start(struct cm_store_entry *entry)
 		state->pvt.ready = cm_certread_n_ready;
 		state->pvt.get_fd= cm_certread_n_get_fd;
 		state->pvt.done= cm_certread_n_done;
-		state->subproc = cm_subproc_start(cm_certread_n_main,
+		state->entry = entry;
+		state->subproc = cm_subproc_start(cm_certread_n_main, state,
 						  NULL, entry, &settings);
 		if (state->subproc == NULL) {
 			talloc_free(state);

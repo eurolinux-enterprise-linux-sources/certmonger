@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2011,2012 Red Hat, Inc.
+ * Copyright (C) 2009,2011,2012,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -39,6 +39,7 @@
 #include "log.h"
 #include "tdbus.h"
 #include "tdbusm.h"
+#include "util-n.h"
 
 #ifdef ENABLE_NLS
 #include <libintl.h>
@@ -57,15 +58,17 @@ main(int argc, char **argv)
 	long l;
 	pid_t pid;
 	FILE *pfp;
-	const char *pidfile = NULL, *tmpdir;
+	const char *pidfile = NULL, *tmpdir, *gate_command = NULL;
 	char *env_tmpdir, *hint;
 	dbus_bool_t dofork;
+	enum force_fips_mode forcefips;
 	int bustime;
 	DBusError error;
 
 	bus = cm_env_default_bus();
 	dofork = cm_env_default_fork();
 	bustime = cm_env_default_bus_timeout();
+	forcefips = do_not_force_fips;
 
 #ifdef ENABLE_NLS
 	bindtextdomain(PACKAGE, MYLOCALEDIR);
@@ -84,13 +87,17 @@ main(int argc, char **argv)
 		exit(1);
 	};
 
-	while ((c = getopt(argc, argv, "sSp:fb:Bd:n")) != -1) {
+	while ((c = getopt(argc, argv, "sSp:fb:Bd:nFc:")) != -1) {
 		switch (c) {
 		case 's':
 			bus = cm_tdbus_session;
 			break;
 		case 'S':
 			bus = cm_tdbus_system;
+			break;
+		case 'c':
+			bustime = 0;
+			gate_command = optarg;
 			break;
 		case 'p':
 			pidfile = optarg;
@@ -99,6 +106,7 @@ main(int argc, char **argv)
 			dofork = TRUE;
 			break;
 		case 'b':
+			gate_command = NULL;
 			bustime = atoi(optarg);
 			break;
 		case 'B':
@@ -110,11 +118,14 @@ main(int argc, char **argv)
 		case 'n':
 			dofork = FALSE;
 			break;
+		case 'F':
+			forcefips = do_force_fips;
+			break;
 		default:
 			printf(_("Usage: %s [-s|-S] [-n|-f] [-d LEVEL] "
-			         "[-p FILE]\n"),
+				 "[-p FILE] [-F]\n"),
 			       cm_env_whoami());
-			printf("%s%s%s%s%s%s%s%s",
+			printf("%s%s%s%s%s%s%s%s%s%s",
 			       _("\t-s         use session bus\n"),
 			       _("\t-S         use system bus\n"),
 			       _("\t-n         don't become a daemon\n"),
@@ -122,7 +133,9 @@ main(int argc, char **argv)
 			       _("\t-b TIMEOUT bus-activated, idle timeout\n"),
 			       _("\t-B         don't use an idle timeout\n"),
 			       _("\t-d LEVEL   set debugging level (implies -n)\n"),
-			       _("\t-p FILE    write service PID to file\n"));
+			       _("\t-c COMMAND run COMMAND and exit when it does\n"),
+			       _("\t-p FILE    write service PID to file\n"),
+			       _("\t-F         force NSS into FIPS mode\n"));
 			exit(1);
 			break;
 		}
@@ -130,6 +143,7 @@ main(int argc, char **argv)
 
 	cm_log_set_level(dlevel);
 	cm_log_set_method(dofork ? cm_log_syslog : cm_log_stderr);
+	util_n_set_fips(forcefips);
 	cm_log(3, "Starting up.\n");
 
 	tmpdir = cm_env_tmp_dir();
@@ -159,8 +173,17 @@ main(int argc, char **argv)
 
 	switch (bus) {
 	case cm_tdbus_system:
+		if (chdir("/") != 0) {
+			cm_log(0, "Error in chdir(\"/\"): %s.\n",
+			       strerror(errno));
+		}
 		break;
 	case cm_tdbus_session:
+		cm_log(2, "Changing to config directory.\n");
+		if (chdir(cm_env_config_dir()) != 0) {
+			cm_log(2, "Error in chdir(\"%s\"): %s.\n",
+			       cm_env_config_dir(), strerror(errno));
+		}
 		cm_log(2, "Obtaining session lock.\n");
 		lfd = open(cm_env_lock_file(), O_RDWR | O_CREAT,
 			   S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
@@ -177,13 +200,21 @@ main(int argc, char **argv)
 		}
 		l = fcntl(lfd, F_GETFD);
 		if (l != -1) {
-			fcntl(lfd, F_SETFD, l | FD_CLOEXEC);
+			l = fcntl(lfd, F_SETFD, l | FD_CLOEXEC);
+			if (l == -1) {
+				fprintf(stderr,
+					"Error setting close-on-exec flag on "
+					"\"%s\": %s\n",
+					cm_env_lock_file(), strerror(errno));
+				close(lfd);
+				exit(1);
+			}
 		}
 		break;
 	}
 
 	ctx = NULL;
-	i = cm_init(ec, &ctx, bustime);
+	i = cm_init(ec, &ctx, bustime, gate_command);
 	if (i != 0) {
 		fprintf(stderr, "Error: %s\n", strerror(i));
 		talloc_free(ec);
@@ -282,16 +313,18 @@ main(int argc, char **argv)
 			fflush(pfp);
 		}
 	}
-	cm_start_all(ctx);
-	do {
-		i = tevent_loop_once(ec);
-		if (i != 0) {
-			cm_log(3, "Event loop exits with status %d.\n", i);
-			break;
-		}
-	} while (cm_keep_going(ctx) == 0);
-	cm_log(3, "Shutting down.\n");
-	cm_stop_all(ctx);
+	if (cm_start_all(ctx) == 0) {
+		do {
+			i = tevent_loop_once(ec);
+			if (i != 0) {
+				cm_log(3, "Event loop exits with status %d.\n",
+				       i);
+				break;
+			}
+		} while (cm_keep_going(ctx) == 0);
+		cm_log(3, "Shutting down.\n");
+		cm_stop_all(ctx);
+	}
 	talloc_free(ctx);
 	talloc_free(ec);
 	if ((pidfile != NULL) && (pfp != NULL)) {

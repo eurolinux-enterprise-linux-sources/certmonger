@@ -1,9 +1,68 @@
-#!/bin/sh -e
+#!/bin/bash -e
 
 cd "$tmpdir"
 
 source "$srcdir"/functions
 
+cert="-----BEGIN CERTIFICATE-----
+MIIEDjCCAvagAwIBAgIOAQAAAAABPWT1Paf0wU4wDQYJKoZIhvcNAQEFBQAwRjEX
+MBUGA1UEChMOQ3liZXJ0cnVzdCBJbmMxKzApBgNVBAMTIkN5YmVydHJ1c3QgUHVi
+bGljIFN1cmVTZXJ2ZXIgU1YgQ0EwHhcNMTMwMzEzMTc0ODQ3WhcNMTQwMzEzMTc0
+ODQ3WjBuMQswCQYDVQQGEwJVUzEXMBUGA1UECBMOTk9SVEggQ0FST0xJTkExEDAO
+BgNVBAcTB1JhbGVpZ2gxEDAOBgNVBAoTB1JlZCBIYXQxCzAJBgNVBAsTAklUMRUw
+EwYDVQQDFAwqLnJlZGhhdC5jb20wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
+AoIBAQC8NmWLQuAdaMTQ2Ae8AVPUKDEdCNtGBE4It5hb4xL9cHSzQeBaMDm9UR5X
+w5DLR93TQFL+Rc9mLbrBhIz9eacrs5qpUp4i5XhgnvEN7vBsUyFjZqQ+W5Zqs5Cv
+yMVv+rkRRa22hYPqFNM0R0lBPLltZO6+58VA53ttr87JOdPZsdomJtzruXz9ceLg
+ZnDULmIfZFhw7bz0Y9qAURSsULpIjLwWsGjOlNpPSTisCNwNWrmT4KerD8RnCXy+
+keWZPSw9RgMBbyYD6am0nj2/JPmkv390F6HYi6f/0OyefKqZEaPgwDmhEiW6K2Ps
+qodUKMcfBFJNgPs6ZuqOLnGILVyrAgMBAAGjgdEwgc4wHwYDVR0jBBgwFoAUBJhg
+34AblkldZVYtpSwJJArs3LkwPwYDVR0fBDgwNjA0oDKgMIYuaHR0cDovL2NybC5v
+bW5pcm9vdC5jb20vUHVibGljU3VyZVNlcnZlclNWLmNybDAdBgNVHQ4EFgQUC5p5
+rlungiFqeTNw0HOISTrudr8wCQYDVR0TBAIwADAOBgNVHQ8BAf8EBAMCBaAwHQYD
+VR0lBBYwFAYIKwYBBQUHAwEGCCsGAQUFBwMCMBEGCWCGSAGG+EIBAQQEAwIGwDAN
+BgkqhkiG9w0BAQUFAAOCAQEAJC1PfXXjM3Y2ifPlzauQgLHiizx3XeIB86AXJHL2
+N77UMfkSYmUJraWZX3Ye7icDbRwNHLIDJMfpjgcwnC+ZB+byyvmtjGjcTuqVZpXS
+2JU8kgGxNlEjCd4NsumpzollG1W1iDorBCt9bHp8b4isLD+jSnqbWKnvuEUle0ad
+Pi7xjf9BidMvYUEBpJsd9rA1LQtp/ZfxxA6RtgCeXjQPexjsvf6SLKyrmacHZcMJ
+b6JbhXMTzB7QZjR3IooqzXS8T/2zBxDUSH4fJ4o0KSkY8cjNCCxdnkXL96PC9KQ5
+kV1Ad3iHw/TnJjzrJJs3o92pRR/JtF0Jw6dszNP1Sn68uA==
+-----END CERTIFICATE-----"
+
+cat > ca-issued << EOF
+#!/bin/sh
+echo "$cert"
+exit 0
+EOF
+chmod u+x ca-issued
+cat > ca-issued-with-no-newline << EOF
+#!/bin/sh
+echo -n "$cert"
+exit 0
+EOF
+chmod u+x ca-issued-with-no-newline
+cat > ca-issued-with-noise-before << EOF
+#!/bin/sh
+echo iLoveCookies
+echo "$cert"
+exit 0
+EOF
+chmod u+x ca-issued-with-noise-before
+cat > ca-issued-with-noise-after << EOF
+#!/bin/sh
+echo "$cert"
+echo iLoveCookies
+exit 0
+EOF
+chmod u+x ca-issued-with-noise-after
+cat > ca-issued-with-noise-both << EOF
+#!/bin/sh
+echo iLoveCookies
+echo "$cert"
+echo Also Monkeys
+exit 0
+EOF
+chmod u+x ca-issued-with-noise-both
 cat > ca-ask-again << EOF
 #!/bin/sh
 echo iLoveCookiesSome
@@ -35,6 +94,13 @@ echo iLoveCookiesMore
 exit 5
 EOF
 chmod u+x ca-ask-again-5
+cat > ca-ask-again-broken-5 << EOF
+#!/bin/sh
+echo "?1034h13"
+echo iLoveCookiesMore
+exit 5
+EOF
+chmod u+x ca-ask-again-broken-5
 cat > ca-what-what-6 << EOF
 #!/bin/sh
 echo What do you want?
@@ -97,7 +163,7 @@ fi
 
 echo
 echo '[Saving certificate.]'
-$toolsdir/iterate ca entry START_SAVING_CERT,SAVING_CERT,NEED_TO_READ_CERT,READING_CERT,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
+$toolsdir/iterate ca entry START_SAVING_CERT,SAVING_CERT,NEED_TO_READ_CERT,READING_CERT,NEED_TO_SAVE_CA_CERTS,START_SAVING_CA_CERTS,SAVING_CA_CERTS,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
 if test "`grep ^state entry`" != state=MONITORING ; then
 	echo Saving failed or did not move to monitoring.
 	grep ^state entry
@@ -184,7 +250,7 @@ EOF
 $toolsdir/iterate ca2 entry2 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
 $toolsdir/iterate ca2 entry2 NEED_CSR,GENERATING_CSR
 $toolsdir/iterate ca2 entry2 NEED_TO_SUBMIT,SUBMITTING
-$toolsdir/iterate ca2 entry2 START_SAVING_CERT,SAVING_CERT,NEED_TO_READ_CERT,READING_CERT,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
+$toolsdir/iterate ca2 entry2 START_SAVING_CERT,SAVING_CERT,NEED_TO_READ_CERT,READING_CERT,NEED_TO_SAVE_CA_CERTS,START_SAVING_CA_CERTS,SAVING_CA_CERTS,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
 openssl x509 -noout -startdate -enddate -in $tmpdir/certfile2
 echo
 echo '[Noticing expiration.]'
@@ -207,6 +273,121 @@ notification_method=STDOUT
 EOF
 openssl x509 -noout -startdate -enddate -in $tmpdir/certfile2
 $toolsdir/iterate ca  entry2 MONITORING,NEED_TO_NOTIFY_VALIDITY,NOTIFYING_VALIDITY | sed 's@'"$tmpdir"'@$tmpdir@g'
+
+echo
+echo '[Enroll.]'
+cat > entry3 << EOF
+id=Test
+ca_name=Friendly
+state=HAVE_KEY_PAIR
+key_storage_type=FILE
+key_storage_location=$tmpdir/keyfile
+cert_storage_type=FILE
+cert_storage_location=$tmpdir/certfile4
+notification_method=STDOUT
+EOF
+cat > ca3 << EOF
+id=Friendly
+ca_type=EXTERNAL
+ca_external_helper=$tmpdir/ca-issued
+EOF
+: > $tmpdir/certfile4
+$toolsdir/iterate ca3 entry3 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+$toolsdir/iterate ca3 entry3 NEED_CSR,GENERATING_CSR
+$toolsdir/iterate ca3 entry3 NEED_TO_SUBMIT,SUBMITTING
+$toolsdir/iterate ca3 entry3 NEED_TO_SAVE_CERT,SAVING_CERT,START_SAVING_CERT
+
+echo
+echo '[Enroll, helper produces noise before.]'
+cat > entry3 << EOF
+id=Test
+ca_name=Friendly
+state=HAVE_KEY_PAIR
+key_storage_type=FILE
+key_storage_location=$tmpdir/keyfile
+cert_storage_type=FILE
+cert_storage_location=$tmpdir/certfile4
+notification_method=STDOUT
+EOF
+cat > ca3 << EOF
+id=Friendly
+ca_type=EXTERNAL
+ca_external_helper=$tmpdir/ca-issued-with-noise-before
+EOF
+: > $tmpdir/certfile4
+$toolsdir/iterate ca3 entry3 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+$toolsdir/iterate ca3 entry3 NEED_CSR,GENERATING_CSR
+$toolsdir/iterate ca3 entry3 NEED_TO_SUBMIT,SUBMITTING
+$toolsdir/iterate ca3 entry3 NEED_TO_SAVE_CERT,SAVING_CERT,START_SAVING_CERT
+
+echo
+echo '[Enroll, helper produces noise after]'
+cat > entry3 << EOF
+id=Test
+ca_name=Friendly
+state=HAVE_KEY_PAIR
+key_storage_type=FILE
+key_storage_location=$tmpdir/keyfile
+cert_storage_type=FILE
+cert_storage_location=$tmpdir/certfile4
+notification_method=STDOUT
+EOF
+cat > ca3 << EOF
+id=Friendly
+ca_type=EXTERNAL
+ca_external_helper=$tmpdir/ca-issued-with-noise-after
+EOF
+: > $tmpdir/certfile4
+$toolsdir/iterate ca3 entry3 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+$toolsdir/iterate ca3 entry3 NEED_CSR,GENERATING_CSR
+$toolsdir/iterate ca3 entry3 NEED_TO_SUBMIT,SUBMITTING
+$toolsdir/iterate ca3 entry3 NEED_TO_SAVE_CERT,SAVING_CERT,START_SAVING_CERT
+
+echo
+echo '[Enroll, helper produces noise before and after.]'
+cat > entry3 << EOF
+id=Test
+ca_name=Friendly
+state=HAVE_KEY_PAIR
+key_storage_type=FILE
+key_storage_location=$tmpdir/keyfile
+cert_storage_type=FILE
+cert_storage_location=$tmpdir/certfile4
+notification_method=STDOUT
+EOF
+cat > ca3 << EOF
+id=Friendly
+ca_type=EXTERNAL
+ca_external_helper=$tmpdir/ca-issued-with-noise-both
+EOF
+: > $tmpdir/certfile4
+$toolsdir/iterate ca3 entry3 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+$toolsdir/iterate ca3 entry3 NEED_CSR,GENERATING_CSR
+$toolsdir/iterate ca3 entry3 NEED_TO_SUBMIT,SUBMITTING
+$toolsdir/iterate ca3 entry3 NEED_TO_SAVE_CERT,SAVING_CERT,START_SAVING_CERT
+
+echo
+echo '[Enroll, helper omits newline at end of certificate.]'
+cat > entry3 << EOF
+id=Test
+ca_name=Friendly
+state=HAVE_KEY_PAIR
+key_storage_type=FILE
+key_storage_location=$tmpdir/keyfile
+cert_storage_type=FILE
+cert_storage_location=$tmpdir/certfile4
+notification_method=STDOUT
+EOF
+cat > ca3 << EOF
+id=Friendly
+ca_type=EXTERNAL
+ca_external_helper=$tmpdir/ca-issued-with-no-newline
+EOF
+: > $tmpdir/certfile4
+$toolsdir/iterate ca3 entry3 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+$toolsdir/iterate ca3 entry3 NEED_CSR,GENERATING_CSR
+$toolsdir/iterate ca3 entry3 NEED_TO_SUBMIT,SUBMITTING
+$toolsdir/iterate ca3 entry3 NEED_TO_SAVE_CERT,SAVING_CERT,START_SAVING_CERT
 
 echo
 echo '[Enroll until we notice we have no specified CA.]'
@@ -332,6 +513,27 @@ grep ca_cookie entry8
 $toolsdir/iterate ca8 entry8 ""
 
 echo
+echo '[Enroll until the CA tells us to come back later, but with a broken date.]'
+cat > entry8 << EOF
+id=Test
+ca_name=Busy
+state=HAVE_KEY_PAIR
+key_storage_type=FILE
+key_storage_location=$tmpdir/keyfile
+notification_method=STDOUT
+EOF
+cat > ca8 << EOF
+id=Busy
+ca_type=EXTERNAL
+ca_external_helper=$tmpdir/ca-ask-again-broken-5
+EOF
+$toolsdir/iterate ca8 entry8 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+$toolsdir/iterate ca8 entry8 NEED_CSR,GENERATING_CSR
+$toolsdir/iterate ca8 entry8 NEED_TO_SUBMIT,SUBMITTING
+grep ca_cookie entry8 || echo NO COOKIE FOR YOU
+$toolsdir/iterate ca8 entry8 ""
+
+echo
 echo "[Enroll until we realize our enrollment helper doesn't support enrollment.]"
 cat > entry9 << EOF
 id=Test
@@ -417,7 +619,7 @@ $toolsdir/iterate ca10 entry10 NEWLY_ADDED_START_READING_KEYINFO,NEWLY_ADDED_REA
 $toolsdir/iterate ca10 entry10 NEED_KEY_PAIR,GENERATING_KEY_PAIR,HAVE_KEY_PAIR,NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
 $toolsdir/iterate ca10 entry10 NEED_CSR,GENERATING_CSR
 $toolsdir/iterate ca10 entry10 NEED_TO_SUBMIT,SUBMITTING
-$toolsdir/iterate ca10 entry10 START_SAVING_CERT,SAVING_CERT,NEED_TO_READ_CERT,READING_CERT,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
+$toolsdir/iterate ca10 entry10 START_SAVING_CERT,SAVING_CERT,NEED_TO_READ_CERT,READING_CERT,NEED_TO_SAVE_CA_CERTS,START_SAVING_CA_CERTS,SAVING_CA_CERTS,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
 cp $tmpdir/certfile10 $tmpdir/certfile10.bak
 
 echo
@@ -446,7 +648,7 @@ cat > certmonger.conf << EOF
 enroll_ttls = 30s
 notify_ttls = N
 EOF
-$toolsdir/iterate ca10 entry10 NEED_CSR,GENERATING_CSR,HAVE_CSR,NEED_TO_SUBMIT,SUBMITTING,NEED_TO_SAVE_CERT,START_SAVING_CERT,SAVING_CERT,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT,NEED_TO_READ_CERT,READING_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
+$toolsdir/iterate ca10 entry10 NEED_CSR,GENERATING_CSR,HAVE_CSR,NEED_TO_SUBMIT,SUBMITTING,NEED_TO_SAVE_CERT,START_SAVING_CERT,SAVING_CERT,NEED_TO_SAVE_CA_CERTS,START_SAVING_CA_CERTS,SAVING_CA_CERTS,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT,NEED_TO_READ_CERT,READING_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
 
 echo
 echo '[Kicking off notify only.]'
@@ -511,9 +713,8 @@ enroll_ttls = 30s
 notification_method=command
 notification_destination=$tmpdir/notify.sh
 EOF
-$toolsdir/iterate ca10 entry10 NEED_TO_NOTIFY_VALIDITY,NOTIFYING_VALIDITY,NEED_CSR,GENERATING_CSR,HAVE_CSR,NEED_TO_SUBMIT,SUBMITTING,NEED_TO_SAVE_CERT,START_SAVING_CERT,SAVING_CERT,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT,NEED_TO_READ_CERT,READING_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
+$toolsdir/iterate ca10 entry10 NEED_TO_NOTIFY_VALIDITY,NOTIFYING_VALIDITY,NEED_CSR,GENERATING_CSR,HAVE_CSR,NEED_TO_SUBMIT,SUBMITTING,NEED_TO_SAVE_CERT,START_SAVING_CERT,SAVING_CERT,NEED_TO_SAVE_CA_CERTS,START_SAVING_CA_CERTS,SAVING_CA_CERTS,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT,NEED_TO_READ_CERT,READING_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
 cat $tmpdir/notification.txt | sed 's@'"$tmpdir"'@$tmpdir@g'
-
 CERTMONGER_CONFIG_DIR="$SAVED_CONFIG_DIR"
 
 echo

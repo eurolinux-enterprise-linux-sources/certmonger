@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2013 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -54,6 +54,22 @@ main(int argc, char **argv)
 	char *csr, *p, uri[LINE_MAX], *s1, *s2, *config;
 	struct cm_submit_x_context *ctx;
 	struct stat st;
+	const char *mode = CM_OP_SUBMIT;
+
+	if (getenv(CM_SUBMIT_OPERATION_ENV) != NULL) {
+		mode = getenv(CM_SUBMIT_OPERATION_ENV);
+	}
+	if ((strcasecmp(mode, CM_OP_SUBMIT) == 0) ||
+	    (strcasecmp(mode, CM_OP_POLL) == 0)) {
+		/* fall through */
+	} else
+	if (strcasecmp(mode, CM_OP_IDENTIFY) == 0) {
+		printf("certmaster (%s %s)\n", PACKAGE_NAME, PACKAGE_VERSION);
+		return 0;
+	} else {
+		/* unsupported request */
+		return CM_SUBMIT_STATUS_OPERATION_NOT_SUPPORTED;
+	}
 
 #ifdef ENABLE_NLS
 	bindtextdomain(PACKAGE, MYLOCALEDIR);
@@ -78,32 +94,34 @@ main(int argc, char **argv)
 				strchr(argv[0], '/') ?
 				strrchr(argv[0], '/') + 1 :
 				argv[0]);
-			return CM_STATUS_UNCONFIGURED;
+			return CM_SUBMIT_STATUS_UNCONFIGURED;
 			break;
 		}
 	}
 
+	umask(S_IRWXG | S_IRWXO);
+
 	if (host == NULL) {
-		/* Okay, we have to figure out what the master name is. */
-		if (stat("/var/run/certmaster.pid", &st) == 0) {
-			/* Guess that it's us if we have the service running. */
-			config = read_config_file("/etc/certmaster/"
-						  "certmaster.conf");
-			host = "localhost";
-			if (config != NULL) {
-				port = get_config_entry(config,
-							"main", "listen_port");
-			}
+		/* Okay, we have to figure out what the master name is.  Hope
+		 * the minion is configured. */
+		config = read_config_file("/etc/certmaster/"
+					  "minion.conf");
+		if (config != NULL) {
+			host = get_config_entry(config, "main", "certmaster");
+			port = get_config_entry(config, "main",
+						"certmaster_port");
 		} else {
-			/* Hope the minion is configured. */
-			config = read_config_file("/etc/certmaster/"
-						  "minion.conf");
-			if (config != NULL) {
-				host = get_config_entry(config,
-							"main", "certmaster");
-				port = get_config_entry(config,
-							"main",
-							"certmaster_port");
+			if (stat("/var/run/certmaster.pid", &st) == 0) {
+				/* Guess that it's us if we have the service
+				 * running. */
+				config = read_config_file("/etc/certmaster/"
+							  "certmaster.conf");
+				host = "localhost";
+				if (config != NULL) {
+					port = get_config_entry(config,
+								"main",
+								"listen_port");
+				}
 			}
 		}
 	}
@@ -115,7 +133,7 @@ main(int argc, char **argv)
 			strchr(argv[0], '/') ?
 			strrchr(argv[0], '/') + 1 :
 			argv[0]);
-		return CM_STATUS_UNCONFIGURED;
+		return CM_SUBMIT_STATUS_UNCONFIGURED;
 	}
 
 	/* Read the CSR from the environment, or from the command-line. */
@@ -132,7 +150,7 @@ main(int argc, char **argv)
 			strchr(argv[0], '/') ?
 			strrchr(argv[0], '/') + 1 :
 			argv[0]);
-		return CM_STATUS_UNCONFIGURED;
+		return CM_SUBMIT_STATUS_UNCONFIGURED;
 	}
 
 	/* Clean up the CSR -- make sure it's not a "NEW" request.  certmaster
@@ -156,7 +174,7 @@ main(int argc, char **argv)
 	if (ctx == NULL) {
 		fprintf(stderr, "Error setting up for XMLRPC.\n");
 		printf(_("Error setting up for XMLRPC.\n"));
-		return CM_STATUS_UNCONFIGURED;
+		return CM_SUBMIT_STATUS_UNCONFIGURED;
 	}
 
 	/* Add the CSR as the sole argument. */
@@ -171,17 +189,17 @@ main(int argc, char **argv)
 		if (cm_submit_x_get_bss(ctx, &i, &s1, &s2) == 0) {
 			if (i) {
 				printf("%s", s1);
-				return CM_STATUS_ISSUED;
+				return CM_SUBMIT_STATUS_ISSUED;
 			} else {
 				printf("SUBMITTED COOKIE\n");
-				return CM_STATUS_WAIT;
+				return CM_SUBMIT_STATUS_WAIT;
 			}
 		} else {
 			printf(_("Error parsing server response.\n"));
-			return CM_STATUS_UNREACHABLE;
+			return CM_SUBMIT_STATUS_UNREACHABLE;
 		}
 	} else {
 		printf(_("Server error.\n"));
-		return CM_STATUS_UNREACHABLE;
+		return CM_SUBMIT_STATUS_UNREACHABLE;
 	}
 }

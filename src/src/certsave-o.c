@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <nss.h>
@@ -53,6 +54,13 @@ cm_certsave_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	BIO *bio;
 	FILE *pem;
 	X509 *cert;
+
+	if (entry->cm_cert_storage_location == NULL) {
+		cm_log(1, "Error saving certificate: no location "
+		       "specified.\n");
+		_exit(CM_CERTSAVE_STATUS_INTERNAL_ERROR);
+	}
+
 	util_o_init();
 	bio = BIO_new_mem_buf(entry->cm_cert, strlen(entry->cm_cert));
 	if (bio != NULL) {
@@ -61,24 +69,47 @@ cm_certsave_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			pem = fopen(entry->cm_cert_storage_location, "w");
 			if (pem != NULL) {
 				if (PEM_write_X509(pem, cert) == 0) {
+					switch (errno) {
+					case EACCES:
+					case EPERM:
+						status = CM_CERTSAVE_STATUS_PERMS;
+						break;
+					default:
+						status = CM_CERTSAVE_STATUS_INTERNAL_ERROR;
+						break;
+					}
 					cm_log(1, "Error saving certificate "
-					       "to '%s'.\n",
-					       entry->cm_cert_storage_location);
-					status = CM_STATUS_INTERNAL;
+					       "to '%s': %s.\n",
+					       entry->cm_cert_storage_location,
+					       strerror(errno));
 				} else {
-					status = CM_STATUS_SAVED;
+					status = CM_CERTSAVE_STATUS_SAVED;
 				}
 				fclose(pem);
 			} else {
-				status = CM_STATUS_INTERNAL;
+				switch (errno) {
+				case EACCES:
+				case EPERM:
+					status = CM_CERTSAVE_STATUS_PERMS;
+					break;
+				default:
+					status = CM_CERTSAVE_STATUS_INTERNAL_ERROR;
+					break;
+				}
+				cm_log(1, "Error saving certificate "
+				       "to '%s': %s.\n",
+				       entry->cm_cert_storage_location,
+				       strerror(errno));
 			}
 			X509_free(cert);
 		} else {
-			status = CM_STATUS_INTERNAL;
+			cm_log(1, "Error parsing certificate for saving.\n");
+			status = CM_CERTSAVE_STATUS_INTERNAL_ERROR;
 		}
 		BIO_free(bio);
 	} else {
-		status = CM_STATUS_INTERNAL;
+		cm_log(1, "Error setting up to parse certificate.\n");
+		status = CM_CERTSAVE_STATUS_INTERNAL_ERROR;
 	}
 	if (status != 0) {
 		_exit(status);
@@ -88,20 +119,19 @@ cm_certsave_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 
 /* Check if something changed, for example we finished saving the cert. */
 static int
-cm_certsave_o_ready(struct cm_store_entry *entry,
-		    struct cm_certsave_state *state)
+cm_certsave_o_ready(struct cm_certsave_state *state)
 {
-	return cm_subproc_ready(entry, state->subproc);
+	return cm_subproc_ready(state->subproc);
 }
 
 /* Check if we saved the certificate -- the child exited with status 0. */
 static int
-cm_certsave_o_saved(struct cm_store_entry *entry,
-		    struct cm_certsave_state *state)
+cm_certsave_o_saved(struct cm_certsave_state *state)
 {
 	int status;
-	status = cm_subproc_get_exitstatus(entry, state->subproc);
-	if (!WIFEXITED(status) || (WEXITSTATUS(status) != CM_STATUS_SAVED)) {
+	status = cm_subproc_get_exitstatus(state->subproc);
+	if (!WIFEXITED(status) ||
+	    (WEXITSTATUS(status) != CM_CERTSAVE_STATUS_SAVED)) {
 		return -1;
 	}
 	return 0;
@@ -110,26 +140,40 @@ cm_certsave_o_saved(struct cm_store_entry *entry,
 /* Check if we failed because the subject was already there with a different
  * nickname. */
 static int
-cm_certsave_o_conflict_subject(struct cm_store_entry *entry,
-			       struct cm_certsave_state *state)
+cm_certsave_o_conflict_subject(struct cm_certsave_state *state)
 {
 	int status;
-	status = cm_subproc_get_exitstatus(entry, state->subproc);
-	if (!WIFEXITED(status) || (WEXITSTATUS(status) != CM_STATUS_SUBJECT_CONFLICT)) {
+	status = cm_subproc_get_exitstatus(state->subproc);
+	if (!WIFEXITED(status) ||
+	    (WEXITSTATUS(status) != CM_CERTSAVE_STATUS_SUBJECT_CONFLICT)) {
 		return -1;
 	}
 	return 0;
 }
 
 /* Check if we failed because the nickname was already taken by a different
- * subject . */
+ * subject. */
 static int
-cm_certsave_o_conflict_nickname(struct cm_store_entry *entry,
-			        struct cm_certsave_state *state)
+cm_certsave_o_conflict_nickname(struct cm_certsave_state *state)
 {
 	int status;
-	status = cm_subproc_get_exitstatus(entry, state->subproc);
-	if (!WIFEXITED(status) || (WEXITSTATUS(status) != CM_STATUS_NICKNAME_CONFLICT)) {
+	status = cm_subproc_get_exitstatus(state->subproc);
+	if (!WIFEXITED(status) ||
+	    (WEXITSTATUS(status) != CM_CERTSAVE_STATUS_NICKNAME_CONFLICT)) {
+		return -1;
+	}
+	return 0;
+}
+
+/* Check if we failed because we couldn't read or write to the storage
+ * location. */
+static int
+cm_certsave_o_permissions_error(struct cm_certsave_state *state)
+{
+	int status;
+	status = cm_subproc_get_exitstatus(state->subproc);
+	if (!WIFEXITED(status) ||
+	    (WEXITSTATUS(status) != CM_CERTSAVE_STATUS_PERMS)) {
 		return -1;
 	}
 	return 0;
@@ -137,19 +181,17 @@ cm_certsave_o_conflict_nickname(struct cm_store_entry *entry,
 
 /* Get a selectable-for-read descriptor we can poll for status changes. */
 static int
-cm_certsave_o_get_fd(struct cm_store_entry *entry,
-		     struct cm_certsave_state *state)
+cm_certsave_o_get_fd(struct cm_certsave_state *state)
 {
-	return cm_subproc_get_fd(entry, state->subproc);
+	return cm_subproc_get_fd(state->subproc);
 }
 
 /* Clean up after saving the certificate. */
 static void
-cm_certsave_o_done(struct cm_store_entry *entry,
-		   struct cm_certsave_state *state)
+cm_certsave_o_done(struct cm_certsave_state *state)
 {
 	if (state->subproc != NULL) {
-		cm_subproc_done(entry, state->subproc);
+		cm_subproc_done(state->subproc);
 	}
 	talloc_free(state);
 }
@@ -173,7 +215,8 @@ cm_certsave_o_start(struct cm_store_entry *entry)
 		state->pvt.done= cm_certsave_o_done;
 		state->pvt.conflict_subject = cm_certsave_o_conflict_subject;
 		state->pvt.conflict_nickname = cm_certsave_o_conflict_nickname;
-		state->subproc = cm_subproc_start(cm_certsave_o_main,
+		state->pvt.permissions_error = cm_certsave_o_permissions_error;
+		state->subproc = cm_subproc_start(cm_certsave_o_main, state,
 						  NULL, entry, NULL);
 		if (state->subproc == NULL) {
 			talloc_free(state);

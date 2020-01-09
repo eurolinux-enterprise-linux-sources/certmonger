@@ -29,6 +29,7 @@ int cm_tdbusm_get_sn(DBusMessage *msg, void *parent, char **s, long *n);
 int cm_tdbusm_get_ss(DBusMessage *msg, void *parent, char **s1, char **s2);
 int cm_tdbusm_get_ap(DBusMessage *msg, void *parent, char ***ap);
 int cm_tdbusm_get_as(DBusMessage *msg, void *parent, char ***as);
+int cm_tdbusm_get_ass(DBusMessage *msg, void *parent, char ***ass);
 int cm_tdbusm_get_sss(DBusMessage *msg, void *parent,
 		      char **s1, char **s2, char **s3);
 int cm_tdbusm_get_ssb(DBusMessage *msg, void *parent,
@@ -37,6 +38,8 @@ int cm_tdbusm_get_ssn(DBusMessage *msg, void *parent,
 		      char **s1, char **s2, long *n);
 int cm_tdbusm_get_ssas(DBusMessage *msg, void *parent,
 		       char **s1, char **s2, char ***as);
+int cm_tdbusm_get_ssass(DBusMessage *msg, void *parent,
+			char **s1, char **s2, char ***ass);
 int cm_tdbusm_get_ssss(DBusMessage *msg, void *parent,
 		       char **s1, char **s2, char **s3, char **s4);
 int cm_tdbusm_get_ssosos(DBusMessage *msg, void *parent,
@@ -58,17 +61,22 @@ int cm_tdbusm_get_sasasasnas(DBusMessage *msg, void *parent,
 struct cm_tdbusm_dict {
 	char *key;
 	enum cm_tdbusm_dict_value_type {
+		cm_tdbusm_dict_invalid,
 		cm_tdbusm_dict_s,
 		cm_tdbusm_dict_p,
 		cm_tdbusm_dict_as,
+		cm_tdbusm_dict_ass,
 		cm_tdbusm_dict_n,
 		cm_tdbusm_dict_b,
+		cm_tdbusm_dict_d,
 	} value_type;
-	union {
+	union cm_tdbusm_variant {
 		char *s;
 		char **as;
+		char **ass;
 		long n;
 		dbus_bool_t b;
+		const struct cm_tdbusm_dict **d;
 	} value;
 };
 int cm_tdbusm_get_d(DBusMessage *msg, void *parent, struct cm_tdbusm_dict ***d);
@@ -86,14 +94,20 @@ int cm_tdbusm_set_sn(DBusMessage *msg, const char *s, long n);
 int cm_tdbusm_set_ss(DBusMessage *msg, const char *s1, const char *s2);
 int cm_tdbusm_set_ap(DBusMessage *msg, const char **p);
 int cm_tdbusm_set_as(DBusMessage *msg, const char **s);
+int cm_tdbusm_set_ass(DBusMessage *msg, const char **ss);
 int cm_tdbusm_set_sss(DBusMessage *msg,
 		      const char *s1, const char *s2, const char *s3);
+int cm_tdbusm_get_ssv(DBusMessage *msg, void *parent, char **s1, char **s2,
+		      enum cm_tdbusm_dict_value_type *type,
+		      union cm_tdbusm_variant *value);
 int cm_tdbusm_set_ssb(DBusMessage *msg,
 		      const char *s1, const char *s2, dbus_bool_t b);
 int cm_tdbusm_set_ssn(DBusMessage *msg,
 		      const char *s1, const char *s2, long n);
 int cm_tdbusm_set_ssas(DBusMessage *msg,
 		       const char *s1, const char *s2, const char **as);
+int cm_tdbusm_set_ssass(DBusMessage *msg,
+			const char *s1, const char *s2, const char **ass);
 int cm_tdbusm_set_ssss(DBusMessage *msg,
 		       const char *s1, const char *s2,
 		       const char *s3, const char *s4);
@@ -112,6 +126,8 @@ int cm_tdbusm_set_sasasasnas(DBusMessage *msg,
 			     const char **as1, const char **as2,
 			     const char **as3, long n, const char **as4);
 int cm_tdbusm_set_d(DBusMessage *msg, const struct cm_tdbusm_dict **d);
+int cm_tdbusm_set_v(DBusMessage *msg, enum cm_tdbusm_dict_value_type value_type,
+		    const union cm_tdbusm_variant *value);
 int cm_tdbusm_set_sd(DBusMessage *msg,
 		     const char *s, const struct cm_tdbusm_dict **d);
 struct cm_tdbusm_dict *cm_tdbusm_find_dict_entry(struct cm_tdbusm_dict **d,

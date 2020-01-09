@@ -124,6 +124,7 @@ get_config_entry(char * in_data, const char *section, const char *key)
                 if (in_section) {
                     /* We exited the matching section without a match */
                     free(data);
+                    free(tmp);
                     return NULL;
                 }
                 if (strcmp(section, tmp) == 0) {
@@ -166,6 +167,7 @@ get_config_entry(char * in_data, const char *section, const char *key)
             }
         }
     }
+    free(data);
     return NULL;
 }
 

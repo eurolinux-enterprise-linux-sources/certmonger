@@ -12,7 +12,7 @@ We model that life cycle as a state machine.
 
 Now with some arbitrarily-named states for our per-certificate state machine:
 	* Generating a key pair.
-	  States: NEED_KEY_PAIR, GENERATING_KEY_PAIR [*],
+	  States: NEED_KEY_PAIR, GENERATING_KEY_PAIR [*], NEED_KEY_GEN_PERMS,
 		  NEED_KEY_GEN_TOKEN, NEED_KEY_GEN_PIN, HAVE_KEY_PAIR
 	* Reading info about key pair.
 		  NEED_KEYINFO, READING_KEYINFO [*],
@@ -35,7 +35,7 @@ Now with some arbitrarily-named states for our per-certificate state machine:
 	* Saving certificate to the desired location and parsing it for the
 	  information we think is interesting.
 	  States: NEED_TO_SAVE_CERT, PRE_SAVE_CERT[*],
-		  START_SAVING_CERT, SAVING_CERT [*],
+		  START_SAVING_CERT, SAVING_CERT [*], NEED_CERTSAVE_PERMS,
 		  NEED_TO_READ_CERT, READING_CERT [*],
 		  SAVED_CERT, POST_SAVED_CERT[*]
 	* Waiting for certificate to near expiration.
@@ -46,8 +46,17 @@ Now with some arbitrarily-named states for our per-certificate state machine:
 	  States: NEED_TO_NOTIFY_REJECTION, NOTIFYING_REJECTION [*]
 	* Notifying the admin of CA issued cert, but not saved.
 	  States: NEED_TO_NOTIFY_ISSUED_FAILED, NOTIFYING_ISSUED_FAILED [*]
+	* Notifying the admin of that we failed to save CA certs.
+	  States: NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED,
+		  NOTIFYING_ONLY_CA_SAVE_FAILED
+	* Saving CA certs while saving an issued cert.
+	  States: NEED_TO_SAVE_CA_CERTS, START_SAVING_CA_CERTS,
+		  SAVING_CA_CERTS [*], NEED_CA_CERT_SAVE_PERMS
 	* Notifying the admin of CA issued cert, and saved.
 	  States: NEED_TO_NOTIFY_ISSUED_SAVED, NOTIFYING_ISSUED_SAVED [*]
+	* Saving CA certs while not saving an issued cert.
+	  States: NEED_TO_SAVE_ONLY_CA_CERTS, START_SAVING_ONLY_CA_CERTS,
+		  SAVING_ONLY_CA_CERTS [*]
 	* Waiting for user input
 	  States: NEED_GUIDANCE [*]
 	* Getting our bearings
@@ -83,12 +92,21 @@ State logic:
 				elseif key-store-needs-pin
 					state_next = NEED_KEY_GEN_PIN
 					state_transition = now
+				elseif key-store-needs-perms
+					state_next = NEED_KEY_GEN_PERMS
+					state_transition = now
 				else
 					state_next = NEED_KEY_PAIR
 					state_transition = now
 			else
 				state_next = GENERATING_KEY_PAIR
 				state_transition = when-notified
+		break
+
+	NEED_KEY_GEN_PERMS:
+		if starting-up
+			state_next = NEED_KEY_PAIR
+			state_transition = now
 		break
 
 	NEED_KEY_GEN_TOKEN:
@@ -292,8 +310,18 @@ State logic:
 				state_next = NEED_TO_READ_CERT
 				state_transition = now
 			else
-				state_next = NEED_TO_NOTIFY_ISSUED_FAILED
-				state_transition = now
+				if cert-save-needs-perms
+					state_next = NEED_CERTSAVE_PERMS
+					state_transition = now
+				else
+					state_next = NEED_TO_NOTIFY_ISSUED_FAILED
+					state_transition = now
+		break
+
+	NEED_CERTSAVE_PERMS:
+		if starting-up
+			state_next = NEED_TO_SAVE_CERT
+			state_transition = now
 		break
 
 	NEED_TO_READ_CERT:
@@ -318,9 +346,76 @@ State logic:
 			state_next = POST_SAVED_CERT
 			state_transition = now
 		else
-			state_next = NEED_TO_NOTIFY_ISSUED_SAVED
+			state_next = NEED_TO_SAVE_CA_CERTS
 			state_transition = now
 		break
+
+	NEED_TO_SAVE_CA_CERTS:
+		state_next = START_SAVING_CA_CERTS
+		state_transition = now
+
+	START_SAVING_CA_CERTS:
+		if starting-up
+			state_next = NEED_TO_SAVE_CA_CERTS
+			state_transition = now
+		else
+			start-saving-ca-certs
+			state_next = SAVING_CA_CERTS
+			state_transition = now
+		break
+
+	SAVING_CA_CERTS:
+		if starting-up
+			state_next = NEED_TO_SAVE_CA_CERTS
+			state_transition = now
+		else
+			if saving-ca-certs-complete
+				state_next = NEED_TO_NOTIFY_ISSUED_SAVED
+				state_transition = now
+			else
+				if permissions-problem
+					state_next = NEED_CA_CERT_SAVE_PERMS
+					state_transition = now
+				else
+					state_next = NEED_TO_NOTIFY_ISSUED_SAVED
+					state_transition = now
+
+	NEED_TO_SAVE_ONLY_CA_CERTS:
+		state_next = START_SAVING_ONLY_CA_CERTS
+		state_transition = now
+
+	START_SAVING_ONLY_CA_CERTS:
+		if starting-up
+			state_next = NEED_TO_SAVE_ONLY_CA_CERTS
+			state_transition = now
+		else
+			start-saving-only-ca-certs
+			state_next = SAVING_ONLY_CA_CERTS
+			state_transition = now
+		break
+
+	SAVING_ONLY_CA_CERTS:
+		if starting-up
+			state_next = NEED_TO_SAVE_ONLY_CA_CERTS
+			state_transition = now
+		else
+			if saving-ca-certs-complete
+				state_next = MONITORING
+				state_transition = now
+			else
+				if permissions-problem
+					state_next = NEED_CA_CERT_SAVE_PERMS
+					state_transition = now
+				else
+					state_next = NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED
+					state_transition = now
+
+	NEED_CA_CERT_SAVE_PERMS:
+		if starting-up
+			state_next = NEED_TO_SAVE_CA_CERTS
+			state_transition = now
+		break
+
 
 	POST_SAVED_CERT:
 		if starting-up
@@ -328,7 +423,7 @@ State logic:
 			state_transition = now
 		else
 			if post-save-completed
-				state_next = NEED_TO_NOTIFY_ISSUED_SAVED
+				state_next = NEED_TO_SAVE_CA_CERTS
 				state_transition = now
 
 	NEED_TO_NOTIFY_REJECTION:
@@ -361,6 +456,23 @@ State logic:
 			if notification-completed
 				state_next = NEED_TO_SAVE_CERT
 				state_transition = soonish
+		break
+
+	NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED
+		start-notifying
+		state_next = NOTIFYING_ONLY_CA_SAVE_FAILED
+		state_transition = now
+		break
+
+	NOTIFYING_ONLY_CA_SAVE_FAILED
+		if starting-up
+			state_next = NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED
+		start-notifying
+			state_transition = now
+		else
+			if notification-completed
+				state_next = MONITORING
+				state_transition = now
 		break
 
 	NEED_TO_NOTIFY_ISSUED_SAVED:
@@ -532,8 +644,12 @@ State logic:
 		if entry-has-no-associated-ca
 			try-to-set-ca-using-known-ca-list
 		if we-have-a-cert
-			state_next = MONITORING
-			state_transition = now
+			if we-have-ca-certs-to-save
+				state_next = NEED_TO_SAVE_ONLY_CA_CERTS
+				state_transition = now
+			else
+				state_next = MONITORING
+				state_transition = now
 		else
 			if key-storage-is-known
 				if key-is-present
@@ -600,3 +716,134 @@ Data we need to track for each certificate/task/dbentry:
 	* Type and location of CA [or use default settings]
 	* Value of CA cookie for in-progress submissions.
 	* Date of submission for in-progress submissions.
+
+When we interact with CAs, there are things that we "know" about them, or would
+like to know:
+	* A nickname by which we refer to the CA.
+	* The certificate which the CA uses as the issuer of certificates for
+	  end entities.
+	* The root of the chain of trust, if it's not the CA's issuer
+	  certificate, and any other certificates in the chain between them.
+	* A set of mandatory-to-supply pieces of information when we're
+	  requesting a new or renewed certificate from the CA.  For IPA, for
+	  example, during requests for a new certificate (it doesn't
+	  distinguish between "new" and "renew" cases), this is the Kerberos
+	  principal name of the subject for whom we're requesting the
+	  certificate.
+	* If it supports different types of enrollment (known as profiles in
+	  Dogtag, or as templates in ADCS), what the options are, and if
+	  there's a recommended default.
+
+Each of these pieces of information which we might obtain from the CA is
+essentially either missing, current, in the process of being fetched, or in the
+process of being disseminated out to the rest of the local system.  We can
+model the states for each of these using roughly the same set of states:
+
+	* Pulling data from the CA:
+	  States: NEED_TO_REFRESH,REFRESHING,UNREACHABLE
+
+	* Saving the data obtained from the CA to places where it's expected:
+	  States: NEED_TO_SAVE_DATA,PRE_SAVE_DATA,START_SAVING_DATA,
+		  SAVING_DATA,POST_SAVE_DATA,SAVED_DATA
+
+	* Figuring out when we'll need to re-fetch data:
+	  NEED_TO_ANALYZE, ANALYZING
+
+	* Waiting until we need to re-fetch data:
+	  States: IDLE
+
+And this state machine:
+
+	NEED_TO_REFRESH:
+		start-refresh-submission
+		if refresh-submission-started
+			state_next = REFRESHING
+			state_transition = now
+		else
+			state_transition = later
+		break
+
+	REFRESHING:
+		if refresh-submission-attempt-completed
+			if ca-gave-us-data
+				state_next = NEED_TO_SAVE_DATA
+				state_transition = now
+			elseif ca-needs-retry
+				state_next = NEED_TO_REFRESH
+				state_transition = later
+			elseif ca-is-unreachable
+				state_next = UNREACHABLE
+				state_transition = now
+			else
+				state_next = DISABLED
+				state_transition = now
+		else
+			state_next = REFRESHING
+			state_transition = when-notified
+		break
+
+	NEED_TO_SAVE_DATA:
+		if pre-save-command-configured
+			start-configured-pre-save-command
+			state_next = PRE_SAVE_DATA
+			state_transition = now
+		else
+			state_next = START_SAVING_DATA
+			state_transition = now
+		break
+
+	PRE_SAVE_DATA:
+		if pre-save-completed
+			state_next = START_SAVING_DATA
+			state_transition = now
+		break
+
+	START_SAVING_DATA:
+		start-saving-data
+		if saving-data-started
+			state_next = SAVING_DATA
+			state_transition = now
+		break
+
+	SAVING_DATA:
+		if done-saving-data
+			if post-save-command-configured
+				start-configured-post-save-command
+				state_next = POST_SAVE_DATA
+				state_transition = now
+			else
+				state_next = SAVED_DATA
+				state_transition = now
+		break
+
+	POST_SAVE_DATA:
+		if post-save-completed
+			state_next = SAVED_DATA
+			state_transition = now
+		break
+
+	SAVED_DATA:
+		state_next = NEED_TO_ANALYZE
+		state_transition = now
+
+	NEED_TO_ANALYZE:
+		start-analysis
+		if analysis-started
+			state_next = ANALYZING
+			state_transition = now
+		else
+			state_next = IDLE
+			state_transition = now
+		break
+
+	ANALYZING:
+		if fetched-data-will-need-to-be-refreshed:
+			state_next = NEED_TO_REFRESH
+			state_transition = timeout
+		else:
+			state_next = IDLE
+			state_transition = now
+
+	UNREACHABLE:
+		state_next = NEED_TO_REFRESH
+		state_transition = now

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 Red Hat, Inc.
+ * Copyright (C) 2009,2013 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,37 +41,70 @@ cm_certsave_start(struct cm_store_entry *entry)
 
 /* Check if something changed, for example we finished saving the cert. */
 int
-cm_certsave_ready(struct cm_store_entry *entry, struct cm_certsave_state *state)
+cm_certsave_ready(struct cm_certsave_state *state)
 {
 	struct cm_certsave_state_pvt *pvt;
+
 	pvt = (struct cm_certsave_state_pvt *) state;
-	return pvt->ready(entry, state);
+	return pvt->ready(state);
 }
 
 /* Get a selectable-for-read descriptor we can poll for status changes. */
 int
-cm_certsave_get_fd(struct cm_store_entry *entry,
-		   struct cm_certsave_state *state)
+cm_certsave_get_fd(struct cm_certsave_state *state)
 {
 	struct cm_certsave_state_pvt *pvt;
+
 	pvt = (struct cm_certsave_state_pvt *) state;
-	return pvt->get_fd(entry, state);
+	return pvt->get_fd(state);
 }
 
 /* Check if we saved the certificate. */
 int
-cm_certsave_saved(struct cm_store_entry *entry, struct cm_certsave_state *state)
+cm_certsave_saved(struct cm_certsave_state *state)
 {
 	struct cm_certsave_state_pvt *pvt;
+
 	pvt = (struct cm_certsave_state_pvt *) state;
-	return pvt->saved(entry, state);
+	return pvt->saved(state);
+}
+
+/* Check if we failed due to a subject conflict. */
+int
+cm_certsave_conflict_subject(struct cm_certsave_state *state)
+{
+	struct cm_certsave_state_pvt *pvt;
+
+	pvt = (struct cm_certsave_state_pvt *) state;
+	return pvt->conflict_subject(state);
+}
+
+/* Check if we failed due to a nickname conflict. */
+int
+cm_certsave_conflict_nickname(struct cm_certsave_state *state)
+{
+	struct cm_certsave_state_pvt *pvt;
+
+	pvt = (struct cm_certsave_state_pvt *) state;
+	return pvt->conflict_nickname(state);
+}
+
+/* Check if we failed due to a permissions error. */
+int
+cm_certsave_permissions_error(struct cm_certsave_state *state)
+{
+	struct cm_certsave_state_pvt *pvt;
+
+	pvt = (struct cm_certsave_state_pvt *) state;
+	return pvt->permissions_error(state);
 }
 
 /* Clean up after saving the certificate. */
 void
-cm_certsave_done(struct cm_store_entry *entry, struct cm_certsave_state *state)
+cm_certsave_done(struct cm_certsave_state *state)
 {
 	struct cm_certsave_state_pvt *pvt;
+
 	pvt = (struct cm_certsave_state_pvt *) state;
-	pvt->done(entry, state);
+	pvt->done(state);
 }

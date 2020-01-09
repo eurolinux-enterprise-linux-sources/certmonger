@@ -1,4 +1,4 @@
-.TH certmonger.conf 5 "19 April 2012" "certmonger Manual"
+.TH certmonger.conf 5 "11 June 2014" "certmonger Manual"
 
 .SH NAME
 certmonger.conf - configuration file for certmonger
@@ -41,6 +41,14 @@ can be a syslog priority and/or facility, separated by a period, it can be
 an email address, or it can be a command to run.  The default value is
 \fI@CM_DEFAULT_NOTIFICATION_SYSLOG_PRIORITY@\fP.
 
+.IP key_type
+This is the type of key pair which will be generated, used in certificate
+signing requests, and used when self-signing certificates.
+@NO_MAN_DSA@\fIRSA\fR is supported.
+@MAN_DSA@\fIRSA\fR and \fIDSA\fR are supported.
+@MAN_EC@\fIEC\fR (also known as \fIECDSA\fR) is also supported.
+The default is \fIRSA\fP.
+
 .IP symmetric_cipher
 This is the symmetric cipher which will be used to encrypt private keys stored
 in OpenSSL's PEM format.  Recognized values include \fIaes128\fP and
@@ -54,6 +62,15 @@ signing requests and self-signed certificates.  Recognized values include
 \fIsha1\fP, \fIsha256\fP, \fIsha384\fP, and \fIsha512\fP.  The default is
 \fIsha256\fP.  It is not recommended that this value be changed except in cases
 where the default is incompatible with other software.
+
+.IP nss_ca_trust
+These are the trust attributes which are applied to CA certificates which should be trusted, when they
+are saved to NSS databases.  The default is \fICT,C,C\fP.
+
+.IP nss_other_trust
+These are the trust attributes which are applied to certificates which are not
+necessarily to be trusted, when they are saved to NSS databases.  The default
+is \fI,,\fP.
 
 .SH SELFSIGN
 Within the \fIselfsign\fR section, these variables and values are recognized:
@@ -75,3 +92,4 @@ Please file tickets for any that you find at https://fedorahosted.org/certmonger
 
 .SH SEE ALSO
 \fBcertmonger\fR(8)
+\fBcertmonger_selinux\fR(8)

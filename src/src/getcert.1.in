@@ -7,9 +7,11 @@ getcert
  getcert request [options]
  getcert resubmit [options]
  getcert start-tracking [options]
+ getcert status [options]
  getcert stop-tracking [options]
  getcert list [options]
  getcert list-cas [options]
+ getcert refresh-cas [options]
 
 .SH DESCRIPTION
 The \fIgetcert\fR tool issues requests to a @CM_DBUS_NAME@ service on
@@ -36,9 +38,14 @@ Please file tickets for any that you find at https://fedorahosted.org/certmonger
 \fBcertmonger\fR(8)
 \fBgetcert-list\fR(1)
 \fBgetcert-list-cas\fR(1)
+\fBgetcert-refresh\fR(1)
+\fBgetcert-refresh-ca\fR(1)
 \fBgetcert-request\fR(1)
 \fBgetcert-resubmit\fR(1)
 \fBgetcert-start-tracking\fR(1)
+\fBgetcert-status\fR(1)
 \fBgetcert-stop-tracking\fR(1)
 \fBcertmonger-certmaster-submit\fR(8)
 \fBcertmonger-ipa-submit\fR(8)
+\fBcertmonger-local-submit\fR(8)
+\fBcertmonger_selinux\fR(8)

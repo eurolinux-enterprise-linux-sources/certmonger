@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010,2011,2012 Red Hat, Inc.
+ * Copyright (C) 2010,2011,2012,2013 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -37,7 +37,7 @@
 #include "submit-e.h"
 #include "submit-h.h"
 #include "submit-u.h"
-#include "util-o.h"
+#include "util-m.h"
 
 #define DOGTAG_DEFAULTS_SET_PATH \
 	"/xml/output/set/record/list/record/set/defList/list/defList/set"
@@ -128,7 +128,8 @@ cm_submit_d_xml_default(void *parent, xmlNodePtr node)
 	constraint = cm_submit_d_xml_node_text(parent, node, subname);
 	subname = DOGTAG_DEFAULTS_SET_MEMBER_SYNTAX;
 	syntax = cm_submit_d_xml_node_text(parent, node, subname);
-	if ((value == NULL) && (strcmp(syntax, "choice") == 0)) {
+	if ((value == NULL) && (syntax != NULL) &&
+	    (strcmp(syntax, "choice") == 0)) {
 		value = talloc_strdup(parent, constraint);
 		if (value != NULL) {
 			value[strcspn(value, ",")] = '\0';
@@ -162,8 +163,9 @@ cm_submit_d_xml_default(void *parent, xmlNodePtr node)
 		} else
 		if (strcmp(syntax, "string_list") == 0) {
 			ret->syntax = dogtag_string_list;
-		} else
+		} else {
 			ret->syntax = dogtag_unknown;
+		}
 	}
 
 	return ret;
@@ -418,12 +420,12 @@ cm_submit_d_submit_eval(void *parent, const char *xml, const char *url,
 			*out = talloc_asprintf(parent,
 					       "0\nstate=approve&requestId=%s\n",
 					       cm_submit_u_url_encode(requestId));
-			return CM_STATUS_WAIT_WITH_DELAY;
+			return CM_SUBMIT_STATUS_WAIT_WITH_DELAY;
 		} else {
 			*out = talloc_asprintf(parent,
 					       "state=check&requestId=%s\n",
 					       cm_submit_u_url_encode(requestId));
-			return CM_STATUS_WAIT;
+			return CM_SUBMIT_STATUS_WAIT;
 		}
 	}
 	if ((error != NULL) || (error_code != NULL) || (error_reason != NULL)) {
@@ -440,7 +442,7 @@ cm_submit_d_submit_eval(void *parent, const char *xml, const char *url,
 						      error_reason);
 		}
 	}
-	return CM_STATUS_REJECTED;
+	return CM_SUBMIT_STATUS_REJECTED;
 }
 
 enum cm_external_status
@@ -460,7 +462,7 @@ cm_submit_d_check_eval(void *parent, const char *xml, const char *url,
 		*out = talloc_asprintf(parent,
 				       "0\nstate=retrieve&requestId=%s\n",
 				       cm_submit_u_url_encode(requestId));
-		return CM_STATUS_WAIT_WITH_DELAY;
+		return CM_SUBMIT_STATUS_WAIT_WITH_DELAY;
 	}
 	if ((status != NULL) &&
 	    (strcmp(status, "pending") == 0) &&
@@ -469,12 +471,12 @@ cm_submit_d_check_eval(void *parent, const char *xml, const char *url,
 			*out = talloc_asprintf(parent,
 					       "0\nstate=approve&requestId=%s\n",
 					       cm_submit_u_url_encode(requestId));
-			return CM_STATUS_WAIT_WITH_DELAY;
+			return CM_SUBMIT_STATUS_WAIT_WITH_DELAY;
 		} else {
 			*out = talloc_asprintf(parent,
 					       "state=check&requestId=%s\n",
 					       cm_submit_u_url_encode(requestId));
-			return CM_STATUS_WAIT;
+			return CM_SUBMIT_STATUS_WAIT;
 		}
 	}
 	if ((error != NULL) || (error_code != NULL) || (error_reason != NULL)) {
@@ -491,7 +493,7 @@ cm_submit_d_check_eval(void *parent, const char *xml, const char *url,
 						      error_reason);
 		}
 	}
-	return CM_STATUS_REJECTED;
+	return CM_SUBMIT_STATUS_REJECTED;
 }
 
 enum cm_external_status
@@ -519,7 +521,7 @@ cm_submit_d_reject_eval(void *parent, const char *xml, const char *url,
 						      error_reason);
 		}
 	}
-	return CM_STATUS_REJECTED;
+	return CM_SUBMIT_STATUS_REJECTED;
 }
 
 enum cm_external_status
@@ -539,7 +541,7 @@ cm_submit_d_review_eval(void *parent, const char *xml, const char *url,
 		*out = talloc_asprintf(parent,
 				       "0\nstate=approve&requestId=%s\n",
 				       cm_submit_u_url_encode(requestId));
-		return CM_STATUS_WAIT_WITH_DELAY;
+		return CM_SUBMIT_STATUS_WAIT_WITH_DELAY;
 	}
 	if ((status != NULL) &&
 	    (strcmp(status, "complete") == 0) &&
@@ -547,7 +549,7 @@ cm_submit_d_review_eval(void *parent, const char *xml, const char *url,
 		*out = talloc_asprintf(parent,
 				       "0\nstate=retrieve&requestId=%s\n",
 				       cm_submit_u_url_encode(requestId));
-		return CM_STATUS_WAIT_WITH_DELAY;
+		return CM_SUBMIT_STATUS_WAIT_WITH_DELAY;
 	}
 	if ((error != NULL) || (error_code != NULL) || (error_reason != NULL)) {
 		*out = talloc_asprintf(parent, "Server at \"%s\" replied", url);
@@ -563,7 +565,7 @@ cm_submit_d_review_eval(void *parent, const char *xml, const char *url,
 						      error_reason);
 		}
 	}
-	return CM_STATUS_REJECTED;
+	return CM_SUBMIT_STATUS_REJECTED;
 }
 
 enum cm_external_status
@@ -582,7 +584,7 @@ cm_submit_d_approve_eval(void *parent, const char *xml, const char *url,
 		*out = talloc_asprintf(parent,
 				       "0\nstate=retrieve&requestId=%s\n",
 				       cm_submit_u_url_encode(requestId));
-		return CM_STATUS_WAIT_WITH_DELAY;
+		return CM_SUBMIT_STATUS_WAIT_WITH_DELAY;
 	}
 	if ((error != NULL) || (error_code != NULL) || (error_reason != NULL)) {
 		*out = talloc_asprintf(parent, "Server at \"%s\" replied", url);
@@ -598,7 +600,7 @@ cm_submit_d_approve_eval(void *parent, const char *xml, const char *url,
 						      error_reason);
 		}
 	}
-	return CM_STATUS_REJECTED;
+	return CM_SUBMIT_STATUS_REJECTED;
 }
 
 enum cm_external_status
@@ -614,7 +616,7 @@ cm_submit_d_fetch_eval(void *parent, const char *xml, const char *url,
 				 &status, &requestId, &cert);
 	if (cert != NULL) {
 		*out = talloc_asprintf(parent, "%s\n", trim(parent, cert));
-		return CM_STATUS_ISSUED;
+		return CM_SUBMIT_STATUS_ISSUED;
 	}
 	if ((error != NULL) || (error_code != NULL) || (error_reason != NULL)) {
 		*out = talloc_asprintf(parent, "Server at \"%s\" replied", url);
@@ -630,7 +632,7 @@ cm_submit_d_fetch_eval(void *parent, const char *xml, const char *url,
 						      error_reason);
 		}
 	}
-	return CM_STATUS_REJECTED;
+	return CM_SUBMIT_STATUS_REJECTED;
 }
 
 #ifdef CM_SUBMIT_D_MAIN
@@ -683,10 +685,11 @@ main(int argc, char **argv)
 	const char *nssdb, *capath, *cainfo, *sslkey, *sslcert, *sslpin;
 	const char *result, *default_values;
 	struct dogtag_default **defaults, *nodefault[] = { NULL };
-	char *params, *uri, *p, *request;
+	char *params, *uri, *p, *q, *request;
 	char *error = NULL, *error_code = NULL, *error_reason = NULL;
 	char *status = NULL, *requestId = NULL, *cert = NULL;
 	struct cm_submit_h_context *hctx;
+
 	op = op_none;
 	id = 0;
 	verbose = 0;
@@ -737,7 +740,7 @@ main(int argc, char **argv)
 		case 'S':
 			op = op_submit_serial;
 			agent = 0;
-			serial = util_o_dec_from_hex(optarg);
+			serial = util_dec_from_hex(optarg);
 			break;
 		case 'D':
 			op = op_submit_serial;
@@ -817,6 +820,10 @@ restart:
 			return 1;
 		}
 		request = cm_submit_u_url_encode(p);
+		if (request == NULL) {
+			printf("Error URL-encoding CSR.\n");
+			return 1;
+		}
 		params = talloc_asprintf(ctx,
 					 "profileId=%s&"
 					 "cert_request_type=pkcs10&"
@@ -897,7 +904,7 @@ restart:
 						 "xml=true&%s",
 						 id, default_values);
 		} else {
-			/* use asked-for efaults */
+			/* use asked-for defaults */
 			method = "GET";
 			cgi = "profileProcess";
 			params = talloc_asprintf(ctx,
@@ -905,12 +912,19 @@ restart:
 						 "op=approve&"
 						 "xml=true",
 						 id);
-			for (i = 0; defaults[i] != NULL; i++) {
-				params = talloc_asprintf(ctx,
-							 "%s&%s=%s",
-							 params,
-							 cm_submit_u_url_encode(defaults[i]->name),
-							 cm_submit_u_url_encode(defaults[i]->value));
+			for (i = 0;
+			     (defaults != NULL) &&
+			     (defaults[i] != NULL) &&
+			     (defaults[i]->name != NULL) &&
+			     (defaults[i]->value != NULL);
+			     i++) {
+				p = cm_submit_u_url_encode(defaults[i]->name);
+				q = cm_submit_u_url_encode(defaults[i]->value);
+				if ((p != NULL) && (q != NULL)) {
+					params = talloc_asprintf(ctx,
+								 "%s&%s=%s",
+								 params, p, q);
+				}
 			}
 		}
 		break;
@@ -1040,11 +1054,16 @@ restart:
 	case op_review:
 		defaults = cm_submit_d_xml_defaults(hctx, result);
 		for (i = 0;
-		     (defaults != NULL) && (defaults[i] != NULL);
+		     (defaults != NULL) &&
+		     (defaults[i] != NULL) &&
+		     (defaults[i]->name != NULL) &&
+		     (defaults[i]->value != NULL);
 		     i++) {
-			printf("default: %s=%s\n",
-			       cm_submit_u_url_encode(defaults[i]->name),
-			       cm_submit_u_url_encode(defaults[i]->value));
+			p = cm_submit_u_url_encode(defaults[i]->name);
+			q = cm_submit_u_url_encode(defaults[i]->value);
+			if ((p != NULL) && (q != NULL)) {
+				printf("default: %s=%s\n", p, q);
+			}
 		}
 		cm_submit_d_approve_result(hctx, result,
 					   &error_code, &error_reason,

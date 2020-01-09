@@ -14,6 +14,14 @@ but it can be for troubleshooting purposes.  The signing request which is
 to be submitted should either be in a file whose name is given as an argument,
 or fed into \fIipa-submit\fR via stdin.
 
+\fBcertmonger\fR supports retrieving trusted certificates from IPA CAs.  See
+\fBgetcert-request\fR(1) and \fBgetcert-resubmit\fR(1) for information about
+specifying where those certificates should be stored on the local system.
+Trusted certificates are retrieved from the \fBcaCertificate\fR attribute of
+entries present at and below \fIcn=cacert,cn=ipa,cn=etc,\fR$BASE in the IPA
+LDAP server's directory tree, where $BASE defaults to the value of the
+\fBbasedn\fR setting in \fB/etc/ipa/default.conf\fR.
+
 .SH OPTIONS
 .TP
 \fB\-P\fR csrPrincipal
@@ -85,8 +93,12 @@ Please file tickets for any that you find at https://fedorahosted.org/certmonger
 \fBgetcert\fR(1)
 \fBgetcert-list\fR(1)
 \fBgetcert-list-cas\fR(1)
+\fBgetcert-request\fR(1)
+\fBgetcert-refresh-ca\fR(1)
 \fBgetcert-resubmit\fR(1)
 \fBgetcert-start-tracking\fR(1)
+\fBgetcert-status\fR(1)
 \fBgetcert-stop-tracking\fR(1)
 \fBcertmonger-dogtag-ipa-renew-agent-submit\fR(8)
 \fBcertmonger-certmaster-submit\fR(8)
+\fBcertmonger_selinux\fR(8)

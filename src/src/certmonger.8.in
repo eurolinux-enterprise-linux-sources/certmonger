@@ -1,10 +1,10 @@
-.TH certmonger 8 "12 July 2011" "certmonger Manual"
+.TH certmonger 8 "13 August 2014" "certmonger Manual"
 
 .SH NAME
 certmonger
 
 .SH SYNOPSIS
-certmonger [-s|-S] [-b TIMEOUT|-B] [-n|-f] [-d LEVEL] [-p FILE]
+certmonger [-s|-S] [-b TIMEOUT|-B] [-n|-f] [-d LEVEL] [-p FILE] [-F] [-C cmd]
 
 .SH DESCRIPTION
 The \fIcertmonger\fR daemon monitors certificates for impending
@@ -41,6 +41,14 @@ Set debugging level.  Higher values produce more debugging output.  Implies -n.
 .TP
 -p FILE
 Store the daemon's process ID in the named file.
+.TP
+-F
+Force NSS to be initialized in FIPS mode.  The default behavior is to heed
+the setting stored in \fI/proc/sys/crypto/fips_enabled\fR.
+.TP
+-C cmd
+After the service has initialized, run the specified command, then shut down
+the service after the command exits.
 
 .SH FILES
 The set of certificates being monitored or signed is tracked using files stored
@@ -62,8 +70,12 @@ Please file tickets for any that you find at https://fedorahosted.org/certmonger
 \fBgetcert\fR(1)
 \fBgetcert-list\fR(1)
 \fBgetcert-list-cas\fR(1)
+\fBgetcert-refresh-ca\fR(1)
 \fBgetcert-request\fR(1)
+\fBgetcert-resubmit\fR(1)
 \fBgetcert-start-tracking\fR(1)
+\fBgetcert-status\fR(1)
 \fBgetcert-stop-tracking\fR(1)
 \fBcertmonger-certmaster-submit\fR(8)
 \fBcertmonger-ipa-submit\fR(8)
+\fBcertmonger_selinux\fR(8)

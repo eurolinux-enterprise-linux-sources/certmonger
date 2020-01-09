@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2011,2012 Red Hat, Inc.
- * 
+ * Copyright (C) 2011,2012,2013,2014 Red Hat, Inc.
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
@@ -33,24 +33,29 @@
 #include <dbus/dbus.h>
 
 #include "env.h"
+#include "log.h"
 #include "tdbus.h"
 
 static char *
 cm_env_homedir(const char *subdir, const char *subfile)
 {
 	struct passwd *pwd;
-	const char *home;
+	char *home;
 	char *ret;
 	int len;
-	if ((subdir == NULL) && (subfile == NULL)) {
-		return NULL;
-	}
+	dbus_bool_t free_home;
+
 	home = getenv("HOME");
 	if (home == NULL) {
 		pwd = getpwuid(getuid());
 		if (pwd != NULL) {
 			home = pwd->pw_name;
 		}
+	}
+	free_home = FALSE;
+	if (home != NULL) {
+		home = realpath(home, NULL);
+		free_home = (home != NULL);
 	}
 	if (home != NULL) {
 		len = strlen(home);
@@ -75,14 +80,23 @@ cm_env_homedir(const char *subdir, const char *subfile)
 	} else {
 		ret = NULL;
 	}
+	if (free_home) {
+		free(home);
+	}
 	return ret;
+}
+
+char *
+cm_env_home_dir(void)
+{
+	return cm_env_homedir(NULL, NULL);
 }
 
 static void
 cm_env_ensure_dir(char *path)
 {
 	char *p, *q, *tmp;
-	struct stat st;
+	int i;
 
 	if (path != NULL) {
 		tmp = strdup(path);
@@ -91,12 +105,26 @@ cm_env_ensure_dir(char *path)
 			for (q = tmp + 1; q < p; q++) {
 				if (*q == '/') {
 					*q = '\0';
-					if ((stat(tmp, &st) == -1) &&
-					    (errno == ENOENT)) {
-						mkdir(tmp, S_IRWXU);
+					i = mkdir(tmp, S_IRWXU);
+					if ((i != 0) &&
+					    (errno != EEXIST)) {
+						cm_log(0, "Error ensuring "
+						       "that directory '%s' "
+						       "exists: %s.\n", tmp,
+						       strerror(errno));
+						_exit(1);
 					}
 					*q = '/';
 				}
+			}
+			i = mkdir(tmp, S_IRWXU);
+			if ((i != 0) &&
+			    (errno != EEXIST)) {
+				cm_log(0, "Error ensuring "
+				       "that directory '%s' "
+				       "exists: %s.\n", tmp,
+				       strerror(errno));
+				_exit(1);
 			}
 			free(tmp);
 		}
@@ -146,6 +174,24 @@ cm_env_ca_dir(void)
 		ret = getenv(CM_STORE_CAS_DIRECTORY_ENV);
 		if (ret == NULL) {
 			ret = cm_env_homedir(CM_STORE_SESSION_CAS_DIRECTORY,
+					     NULL);
+		}
+		if (ret != NULL) {
+			cm_env_ensure_dir(ret);
+		}
+	}
+	return ret;
+}
+
+char *
+cm_env_local_ca_dir(void)
+{
+	static char *ret = NULL;
+
+	if (ret == NULL) {
+		ret = getenv(CM_STORE_LOCAL_CA_DIRECTORY_ENV);
+		if (ret == NULL) {
+			ret = cm_env_homedir(CM_STORE_SESSION_LOCAL_CA_DIRECTORY,
 					     NULL);
 		}
 		if (ret != NULL) {

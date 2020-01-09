@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2011 Red Hat, Inc.
+ * Copyright (C) 2009,2011,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,15 +21,35 @@
 #include <sys/wait.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <paths.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <unistd.h>
+
+#include <dbus/dbus.h>
 
 #include <talloc.h>
 
+#include "env.h"
 #include "log.h"
 #include "subproc.h"
+
+#ifndef HAVE_CLEARENV
+extern char **environ;
+static void
+clear_environment(void)
+{
+	environ = NULL;
+}
+#else
+static void
+clear_environment(void)
+{
+	clearenv();
+}
+#endif
 
 #define GROW_SIZE 0x2000
 
@@ -44,6 +64,7 @@ cm_subproc_start(int (*cb)(int fd,
 			   struct cm_store_ca *ca,
 			   struct cm_store_entry *entry,
 			   void *data),
+		 void *parent,
 		 struct cm_store_ca *ca,
 		 struct cm_store_entry *entry,
 		 void *data)
@@ -51,16 +72,21 @@ cm_subproc_start(int (*cb)(int fd,
 	struct cm_subproc_state *state;
 	int fds[2];
 	long flags;
-	state = talloc_ptrtype(entry, state);
+	char *configdir, *tmpdir, *tmp, *homedir, *bus, *local;
+
+	state = talloc_ptrtype(parent, state);
 	if (state != NULL) {
 		memset(state, 0, sizeof(*state));
 		state->fd = -1;
 		state->msg = NULL;
 		state->status = -1;
 		if (pipe(fds) != -1) {
+			fflush(NULL);
 			state->pid = fork();
 			switch (state->pid) {
 			case -1:
+				syslog(LOG_DEBUG, "fork() error: %s",
+				       strerror(errno));
 				close(fds[0]);
 				close(fds[1]);
 				talloc_free(state);
@@ -69,13 +95,51 @@ cm_subproc_start(int (*cb)(int fd,
 			case 0:
 				state->fd = fds[1];
 				close(fds[0]);
+
+				tmp = getenv(CM_STORE_CONFIG_DIRECTORY_ENV);
+				configdir = (tmp != NULL) ? strdup(tmp) : NULL;
+				tmp = getenv("TMPDIR");
+				tmpdir = (tmp != NULL) ? strdup(tmp) : NULL;
+				homedir = cm_env_home_dir();
+				bus = getenv("DBUS_SESSION_BUS_ADDRESS");
+				bus = bus ? strdup(bus) : NULL;
+				local = cm_env_local_ca_dir();
+				local = local ? strdup(local) : NULL;
+				clear_environment();
+				setenv("HOME", homedir, 1);
+				setenv("PATH", _PATH_STDPATH, 1);
+				setenv("SHELL", _PATH_BSHELL, 1);
+				setenv("TERM", "dumb", 1);
+				if (configdir != NULL) {
+					setenv(CM_STORE_CONFIG_DIRECTORY_ENV,
+					       configdir, 1);
+				}
+				if (tmpdir != NULL) {
+					setenv("TMPDIR", tmpdir, 1);
+				}
+				if (bus != NULL) {
+					setenv("DBUS_SESSION_BUS_ADDRESS", bus,
+					       1);
+				}
+				if (local != NULL) {
+					setenv(CM_STORE_LOCAL_CA_DIRECTORY_ENV,
+					       local, 1);
+				}
+
 				exit((*cb)(fds[1], ca, entry, data));
 				break;
 			default:
 				state->fd = fds[0];
 				flags = fcntl(state->fd, F_GETFL);
-				fcntl(state->fd, F_SETFL, flags | O_NONBLOCK);
+				if (fcntl(state->fd, F_SETFL,
+					  flags | O_NONBLOCK) != 0) {
+					syslog(LOG_DEBUG,
+					       "error marking output for "
+					       "subprocess non-blocking: %s",
+					       strerror(errno));
+				}
 				close(fds[1]);
+				fds[1] = -1;
 				break;
 			}
 		}
@@ -85,15 +149,14 @@ cm_subproc_start(int (*cb)(int fd,
 
 /* Get a selectable-for-read descriptor we can poll for status changes. */
 int
-cm_subproc_get_fd(struct cm_store_entry *entry, struct cm_subproc_state *state)
+cm_subproc_get_fd(struct cm_subproc_state *state)
 {
 	return state->fd;
 }
 
 /* Get the output to-date. */
 const char *
-cm_subproc_get_msg(struct cm_store_entry *entry, struct cm_subproc_state *state,
-		   int *length)
+cm_subproc_get_msg(struct cm_subproc_state *state, int *length)
 {
 	if (length != NULL) {
 		*length = state->count;
@@ -103,33 +166,36 @@ cm_subproc_get_msg(struct cm_store_entry *entry, struct cm_subproc_state *state,
 
 /* Get the exit status. */
 int
-cm_subproc_get_exitstatus(struct cm_store_entry *entry,
-			  struct cm_subproc_state *state)
+cm_subproc_get_exitstatus(struct cm_subproc_state *state)
 {
 	return state->status;
 }
 
 /* Clean up when we're done. */
 void
-cm_subproc_done(struct cm_store_entry *entry, struct cm_subproc_state *state)
+cm_subproc_done(struct cm_subproc_state *state)
 {
 	pid_t pid;
-	if (state->pid != -1) {
-		kill(state->pid, SIGKILL);
-		do {
-			pid = waitpid(state->pid, &state->status, 0);
-		} while ((pid == -1) && (errno == EINTR));
+
+	if (state != NULL) {
+		if (state->pid != -1) {
+			kill(state->pid, SIGKILL);
+			do {
+				pid = waitpid(state->pid, &state->status, 0);
+				cm_log(4, "Waited for %ld, got %ld.\n",
+				       (long) state->pid, (long) pid);
+			} while ((pid == -1) && (errno == EINTR));
+		}
+		if (state->fd != -1) {
+			close(state->fd);
+		}
+		talloc_free(state);
 	}
-	if (state->fd != -1) {
-		close(state->fd);
-	}
-	talloc_free(state);
 }
 
 /* Check if we're done (return 0), or need to be called again (-1). */
 int
-cm_subproc_ready(struct cm_store_entry *entry,
-		 struct cm_subproc_state *state)
+cm_subproc_ready(struct cm_subproc_state *state)
 {
 	ssize_t i, remainder;
 	char *tmp;
@@ -310,9 +376,10 @@ cm_subproc_parse_args(void *parent, const char *cmdline, const char **error)
 	return argv;
 }
 
-/* Check if we're done (return 0), or need to be called again (-1). */
+/* Redirect stdio to /dev/null, and mark everything else as close-on-exec,
+ * except for perhaps one of them that is passed in by number. */
 void
-cm_subproc_mark_most_cloexec(struct cm_store_entry *entry, int fd)
+cm_subproc_mark_most_cloexec(int fd)
 {
 	int i;
 	long l;
@@ -355,7 +422,9 @@ cm_subproc_mark_most_cloexec(struct cm_store_entry *entry, int fd)
 		}
 		l = fcntl(i, F_GETFD);
 		if (l != -1) {
-			fcntl(i, F_SETFD, l | FD_CLOEXEC);
+			if (fcntl(i, F_SETFD, l | FD_CLOEXEC) != 0) {
+				cm_log(0, "Potentially leaking FD %d.\n", i);
+			}
 		}
 	}
 }

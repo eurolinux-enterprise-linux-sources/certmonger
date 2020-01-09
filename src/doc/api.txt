@@ -27,7 +27,7 @@ o object layout
   - add_request
     arguments: [dict{string,variant{string/path/array-of-string/number/boolean}}]
                {"NICKNAME"("nickname"),string}
-               {"KEY_TYPE"("key-type"),"RSA"}
+               {"KEY_TYPE"("key-type"),"RSA"/"DSA"/"EC"}
                {"KEY_SIZE"("key-size"),integer}
                {"KEY_STORAGE"("key-storage"),"NSSDB"/"FILE"/"NONE"}*
                {"KEY_LOCATION"("key-file"/"key-database"),string}*
@@ -42,11 +42,21 @@ o object layout
                {"TRACK"("monitoring"),boolean}
                {"RENEW"("autorenew"),boolean}
                {"SUBJECT"("template-subject"),string}
+               {"KU"("template-ku"),string (bit field)}
                {"EKU"("template-eku"),array-of-string (oids)}
                {"PRINCIPAL"("template-principal"),array-of-string (principal names)}
                {"DNS"("template-hostname"),array-of-string (dns names)}
                {"EMAIL"("template-email"),array-of-string (email addresses)}
                {"CA"("ca"),path (known CA to use)}
+               {("ca-profile"),string (known CA profile to use)}
+               {("template-ip-address"),array-of-string (IP addresses in text form)} (since 0.75)
+               {("template-is-ca"),boolean}
+               {("template-ca-path-length"),integer}
+               {("template-ocsp"),array-of-string (ocsp responder URIs)}
+               {("template-crldp"),array-of-string (CRL distribution point URIs)}
+               {("template-ns-comment"),string (Netscape comment)}
+               {("template-profile"),string (certificate profile)}
+               {("cert-presave-command"),string}
                {("cert-postsave-command"),string}
                * = required values
     returns: boolean -> succeeded
@@ -131,6 +141,29 @@ o object layout
   - get_ca_error ("ca-error" property)
     returns: text(optional) -> error text sent by the CA
   - modify
+    arguments: [dict{string,variant{string/path/array-of-string/number/boolean}}]
+               {"NICKNAME"("nickname"),string}
+               {"CA"("ca"),path (known CA to use)}
+               {("ca-profile"),string (known CA profile to use)}
+               {"TRACK"("monitoring"),boolean}
+               {"RENEW"("autorenew"),boolean}
+               {"SUBJECT"("template-subject"),string}
+               {"KEY_PIN"("key-pin"),string}
+               {"KEY_PIN_FILE"("key-pin-file"),string}
+               {"KU"("template-ku"),string (bit field)}
+               {"EKU"("template-eku"),array-of-string (oids)}
+               {"PRINCIPAL"("template-principal"),array-of-string (principal names)}
+               {"DNS"("template-hostname"),array-of-string (dns names)}
+               {"EMAIL"("template-email"),array-of-string (email addresses)}
+               {("template-ip-address"),array-of-string (IP addresses in text form)} (since 0.75)
+               {("template-is-ca"),boolean}
+               {("template-ca-path-length"),integer}
+               {("template-ocsp"),array-of-string (ocsp responder URIs)}
+               {("template-crldp"),array-of-string (CRL distribution point URIs)}
+               {("template-ns-comment"),string (Netscape comment)}
+               {("template-profile"),string (certificate profile)}
+               {("cert-presave-command"),string}
+               {("cert-postsave-command"),string}
     - nickname for request
       argument: string -> new ID
     - pin for key storage
@@ -153,6 +186,8 @@ o object layout
       argument: path -> object path of CA
     returns: boolean -> ok
              path    -> object path, in case it changed
+  - refresh
+    returns: boolean -> in progress
   - resubmit (for requests that have been denied, generates a new csr)
     returns: boolean -> working-on-it
 
@@ -182,6 +217,8 @@ o object layout
       returns: boolean -> changed?
     - associated issuer names (for when we have to guess which CA to use)
       arguments: array of string (optional) -> set of issuer names
+  - refresh
+    returns: boolean -> in progress
 
 Marshallers needed:
 Arguments:

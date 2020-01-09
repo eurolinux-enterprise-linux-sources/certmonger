@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2011 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -139,6 +139,7 @@ cm_tdbus_queue_fd(struct tevent_context *ec, struct tdbus_watch *watch,
 		watch->tfd = tevent_add_fd(ec, watch, watch->fd, newtflags,
 					   handler, watch);
 	} else {
+		cm_log(5, "Not queuing FD %d.\n", watch->fd);
 		watch->tfd = NULL;
 	}
 }
@@ -161,6 +162,7 @@ cm_tdbus_handle_fd(struct tevent_context *ec, struct tevent_fd *tfd,
 			if ((dflags & dwatch->dflags) != 0) {
 				dbus_watch_handle(dwatch->watch,
 						  dflags & dwatch->dflags);
+				break;
 			}
 		}
 		dwatch = dwatch->next;
@@ -349,10 +351,10 @@ cm_tdbus_timeout_add(DBusTimeout *timeout, void *data)
 		if (tdb_timer->active) {
 			next_time = tevent_timeval_current_ofs(tdb_timer->d_interval, 0);
 			tdb_timer->tt = tevent_add_timer(talloc_parent(conn),
-						         tdb_timer,
+							 tdb_timer,
 							 next_time,
-						         cm_tdbus_handle_timer,
-						         tdb_timer);
+							 cm_tdbus_handle_timer,
+							 tdb_timer);
 			if (tdb_timer->tt != NULL) {
 				tdb_timer->next = conn->timers;
 				conn->timers = tdb_timer;
@@ -440,29 +442,41 @@ cm_tdbus_reconnect(struct tevent_context *ec, struct tevent_timer *timer,
 	const char *bus_desc;
 	struct tdbus_connection *tdb;
 	struct timeval later;
+	dbus_bool_t exit_on_disconnect = TRUE;
+
 	tdb = pvt;
 	talloc_free(timer);
-	if (!dbus_connection_get_is_connected(tdb->conn)) {
+	if ((tdb->conn == NULL) ||
+	    !dbus_connection_get_is_connected(tdb->conn)) {
 		/* Close the current connection and open a new one. */
-		dbus_connection_unref(tdb->conn);
+		if (tdb->conn != NULL) {
+			dbus_connection_unref(tdb->conn);
+		}
 		bus_desc = NULL;
 		switch (tdb->conn_type) {
 		case cm_tdbus_system:
 			cm_log(1, "Attempting to reconnect to system bus.\n");
 			tdb->conn = dbus_bus_get(DBUS_BUS_SYSTEM, NULL);
 			cm_set_conn_ptr(tdb->data, tdb->conn);
+			/* Don't exit if we get disconnected. */
+			exit_on_disconnect = FALSE;
 			bus_desc = "system";
 			break;
 		case cm_tdbus_session:
 			cm_log(1, "Attempting to reconnect to session bus.\n");
 			tdb->conn = dbus_bus_get(DBUS_BUS_SESSION, NULL);
 			cm_set_conn_ptr(tdb->data, tdb->conn);
+			/* Exit if we get disconnected. */
+			exit_on_disconnect = TRUE;
 			bus_desc = "session";
 			break;
 		}
-		if (dbus_connection_get_is_connected(tdb->conn)) {
+		if ((tdb->conn != NULL) &&
+		    dbus_connection_get_is_connected(tdb->conn)) {
 			/* We're reconnected; reset our handlers. */
 			cm_log(1, "Reconnected to %s bus.\n", bus_desc);
+			dbus_connection_set_exit_on_disconnect(tdb->conn,
+							       exit_on_disconnect);
 			cm_tdbus_setup_connection(tdb, NULL);
 		} else {
 			/* Try reconnecting again later. */
@@ -605,6 +619,7 @@ cm_tdbus_setup(struct tevent_context *ec, enum cm_tdbus_type bus_type,
 	const char *bus_desc;
 	struct tdbus_connection *tdb;
 	dbus_bool_t exit_on_disconnect;
+
 	/* Build our own context. */
 	tdb = talloc_ptrtype(ec, tdb);
 	if (tdb == NULL) {

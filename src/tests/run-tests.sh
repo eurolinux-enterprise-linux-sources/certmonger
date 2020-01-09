@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 tmpfile=`mktemp ${TMPDIR:-/tmp}/runtestsXXXXXX`
 if test -z "$tmpfile" ; then
@@ -14,13 +14,16 @@ if test -z "$tmpdir" ; then
 else
 	trap 'rm -f "$tmpfile"; rm -fr "$tmpdir"' EXIT
 fi
+mkdir -m 500 "$tmpdir"/rosubdir
+mkdir -m 700 "$tmpdir"/rwsubdir
+trap 'rm -f "$tmpfile"; chmod u+w "$tmpdir"/* ; rm -fr "$tmpdir"' EXIT
 unset DBUS_SESSION_BUS_ADDRESS
 eval `dbus-launch --sh-syntax`
 if test -z "$DBUS_SESSION_BUS_ADDRESS" ; then
 	echo Error launching session bus.
 	exit 1
 else
-	trap 'rm -f "$tmpfile"; rm -fr "$tmpdir"; kill "$DBUS_SESSION_BUS_PID"' EXIT
+	trap 'rm -f "$tmpfile"; chmod u+w "$tmpdir"/* ; rm -fr "$tmpdir"; kill "$DBUS_SESSION_BUS_PID"' EXIT
 fi
 
 srcdir=${srcdir:-`pwd`}
@@ -49,20 +52,36 @@ if test $# -eq 0 ; then
 	subdirs=`cd "$srcdir"; ls -1 | grep '^[0-9]'`
 fi
 for testid in "$@" $subdirs ; do
+	if test -x "$srcdir"/"$testid"/prequal.sh ; then
+		if ! "$srcdir"/"$testid"/prequal.sh ; then
+			echo "Skipping test "$testid"."
+			continue
+		fi
+	fi
 	if test -x "$srcdir"/"$testid"/run.sh ; then
 		mkdir -p "$builddir"/"$testid"
 		pushd "$srcdir"/"$testid" > /dev/null
 		rm -fr "$tmpdir"/*
+		mkdir -m 500 "$tmpdir"/rosubdir
+		mkdir -m 700 "$tmpdir"/rwsubdir
 		if test -r ./expected.out ; then
 			echo -n "Running test "$testid"... "
 			./run.sh "$tmpdir" > "$tmpfile" 2> "$tmpdir"/errors
-			if cmp "$tmpfile" expected.out ; then
-				stat=0
-				echo "OK"
-				cp $tmpfile "$builddir"/"$testid"/actual.out
-				cp "$tmpdir"/errors "$builddir"/"$testid"/actual.err
-			else
-				stat=1
+			sed -i "s|${TMPDIR:-/tmp}/runtests....../|\${tmpdir}/|g" "$tmpfile" "$tmpdir/errors"
+			stat=1
+			for i in expected.out* ; do
+				if ! test -s "$i" ; then
+					break
+				fi
+				if cmp -s "$tmpfile" "$i" 2> /dev/null ; then
+					stat=0
+					echo "OK"
+					cp $tmpfile "$builddir"/"$testid"/actual.out
+					cp "$tmpdir"/errors "$builddir"/"$testid"/actual.err
+					break
+				fi
+			done
+			if test $stat -eq 1 ; then
 				echo "FAIL"
 				diff -u expected.out "$tmpfile" | sed s,"^\+\+\+ $tmpfile","+++ actual",g
 				cp $tmpfile "$builddir"/"$testid"/actual.out
@@ -73,6 +92,11 @@ for testid in "$@" $subdirs ; do
 			./run.sh "$tmpdir"
 			stat=$?
 		fi
+		for i in "$tmpdir"/core* ; do
+			if test -s "$i"; then
+				cp "$i" .
+			fi
+		done
 		popd > /dev/null
 		if test $stat -ne 0 ; then
 			break

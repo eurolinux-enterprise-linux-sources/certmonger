@@ -76,12 +76,16 @@
 /* Define to the default public key type. */
 #undef CM_DEFAULT_PUBKEY_TYPE
 
-/* Define to the default RSA key modulus. */
-#undef CM_DEFAULT_RSA_MODULUS
+/* Define to the default RSA key exponent. */
+#undef CM_DEFAULT_RSA_EXPONENT
 
 /* Define to the list of default time-left thresholds at which we need to warn
    the user. */
 #undef CM_DEFAULT_TTL_LIST
+
+/* Define to the time to wait between attempts to fetch the CA certificate, if
+   it was unreachable. */
+#undef CM_DELAY_CADATA_POLL
 
 /* Define to the time to wait between attempts to see if the CA issued a
    certificate. */
@@ -110,15 +114,41 @@
    that soon. */
 #undef CM_DELAY_SOONISH
 
+/* Define to the maximum size (in bytes) of supported digests. */
+#undef CM_DIGEST_MAX
+
+/* Define to enable DSA support. */
+#undef CM_ENABLE_DSA
+
+/* Define to enable EC support. */
+#undef CM_ENABLE_EC
+
+/* Define to the default location to be used for storing temporary files. */
+#undef CM_HOMEDIR
+
 /* Define to the name that the default IPA CA will be known by. */
 #undef CM_IPA_CA_NAME
 
 /* Define to the path of the IPA submission helper. */
 #undef CM_IPA_HELPER_PATH
 
-/* Define to the minimum public key size. Requests to generate smaller keys
-   will be forced to this key size. */
-#undef CM_MINIMUM_PUBKEY_SIZE
+/* Define to the name that the local CA will be known by. */
+#undef CM_LOCAL_CA_NAME
+
+/* Define to the path of the local submission helper. */
+#undef CM_LOCAL_HELPER_PATH
+
+/* Define to the minimum key size when generating DSA parameters and keys.
+   Requests to generate smaller keys will be forced to this key size. */
+#undef CM_MINIMUM_DSA_KEY_SIZE
+
+/* Define to the minimum key size when selecting elliptic curve parameters.
+   Requests to generate smaller keys will be forced to this key size. */
+#undef CM_MINIMUM_EC_KEY_SIZE
+
+/* Define to the minimum key size when generating RSA keys. Requests to
+   generate smaller keys will be forced to this key size. */
+#undef CM_MINIMUM_RSA_KEY_SIZE
 
 /* Define to the variable name to be used to hold a notification message. */
 #undef CM_NOTIFICATION_ENV
@@ -141,6 +171,13 @@
    directory which holds configuration files. */
 #undef CM_STORE_CONFIG_DIRECTORY_ENV
 
+/* Define to the default path for data belonging to the local CA. */
+#undef CM_STORE_LOCAL_CA_DIRECTORY
+
+/* Define to the name of the environment variable which can specify the
+   directory for the local CA. */
+#undef CM_STORE_LOCAL_CA_DIRECTORY_ENV
+
 /* Define to the default path for request tracking files. */
 #undef CM_STORE_REQUESTS_DIRECTORY
 
@@ -154,6 +191,9 @@
 /* Define to the directory which holds user configuration files. */
 #undef CM_STORE_SESSION_CONFIG_DIRECTORY
 
+/* Define to the default path for data belonging to the user CA. */
+#undef CM_STORE_SESSION_LOCAL_CA_DIRECTORY
+
 /* Define to the default path for user request tracking files. */
 #undef CM_STORE_SESSION_REQUESTS_DIRECTORY
 
@@ -162,6 +202,9 @@
 
 /* Define to the default location to be used for storing temporary files. */
 #undef CM_TMPDIR_ENV
+
+/* Define if dnsName subjectAltNames should be encoded properly. */
+#undef CM_USE_IDN
 
 /* Define to 1 if translation of program messages to the user's native
    language is requested. */
@@ -174,6 +217,9 @@
 /* Define to 1 if you have the MacOS X function CFPreferencesCopyAppValue in
    the CoreFoundation framework. */
 #undef HAVE_CFPREFERENCESCOPYAPPVALUE
+
+/* Define to 1 if you have the `clearenv' function. */
+#undef HAVE_CLEARENV
 
 /* Define if your copy of NSS supports DBMite databases. */
 #undef HAVE_DBM_NSSDB
@@ -228,8 +274,18 @@
    and to 0 if you don't. */
 #undef HAVE_DECL_OPENSSL_ADD_SSL_ALGORITHMS
 
+/* Define to 1 if you have the declaration of `OPENSSL_free', and to 0 if you
+   don't. */
+#undef HAVE_DECL_OPENSSL_FREE
+
 /* Define if the GNU gettext() function is already present or preinstalled. */
 #undef HAVE_GETTEXT
+
+/* Define if you have GMP for hex-to-decimal conversions. */
+#undef HAVE_GMP
+
+/* Define to 1 if you have the <gmp.h> header file. */
+#undef HAVE_GMP_H
 
 /* Define if you have the iconv() function and it works. */
 #undef HAVE_ICONV
@@ -245,6 +301,12 @@
 
 /* Define to 1 if you have the `krb5_get_init_creds_opt_alloc' function. */
 #undef HAVE_KRB5_GET_INIT_CREDS_OPT_ALLOC
+
+/* Define to 1 if you have the `crypto' library (-lcrypto). */
+#undef HAVE_LIBCRYPTO
+
+/* Define to 1 if you have the `ldap' library (-lldap). */
+#undef HAVE_LIBLDAP
 
 /* Define to 1 if you have the <linux/netlink.h> header file. */
 #undef HAVE_LINUX_NETLINK_H
@@ -264,6 +326,9 @@
 /* Define if you have OpenSSL. */
 #undef HAVE_OPENSSL
 
+/* Define to 1 if you have the `SECKEY_CreateECPrivateKey' function. */
+#undef HAVE_SECKEY_CREATEECPRIVATEKEY
+
 /* Define if your copy of NSS supports SQLite databases. */
 #undef HAVE_SQL_NSSDB
 
@@ -282,6 +347,9 @@
 /* Define to 1 if `gssapi_delegation' is a member of `struct
    xmlrpc_curl_xportparms'. */
 #undef HAVE_STRUCT_XMLRPC_CURL_XPORTPARMS_GSSAPI_DELEGATION
+
+/* Define to 1 if you have the <systemd/sd-login.h> header file. */
+#undef HAVE_SYSTEMD_SD_LOGIN_H
 
 /* Define to 1 if you have the <sys/socket.h> header file. */
 #undef HAVE_SYS_SOCKET_H
@@ -304,6 +372,9 @@
 
 /* Define to 1 if you have the <uuid/uuid.h> header file. */
 #undef HAVE_UUID_UUID_H
+
+/* Define as const if the declaration of iconv() needs const. */
+#undef ICONV_CONST
 
 /* Define to the name of the directory under which locale data will be
    installed. */
@@ -341,3 +412,6 @@
 
 /* Define to ensure that there's always an IPA CA defined. */
 #undef WITH_IPA
+
+/* Define to ensure that there's always a local CA defined. */
+#undef WITH_LOCAL

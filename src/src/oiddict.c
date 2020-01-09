@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 Red Hat, Inc.
+ * Copyright (C) 2009,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,8 +30,13 @@ static const struct {
 	{"iso.org.dod.internet.security.kerberosV5", "iso.org.dod.internet.security.2"},
 	{"iso.org.dod.internet.security.mechanisms", "iso.org.dod.internet.security.5"},
 	{"id-pkix", "iso.org.dod.internet.security.mechanisms.7"},
+	{"id-mod", "id-pkix.0"},
 	{"id-pe", "id-pkix.1"},
 	{"id-pe-authorityInfoAccess", "id-pe.1"},
+	{"id-pe-nsa", "id-pe.23"},
+	{"id-qt", "id-pkix.2"},
+	{"id-qt-cps", "id-qt.1"},
+	{"id-qt-unotice", "id-qt.2"},
 	{"id-kp", "id-pkix.3"},
 	{"id-kp-serverAuth", "id-kp.1"},
 	{"id-kp-clientAuth", "id-kp.2"},
@@ -39,7 +44,11 @@ static const struct {
 	{"id-kp-emailProtection", "id-kp.4"},
 	{"id-kp-timeStamping", "id-kp.8"},
 	{"id-kp-OCSPSigning", "id-kp.9"},
+	{"id-on", "id-pkix.8"},
+	{"id-on-dnsSRV", "id-on.7"},
 	{"id-ad", "id-pkix.48"},
+	{"id-ad-ca-ocsp", "id-ad.1"},
+	{"id-pkix-ocsp-nocheck", "id-ad-ca-ocsp.5"},
 	{"id-ad-ca-Issuers", "id-ad.2"},
 	{"id-pkinit", "iso.org.dod.internet.security.kerberosV5.3"},
 	{"id-pkinit-KPClientAuth", "id-pkinit.4"},
@@ -53,8 +62,9 @@ static const struct {
 	{"id-ce-issuerAltName", "id-ce.18"},
 	{"id-ce-basicConstraints", "id-ce.19"},
 	{"id-ce-cRLNumber", "id-ce.20"},
-	{"id-ce-extKeyUsage", "id-ce.37"},
 	{"id-ce-cRLDistributionPoints", "id-ce.31"},
+	{"id-ce-extKeyUsage", "id-ce.37"},
+	{"id-ce-freshestCRL", "id-ce.46"},
 };
 
 static int

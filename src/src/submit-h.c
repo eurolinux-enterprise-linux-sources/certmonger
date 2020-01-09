@@ -73,6 +73,7 @@ cm_submit_h_init(void *parent,
 	struct cm_submit_h_context *ctx;
 	ctx = talloc_ptrtype(parent, ctx);
 	if (ctx != NULL) {
+		memset(ctx, 0, sizeof(*ctx));
 		ctx->method = talloc_strdup(ctx, method);
 		ctx->uri = talloc_strdup(ctx, uri);
 		ctx->args = args ? talloc_strdup(ctx, args) : NULL;
@@ -179,7 +180,7 @@ cm_submit_h_run(struct cm_submit_h_context *ctx)
 #else
 			cm_log(-1,
 			       "warning: libcurl doesn't appear to support "
-			       "Negotiate authentication, continuing");
+			       "Negotiate authentication, continuing\n");
 #endif
 #if defined(CURLOPT_GSSAPI_DELEGATION) && defined(CURLGSSAPI_DELEGATION_FLAG)
 			/* The default before CURLOPT_GSSAPI_DELEGATION existed

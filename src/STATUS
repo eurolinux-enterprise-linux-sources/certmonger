@@ -59,6 +59,9 @@ Complete:
   * Offer an API over D-Bus which the client can use instead of
     mutilating the queue directly (per doc/api.txt).
   * Generate an SPKAC value when generating PKCS#10 CSRs.
+  * Put NSS into FIPS mode.
+  * Offer to store certificates for CAs and their intermediates, potentially in
+    multiple certificate databases and PEM files.
 
 To-do:
   * Also generate a CRMF request (RFC 4211) when we generate CSRs.  Not sure
@@ -90,7 +93,6 @@ To-do:
     COULD -> Move them to something that's more end-user-serviceable. (3 days)
     - IPA mucks with our files directly in their current form, so this is
       tabled indefinitely.
-  * Put NSS into FIPS mode.
   * Lighten build requirements by crafting and parsing XML-RPC ourselves
     since we already have to deal with non-XML-RPC XML and HTTP for Dogtag.
   * Add IDENTIFY operations to helpers, so they can output their
@@ -106,17 +108,20 @@ To-do:
       (probably libcurl again) and changes to the internal state machine to
       handle CRL retrieval as another type of task.  The local signer's CRL
       would be regenerated before being "retrieved".
+    * More on this in "doc/submit.txt".
   * Add a GET_NEW_REQUEST_REQUIREMENTS operation to helpers so that they can
     list variables which the daemon should supply for them for it to note, so
     that if they're not specified by a client, we can intelligently decide
     whether or not they're actually required to be specified for a given CA,
     rather than sloppily hard-coding it as we do now.
-  * Offer to store certificates for CAs and their intermediates, potentially in
-    multiple certificate databases and PEM files.
-  * Learn about using SRV records for locating servers, particularly KCA servers.
+  * Learn about using SRV records for locating servers, particularly KCA ones.
   * Learn to talk to KCAs (per http://datatracker.ietf.org/doc/draft-hotz-kx509)
-  * Learn to speak CMP.
+  * Learn to generate SCEP messages (versions 1 and 2).
+  * Learn to parse SCEP responses (versions 1 and 2).
+  * Learn to speak CMP (see http://marc.info/?l=openssl-dev&m=137535536301203)
   * Learn to talk to puppet CAs.
+    * Check in with awnuk, who's been looking at this combination.
+  * Learn to talk to r509 CAs.
   * Switch to SSL access methods when submitting end-entity requests to Dogtag
     CAs (profileSubmit, checkRequest, displayCertFromRequest).
   * Be able to fill requester contact info when submitting end-entity
@@ -124,3 +129,4 @@ To-do:
     credentials, and make that a client-suppliable value.
   * Stamp "approved by certmonger $version", or something, on certificates,
     to help identify certificates that we approve with agent credentials.
+  * Learn to read and create RFC3820 ProxyCertInfo extensions.

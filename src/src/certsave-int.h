@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 Red Hat, Inc.
+ * Copyright (C) 2009,2013,2014 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -19,33 +19,31 @@
 #define cmcertsaveint_h
 
 enum cm_certsave_status {
-	CM_STATUS_SAVED = 0,
-	CM_STATUS_SUBJECT_CONFLICT = 1,
-	CM_STATUS_NICKNAME_CONFLICT = 2,
-	CM_STATUS_INTERNAL = 3,
+	CM_CERTSAVE_STATUS_SAVED = 0,
+	CM_CERTSAVE_STATUS_INTERNAL_ERROR = 1,
+	CM_CERTSAVE_STATUS_SUBJECT_CONFLICT = 2,
+	CM_CERTSAVE_STATUS_NICKNAME_CONFLICT = 3,
+	CM_CERTSAVE_STATUS_INTERNAL = 4,
+	CM_CERTSAVE_STATUS_PERMS = 5,
 };
 
 struct cm_certsave_state_pvt {
 	/* Check if something changed, for example we finished saving the cert.
 	 */
-	int (*ready)(struct cm_store_entry *entry,
-		     struct cm_certsave_state *state);
+	int (*ready)(struct cm_certsave_state *state);
 	/* Get a selectable-for-read descriptor that we can poll for status
 	 * changes.  */
-	int (*get_fd)(struct cm_store_entry *entry,
-		      struct cm_certsave_state *state);
+	int (*get_fd)(struct cm_certsave_state *state);
 	/* Check if we saved the certificate. */
-	int (*saved)(struct cm_store_entry *entry,
-		     struct cm_certsave_state *state);
+	int (*saved)(struct cm_certsave_state *state);
+	/* Check if we failed due to filesystem permissions. */
+	int (*permissions_error)(struct cm_certsave_state *state);
 	/* Check if we failed because the subject was already being used. */
-	int (*conflict_subject)(struct cm_store_entry *entry,
-				struct cm_certsave_state *state);
+	int (*conflict_subject)(struct cm_certsave_state *state);
 	/* Check if we failed because the nickname was already being used. */
-	int (*conflict_nickname)(struct cm_store_entry *entry,
-				 struct cm_certsave_state *state);
+	int (*conflict_nickname)(struct cm_certsave_state *state);
 	/* Clean up after saving the certificate. */
-	void (*done)(struct cm_store_entry *entry,
-		     struct cm_certsave_state *state);
+	void (*done)(struct cm_certsave_state *state);
 };
 
 #endif

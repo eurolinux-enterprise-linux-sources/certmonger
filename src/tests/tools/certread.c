@@ -30,6 +30,7 @@
 #include "../../src/log.h"
 #include "../../src/store.h"
 #include "../../src/store-int.h"
+#include "tools.h"
 
 static void
 wait_to_read(int fd)
@@ -52,6 +53,7 @@ main(int argc, char **argv)
 	void *parent;
 	cm_log_set_method(cm_log_stderr);
 	cm_log_set_level(3);
+	cm_set_fips_from_env();
 	parent = talloc_new(NULL);
 	if (argc > 1) {
 		entry = cm_store_files_entry_read(parent, argv[1]);
@@ -67,17 +69,17 @@ main(int argc, char **argv)
 	state = cm_certread_start(entry);
 	if (state != NULL) {
 		for (;;) {
-			fd = cm_certread_get_fd(entry, state);
+			fd = cm_certread_get_fd(state);
 			if (fd != -1) {
 				wait_to_read(fd);
 			} else {
 				sleep(1);
 			}
-			if (cm_certread_ready(entry, state) == 0) {
+			if (cm_certread_ready(state) == 0) {
 				break;
 			}
 		}
-		cm_certread_done(entry, state);
+		cm_certread_done(state);
 		ret = 0;
 	} else {
 		printf("Failed to start.\n");

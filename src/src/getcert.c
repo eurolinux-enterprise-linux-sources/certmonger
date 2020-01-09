@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -36,9 +36,11 @@
 #include <krb5.h>
 
 #include "cm.h"
+#include "kudict.h"
 #include "oiddict.h"
 #include "store.h"
 #include "store-int.h"
+#include "submit-e.h"
 #include "tdbus.h"
 #include "tdbusm.h"
 
@@ -106,16 +108,28 @@ static int
 ensure_path_is_directory(char *path)
 {
 	struct stat st;
+	int err;
+
 	if (stat(path, &st) == 0) {
 		if (S_ISDIR(st.st_mode)) {
-			return 0;
+			if (access(path, R_OK | W_OK) == 0) {
+				return 0;
+			} else {
+				err = errno;
+				printf(_("Path \"%s\": insufficient "
+					 "permissions.\n"), path);
+				errno = err;
+				return -1;
+			}
 		} else {
 			printf(_("Path \"%s\" is not a directory.\n"),
 			       path);
 			return -1;
 		}
 	} else {
+		err = errno;
 		printf(_("Path \"%s\": %s.\n"), path, strerror(errno));
+		errno = err;
 		return -1;
 	}
 }
@@ -383,25 +397,6 @@ query_rep_s(enum cm_tdbus_type which,
 }
 
 /* Send the specified, argument-less method call to the named object, and
- * return the single object path from the response. */
-static char *
-query_rep_p(enum cm_tdbus_type which,
-	    const char *path, const char *interface, const char *method,
-	    int verbose,
-	    void *parent)
-{
-	DBusMessage *rep;
-	char *p;
-	rep = query_rep(which, path, interface, method, verbose);
-	if (cm_tdbusm_get_p(rep, parent, &p) != 0) {
-		printf(_("Error parsing server response.\n"));
-		exit(1);
-	}
-	dbus_message_unref(rep);
-	return p;
-}
-
-/* Send the specified, argument-less method call to the named object, and
  * return the array of strings from the response. */
 static char **
 query_rep_as(enum cm_tdbus_type which,
@@ -469,24 +464,6 @@ query_prop(enum cm_tdbus_type which,
 	return send_req(req, verbose);
 }
 
-/* Read a boolean property. */
-static dbus_bool_t
-query_prop_b(enum cm_tdbus_type which,
-	     const char *path, const char *interface, const char *prop,
-	     int verbose,
-	     void *parent)
-{
-	DBusMessage *rep;
-	dbus_bool_t b;
-	rep = query_prop(which, path, interface, prop, verbose);
-	if (cm_tdbusm_get_b(rep, parent, &b) != 0) {
-		printf(_("Error parsing server response.\n"));
-		exit(1);
-	}
-	dbus_message_unref(rep);
-	return b;
-}
-
 /* Read a string property. */
 static char *
 query_prop_s(enum cm_tdbus_type which,
@@ -502,23 +479,6 @@ query_prop_s(enum cm_tdbus_type which,
 	}
 	dbus_message_unref(rep);
 	return s;
-}
-
-/* Read a path property. */
-static char *
-query_prop_p(enum cm_tdbus_type which,
-	     const char *path, const char *interface, const char *prop,
-	     int verbose,
-	     void *parent)
-{
-	DBusMessage *rep;
-	char *p;
-	rep = query_prop(which, path, interface, prop, verbose);
-	if (cm_tdbusm_get_p(rep, parent, &p) != 0) {
-		p = "";
-	}
-	dbus_message_unref(rep);
-	return p;
 }
 
 /* Read an array-of-strings property. */
@@ -538,6 +498,80 @@ query_prop_as(enum cm_tdbus_type which,
 	return as;
 }
 
+/* Evaluate a single request's status. */
+static int
+evaluate_status(const char *state, dbus_bool_t stuck)
+{
+	if (strcmp(state,
+		   cm_store_state_as_string(CM_MONITORING)) == 0) {
+		return CM_SUBMIT_STATUS_ISSUED;
+	}
+	if (strcmp(state,
+		   cm_store_state_as_string(CM_CA_REJECTED)) == 0) {
+		return CM_SUBMIT_STATUS_REJECTED;
+	}
+	if (strcmp(state,
+		   cm_store_state_as_string(CM_CA_WORKING)) == 0) {
+		return CM_SUBMIT_STATUS_WAIT_WITH_DELAY;
+	}
+	if (strcmp(state,
+		   cm_store_state_as_string(CM_CA_UNREACHABLE)) == 0) {
+		return CM_SUBMIT_STATUS_UNREACHABLE;
+	}
+	if (stuck) {
+		return CM_SUBMIT_STATUS_UNCONFIGURED;
+	}
+	return CM_SUBMIT_STATUS_WAIT_WITH_DELAY;
+}
+
+/* Read the status of a single request, and return a status value. */
+static int
+waitfor(void *parent, enum cm_tdbus_type bus, const char *path, int verbose)
+{
+	DBusMessage *rep;
+	char *state, *old_state = NULL;
+	dbus_bool_t stuck;
+
+	for (;;) {
+		rep = query_rep(bus, path, CM_DBUS_REQUEST_INTERFACE,
+				"get_status", verbose);
+		if (cm_tdbusm_get_sb(rep, globals.tctx, &state, &stuck) != 0) {
+			printf(_("Error parsing server response.\n"));
+			exit(1);
+		}
+		if (verbose &&
+		    ((old_state == NULL) || (strcmp(old_state, state) != 0))) {
+			printf(_("State %s, stuck: %s.\n"),
+			       state, stuck ? "yes" : "no");
+		}
+		if (strcmp(state,
+			   cm_store_state_as_string(CM_MONITORING)) == 0) {
+			return CM_SUBMIT_STATUS_ISSUED;
+		}
+		if (strcmp(state,
+			   cm_store_state_as_string(CM_CA_REJECTED)) == 0) {
+			return CM_SUBMIT_STATUS_REJECTED;
+		}
+		if (strcmp(state,
+			   cm_store_state_as_string(CM_CA_WORKING)) == 0) {
+			return CM_SUBMIT_STATUS_WAIT_WITH_DELAY;
+		}
+		if (strcmp(state,
+			   cm_store_state_as_string(CM_CA_UNREACHABLE)) == 0) {
+			return CM_SUBMIT_STATUS_UNREACHABLE;
+		}
+		if (stuck) {
+			return CM_SUBMIT_STATUS_UNCONFIGURED;
+		}
+		old_state = talloc_strdup(parent, state);
+		/* FIXME: we should be waiting for signals that the state
+		 * property has changed and then asking if we're stuck, not
+		 * just polling using a timer.  But that would require a whole */
+		usleep(100000);
+	}
+	return 0;
+}
+
 /* Add a new request. */
 static int
 request(const char *argv0, int argc, char **argv)
@@ -545,21 +579,23 @@ request(const char *argv0, int argc, char **argv)
 	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
 	char subject_default[LINE_MAX];
 	char *nss_scheme, *dbdir = NULL, *token = NULL, *nickname = NULL;
-	char *keyfile = NULL, *certfile = NULL, *capath;
+	char *keytype = NULL, *keyfile = NULL, *certfile = NULL, *capath;
+	char **anchor_dbs = NULL, **anchor_files = NULL;
 	char *pin = NULL, *pinfile = NULL;
-	int keysize = 0, auto_renew = 1, verbose = 0, c, i;
+	int keysize = 0, auto_renew = 1, verbose = 0, ku = 0, kubit, c, i, j;
 	char *ca = DEFAULT_CA, *subject = NULL, **eku = NULL, *oid, *id = NULL;
-	char *profile = NULL;
-	char **principal = NULL, **dns = NULL, **email = NULL;
-	struct cm_tdbusm_dict param[35];
-	const struct cm_tdbusm_dict *params[36];
+	char *profile = NULL, kustring[16];
+	char **principal = NULL, **dns = NULL, **email = NULL, **ipaddr = NULL;
+	struct cm_tdbusm_dict param[43];
+	const struct cm_tdbusm_dict *params[42];
 	DBusMessage *req, *rep;
+	int waitreq = 0;
 	dbus_bool_t b;
 	char *p;
 	krb5_context kctx;
 	krb5_error_code kret;
-	krb5_principal kprincipal;
-	char *krealm, *kuprincipal, *precommand = NULL, *postcommand = NULL;
+	krb5_principal kprinc;
+	char *krealm, *kuprinc, *precommand = NULL, *postcommand = NULL;
 
 	memset(subject_default, '\0', sizeof(subject_default));
 	strcpy(subject_default, "CN=");
@@ -583,7 +619,7 @@ request(const char *argv0, int argc, char **argv)
 
 	opterr = 0;
 	while ((c = getopt(argc, argv,
-			   ":d:n:t:k:f:I:g:rRN:U:K:D:E:sSp:P:vB:C:T:"
+			   ":d:n:t:k:f:I:g:rRN:u:U:K:D:E:sSp:P:vB:C:T:G:A:a:F:w"
 			   GETOPT_CA)) != -1) {
 		switch (c) {
 		case 'd':
@@ -606,6 +642,31 @@ request(const char *argv0, int argc, char **argv)
 		case 'f':
 			certfile = ensure_pem(globals.tctx, optarg);
 			break;
+		case 'G':
+			if ((strcasecmp(optarg, "RSA") != 0)
+#ifdef CM_ENABLE_DSA
+			    && (strcasecmp(optarg, "DSA") != 0)
+#endif
+#ifdef CM_ENABLE_EC
+			    && (strcasecmp(optarg, "ECDSA") != 0)
+			    && (strcasecmp(optarg, "EC") != 0)
+#endif
+			    ) {
+				printf(_("No support for generating \"%s\" keys.\n"),
+				       optarg);
+				printf(_("Known key types include:"));
+				printf(" RSA");
+#ifdef CM_ENABLE_DSA
+				printf(" DSA");
+#endif
+#ifdef CM_ENABLE_EC
+				printf(" EC");
+#endif
+				printf("\n");
+				return 1;
+			}
+			keytype = talloc_strdup(globals.tctx, optarg);
+			break;
 		case 'g':
 			keysize = atoi(optarg);
 			break;
@@ -627,6 +688,15 @@ request(const char *argv0, int argc, char **argv)
 		case 'N':
 			subject = talloc_strdup(globals.tctx, optarg);
 			break;
+		case 'u':
+			kubit = cm_ku_from_name(optarg);
+			if (kubit == -1) {
+				printf(_("Unrecognized keyUsage \"%s\".\n"),
+				       optarg);
+				return 1;
+			}
+			ku |= (1 << kubit);
+			break;
 		case 'U':
 			oid = cm_oid_from_name(globals.tctx, optarg);
 			if ((oid == NULL) ||
@@ -638,30 +708,39 @@ request(const char *argv0, int argc, char **argv)
 			add_string(globals.tctx, &eku, oid);
 			break;
 		case 'K':
-			kprincipal = NULL;
-			if ((kret = krb5_parse_name(kctx, optarg,
-						    &kprincipal)) != 0) {
-				printf(_("Error parsing Kerberos principal "
-				         "name \"%s\": %s.\n"), optarg,
-				       error_message(kret));
-				return 1;
+			kprinc = NULL;
+			if (strlen(optarg) > 0) {
+				if ((kret = krb5_parse_name(kctx, optarg,
+							    &kprinc)) != 0) {
+					printf(_("Error parsing Kerberos "
+						 "principal name \"%s\": "
+						 "%s.\n"), optarg,
+					       error_message(kret));
+					return 1;
+				}
+				kuprinc = NULL;
+				if ((kret = krb5_unparse_name(kctx, kprinc,
+							      &kuprinc)) != 0) {
+					printf(_("Error unparsing Kerberos "
+						 "principal name \"%s\": "
+						 "%s.\n"), optarg,
+					       error_message(kret));
+					return 1;
+				}
+				add_string(globals.tctx, &principal, kuprinc);
+				krb5_free_principal(kctx, kprinc);
+			} else {
+				add_string(globals.tctx, &principal, "");
 			}
-			kuprincipal = NULL;
-			if ((kret = krb5_unparse_name(kctx, kprincipal,
-						      &kuprincipal)) != 0) {
-				printf(_("Error unparsing Kerberos principal "
-				         "name \"%s\": %s.\n"), optarg,
-				       error_message(kret));
-				return 1;
-			}
-			add_string(globals.tctx, &principal, kuprincipal);
-			krb5_free_principal(kctx, kprincipal);
 			break;
 		case 'D':
 			add_string(globals.tctx, &dns, optarg);
 			break;
 		case 'E':
 			add_string(globals.tctx, &email, optarg);
+			break;
+		case 'A':
+			add_string(globals.tctx, &ipaddr, optarg);
 			break;
 		case 's':
 			bus = cm_tdbus_session;
@@ -680,6 +759,29 @@ request(const char *argv0, int argc, char **argv)
 			break;
 		case 'C':
 			postcommand = optarg;
+			break;
+		case 'a':
+			p = ensure_nss(globals.tctx, optarg, &nss_scheme);
+			if ((nss_scheme != NULL) && (p != NULL)) {
+				p = talloc_asprintf(globals.tctx, "%s:%s",
+						    nss_scheme, p);
+			}
+			if (p != NULL) {
+				add_string(globals.tctx, &anchor_dbs, p);
+			} else {
+				fprintf(stderr,
+					_("%s: invalid value -- '%s'\n"),
+					"request", optarg);
+				help(argv0, "request");
+				return 1;
+			}
+			break;
+		case 'F':
+			add_string(globals.tctx, &anchor_files,
+				   ensure_pem(globals.tctx, optarg));
+			break;
+		case 'w':
+			waitreq++;
 			break;
 		case 'v':
 			verbose++;
@@ -710,13 +812,13 @@ request(const char *argv0, int argc, char **argv)
 	if (((dbdir != NULL) && (nickname == NULL)) ||
 	    ((dbdir == NULL) && (nickname != NULL))) {
 		printf(_("Database location or nickname specified "
-		         "without the other.\n"));
+			 "without the other.\n"));
 		help(argv0, "request");
 		return 1;
 	}
 	if ((dbdir != NULL) && (certfile != NULL)) {
 		printf(_("Database directory and certificate file "
-		         "both specified.\n"));
+			 "both specified.\n"));
 		help(argv0, "request");
 		return 1;
 	}
@@ -742,7 +844,8 @@ request(const char *argv0, int argc, char **argv)
 	    (eku == NULL) &&
 	    (principal == NULL) &&
 	    (dns == NULL) &&
-	    (email == NULL)) {
+	    (email == NULL) &&
+	    (ipaddr == NULL)) {
 		add_string(globals.tctx, &eku, "id-kp-serverAuth");
 		if (krealm != NULL) {
 			add_string(globals.tctx, &principal,
@@ -863,12 +966,14 @@ request(const char *argv0, int argc, char **argv)
 	param[i].value.b = auto_renew > 0;
 	params[i] = &param[i];
 	i++;
-	if (keysize > 0) {
+	if (keytype != NULL) {
 		param[i].key = "KEY_TYPE";
 		param[i].value_type = cm_tdbusm_dict_s;
-		param[i].value.s = "RSA";
+		param[i].value.s = keytype;
 		params[i] = &param[i];
 		i++;
+	}
+	if (keysize > 0) {
 		param[i].key = "KEY_SIZE";
 		param[i].value_type = cm_tdbusm_dict_n;
 		param[i].value.n = keysize;
@@ -896,41 +1001,59 @@ request(const char *argv0, int argc, char **argv)
 	} else {
 		capath = NULL;
 	}
-	param[i].key = "SUBJECT";
+	param[i].key = CM_DBUS_PROP_TEMPLATE_SUBJECT;
 	param[i].value_type = cm_tdbusm_dict_s;
 	param[i].value.s = subject;
 	params[i] = &param[i];
 	i++;
 	if (principal != NULL) {
-		param[i].key = "PRINCIPAL";
+		param[i].key = CM_DBUS_PROP_TEMPLATE_PRINCIPAL;
 		param[i].value_type = cm_tdbusm_dict_as;
 		param[i].value.as = principal;
 		params[i] = &param[i];
 		i++;
 	}
 	if (dns != NULL) {
-		param[i].key = "DNS";
+		param[i].key = CM_DBUS_PROP_TEMPLATE_HOSTNAME;
 		param[i].value_type = cm_tdbusm_dict_as;
 		param[i].value.as = dns;
 		params[i] = &param[i];
 		i++;
 	}
 	if (email != NULL) {
-		param[i].key = "EMAIL";
+		param[i].key = CM_DBUS_PROP_TEMPLATE_EMAIL;
 		param[i].value_type = cm_tdbusm_dict_as;
 		param[i].value.as = email;
 		params[i] = &param[i];
 		i++;
 	}
+	if (ipaddr != NULL) {
+		param[i].key = CM_DBUS_PROP_TEMPLATE_IP_ADDRESS;
+		param[i].value_type = cm_tdbusm_dict_as;
+		param[i].value.as = ipaddr;
+		params[i] = &param[i];
+		i++;
+	}
+	if (ku != 0) {
+		for (j = 0; (ku >> j) != 0; j++) {
+			kustring[j] = ((ku >> j) & 1) ? '1' : '0';
+		}
+		kustring[j] = '\0';
+		param[i].key = CM_DBUS_PROP_TEMPLATE_KU;
+		param[i].value_type = cm_tdbusm_dict_s;
+		param[i].value.s = kustring;
+		params[i] = &param[i];
+		i++;
+	}
 	if (eku != NULL) {
-		param[i].key = "EKU";
+		param[i].key = CM_DBUS_PROP_TEMPLATE_EKU;
 		param[i].value_type = cm_tdbusm_dict_as;
 		param[i].value.as = eku;
 		params[i] = &param[i];
 		i++;
 	}
 	if (profile != NULL) {
-		param[i].key = CM_DBUS_PROP_CA_PROFILE;
+		param[i].key = CM_DBUS_PROP_TEMPLATE_PROFILE;
 		param[i].value_type = cm_tdbusm_dict_s;
 		param[i].value.s = profile;
 		params[i] = &param[i];
@@ -947,6 +1070,20 @@ request(const char *argv0, int argc, char **argv)
 		param[i].key = CM_DBUS_PROP_CERT_POSTSAVE_COMMAND;
 		param[i].value_type = cm_tdbusm_dict_s;
 		param[i].value.s = postcommand;
+		params[i] = &param[i];
+		i++;
+	}
+	if (anchor_files != NULL) {
+		param[i].key = CM_DBUS_PROP_ROOT_CERT_FILES;
+		param[i].value_type = cm_tdbusm_dict_as;
+		param[i].value.as = anchor_files;
+		params[i] = &param[i];
+		i++;
+	}
+	if (anchor_dbs != NULL) {
+		param[i].key = CM_DBUS_PROP_ROOT_CERT_NSSDBS;
+		param[i].value_type = cm_tdbusm_dict_as;
+		param[i].value.as = anchor_dbs;
 		params[i] = &param[i];
 		i++;
 	}
@@ -967,6 +1104,9 @@ request(const char *argv0, int argc, char **argv)
 		nickname = find_request_name(globals.tctx, bus, p, verbose);
 		printf(_("New signing request \"%s\" added.\n"),
 		       nickname ? nickname : p);
+		if (waitreq) {
+			return waitfor(globals.tctx, bus, p, verbose);
+		}
 	} else {
 		printf(_("New signing request could not be added.\n"));
 		exit(1);
@@ -1109,7 +1249,8 @@ add_basic_request(enum cm_tdbus_type bus, char *id,
 		  char *pin, char *pinfile,
 		  char *ca, char *profile,
 		  char *precommand, char *postcommand,
-		  dbus_bool_t auto_renew_stop, int verbose)
+		  char **anchor_dbs, char **anchor_files,
+		  dbus_bool_t auto_renew_stop, int waitreq, int verbose)
 {
 	DBusMessage *req, *rep;
 	int i;
@@ -1221,7 +1362,7 @@ add_basic_request(enum cm_tdbus_type bus, char *id,
 	params[i] = &param[i];
 	i++;
 	if (profile != NULL) {
-		param[i].key = CM_DBUS_PROP_CA_PROFILE;
+		param[i].key = CM_DBUS_PROP_TEMPLATE_PROFILE;
 		param[i].value_type = cm_tdbusm_dict_s;
 		param[i].value.s = profile;
 		params[i] = &param[i];
@@ -1255,6 +1396,20 @@ add_basic_request(enum cm_tdbus_type bus, char *id,
 	} else {
 		capath = NULL;
 	}
+	if (anchor_files != NULL) {
+		param[i].key = CM_DBUS_PROP_ROOT_CERT_FILES;
+		param[i].value_type = cm_tdbusm_dict_as;
+		param[i].value.as = anchor_files;
+		params[i] = &param[i];
+		i++;
+	}
+	if (anchor_dbs != NULL) {
+		param[i].key = CM_DBUS_PROP_ROOT_CERT_NSSDBS;
+		param[i].value_type = cm_tdbusm_dict_as;
+		param[i].value.as = anchor_dbs;
+		params[i] = &param[i];
+		i++;
+	}
 	params[i] = NULL;
 	req = prep_req(bus, CM_DBUS_BASE_PATH, CM_DBUS_BASE_INTERFACE,
 		       "add_request");
@@ -1272,6 +1427,9 @@ add_basic_request(enum cm_tdbus_type bus, char *id,
 		nickname = find_request_name(globals.tctx, bus, p, verbose);
 		printf(_("New tracking request \"%s\" added.\n"),
 		       nickname ? nickname : p);
+		if (waitreq) {
+			return waitfor(globals.tctx, bus, p, verbose);
+		}
 		return 0;
 	} else {
 		printf(_("New tracking request could not be added.\n"));
@@ -1286,21 +1444,24 @@ set_tracking(const char *argv0, const char *category,
 	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
 	DBusMessage *req, *rep;
 	const char *request, *capath;
-	struct cm_tdbusm_dict param[13];
-	const struct cm_tdbusm_dict *params[14];
+	struct cm_tdbusm_dict param[19];
+	const struct cm_tdbusm_dict *params[20];
 	char *nss_scheme, *dbdir = NULL, *token = NULL, *nickname = NULL;
+	char **anchor_dbs = NULL, **anchor_files = NULL;
 	char *id = NULL, *new_id = NULL, *new_request;
 	char *keyfile = NULL, *certfile = NULL, *ca = DEFAULT_CA;
 	char *profile = NULL;
 	char *pin = NULL, *pinfile = NULL;
 	dbus_bool_t b;
-	int c, auto_renew_start = 0, auto_renew_stop = 0, verbose = 0, i;
-	char **eku = NULL, *oid;
-	char **principal = NULL, **dns = NULL, **email = NULL;
+	char *p;
+	int c, auto_renew_start = 0, auto_renew_stop = 0, verbose = 0, i, j;
+	int ku = 0, kubit, waitreq = 0;
+	char **eku = NULL, *oid, kustring[16];
+	char **principal = NULL, **dns = NULL, **email = NULL, **ipaddr = NULL;
 	krb5_context kctx;
 	krb5_error_code kret;
-	krb5_principal kprincipal;
-	char *krealm, *kuprincipal;
+	krb5_principal kprinc;
+	char *krealm, *kuprinc;
 	char *precommand = NULL, *postcommand = NULL;
 
 	kctx = NULL;
@@ -1317,7 +1478,7 @@ set_tracking(const char *argv0, const char *category,
 
 	opterr = 0;
 	while ((c = getopt(argc, argv,
-			   ":d:n:t:k:f:g:p:P:rRi:I:U:K:D:E:sSvB:C:T:"
+			   ":d:n:t:k:f:g:p:P:rRi:I:u:U:K:D:E:sSvB:C:T:A:a:F:w"
 			   GETOPT_CA)) != -1) {
 		switch (c) {
 		case 'd':
@@ -1373,6 +1534,15 @@ set_tracking(const char *argv0, const char *category,
 		case 'I':
 			new_id = talloc_strdup(globals.tctx, optarg);
 			break;
+		case 'u':
+			kubit = cm_ku_from_name(optarg);
+			if (kubit == -1) {
+				printf(_("Unrecognized keyUsage \"%s\".\n"),
+				       optarg);
+				return 1;
+			}
+			ku |= (1 << kubit);
+			break;
 		case 'U':
 			oid = cm_oid_from_name(globals.tctx, optarg);
 			if ((oid == NULL) ||
@@ -1384,30 +1554,39 @@ set_tracking(const char *argv0, const char *category,
 			add_string(globals.tctx, &eku, oid);
 			break;
 		case 'K':
-			kprincipal = NULL;
-			if ((kret = krb5_parse_name(kctx, optarg,
-						    &kprincipal)) != 0) {
-				printf(_("Error parsing Kerberos principal "
-				         "name \"%s\": %s.\n"), optarg,
-				       error_message(kret));
-				return 1;
+			kprinc = NULL;
+			if (strlen(optarg) > 0) {
+				if ((kret = krb5_parse_name(kctx, optarg,
+							    &kprinc)) != 0) {
+					printf(_("Error parsing Kerberos "
+						 "principal name \"%s\": "
+						 "%s.\n"), optarg,
+					       error_message(kret));
+					return 1;
+				}
+				kuprinc = NULL;
+				if ((kret = krb5_unparse_name(kctx, kprinc,
+							      &kuprinc)) != 0) {
+					printf(_("Error unparsing Kerberos "
+						 "principal name \"%s\": "
+						 "%s.\n"), optarg,
+					       error_message(kret));
+					return 1;
+				}
+				add_string(globals.tctx, &principal, kuprinc);
+				krb5_free_principal(kctx, kprinc);
+			} else {
+				add_string(globals.tctx, &principal, "");
 			}
-			kuprincipal = NULL;
-			if ((kret = krb5_unparse_name(kctx, kprincipal,
-						      &kuprincipal)) != 0) {
-				printf(_("Error unparsing Kerberos principal "
-				         "name \"%s\": %s.\n"), optarg,
-				       error_message(kret));
-				return 1;
-			}
-			add_string(globals.tctx, &principal, kuprincipal);
-			krb5_free_principal(kctx, kprincipal);
 			break;
 		case 'D':
 			add_string(globals.tctx, &dns, optarg);
 			break;
 		case 'E':
 			add_string(globals.tctx, &email, optarg);
+			break;
+		case 'A':
+			add_string(globals.tctx, &ipaddr, optarg);
 			break;
 		case 's':
 			bus = cm_tdbus_session;
@@ -1426,6 +1605,34 @@ set_tracking(const char *argv0, const char *category,
 			break;
 		case 'C':
 			postcommand = optarg;
+			break;
+		case 'a':
+			p = ensure_nss(globals.tctx, optarg, &nss_scheme);
+			if ((nss_scheme != NULL) && (p != NULL)) {
+				p = talloc_asprintf(globals.tctx, "%s:%s",
+						    nss_scheme, p);
+			}
+			if (p != NULL) {
+				add_string(globals.tctx, &anchor_dbs, p);
+			} else {
+				fprintf(stderr,
+					_("%s: invalid value -- '%s'\n"),
+					"request", optarg);
+				help(argv0, "request");
+				return 1;
+			}
+			break;
+		case 'F':
+			add_string(globals.tctx, &anchor_files,
+				   ensure_pem(globals.tctx, optarg));
+			break;
+		case 'w':
+			if (track) {
+				waitreq++;
+			} else {
+				help(argv0, category);
+				return 1;
+			}
 			break;
 		case 'v':
 			verbose++;
@@ -1454,13 +1661,13 @@ set_tracking(const char *argv0, const char *category,
 	if (((dbdir != NULL) && (nickname == NULL)) ||
 	    ((dbdir == NULL) && (nickname != NULL))) {
 		printf(_("Database location or nickname specified "
-		         "without the other.\n"));
+			 "without the other.\n"));
 		help(argv0, category);
 		return 1;
 	}
 	if ((dbdir != NULL) && (certfile != NULL)) {
 		printf(_("Database directory and certificate file "
-		         "both specified.\n"));
+			 "both specified.\n"));
 		help(argv0, category);
 		return 1;
 	}
@@ -1504,28 +1711,47 @@ set_tracking(const char *argv0, const char *category,
 				i++;
 			}
 			if (principal != NULL) {
-				param[i].key = "PRINCIPAL";
+				param[i].key = CM_DBUS_PROP_TEMPLATE_PRINCIPAL;
 				param[i].value_type = cm_tdbusm_dict_as;
 				param[i].value.as = principal;
 				params[i] = &param[i];
 				i++;
 			}
 			if (dns != NULL) {
-				param[i].key = "DNS";
+				param[i].key = CM_DBUS_PROP_TEMPLATE_HOSTNAME;
 				param[i].value_type = cm_tdbusm_dict_as;
 				param[i].value.as = dns;
 				params[i] = &param[i];
 				i++;
 			}
 			if (email != NULL) {
-				param[i].key = "EMAIL";
+				param[i].key = CM_DBUS_PROP_TEMPLATE_EMAIL;
 				param[i].value_type = cm_tdbusm_dict_as;
 				param[i].value.as = email;
 				params[i] = &param[i];
 				i++;
 			}
+			if (ipaddr != NULL) {
+				param[i].key = CM_DBUS_PROP_TEMPLATE_IP_ADDRESS;
+				param[i].value_type = cm_tdbusm_dict_as;
+				param[i].value.as = ipaddr;
+				params[i] = &param[i];
+				i++;
+			}
+			if (ku != 0) {
+				for (j = 0; (ku >> j) != 0; j++) {
+					kustring[j] = ((ku >> j) & 1) ?
+						      '1' : '0';
+				}
+				kustring[j] = '\0';
+				param[i].key = CM_DBUS_PROP_TEMPLATE_KU;
+				param[i].value_type = cm_tdbusm_dict_s;
+				param[i].value.s = kustring;
+				params[i] = &param[i];
+				i++;
+			}
 			if (eku != NULL) {
-				param[i].key = "EKU";
+				param[i].key = CM_DBUS_PROP_TEMPLATE_EKU;
 				param[i].value_type = cm_tdbusm_dict_as;
 				param[i].value.as = eku;
 				params[i] = &param[i];
@@ -1570,7 +1796,7 @@ set_tracking(const char *argv0, const char *category,
 				capath = NULL;
 			}
 			if (profile != NULL) {
-				param[i].key = CM_DBUS_PROP_CA_PROFILE;
+				param[i].key = CM_DBUS_PROP_TEMPLATE_PROFILE;
 				param[i].value_type = cm_tdbusm_dict_s;
 				param[i].value.s = profile;
 				params[i] = &param[i];
@@ -1587,6 +1813,20 @@ set_tracking(const char *argv0, const char *category,
 				param[i].key = CM_DBUS_PROP_CERT_POSTSAVE_COMMAND;
 				param[i].value_type = cm_tdbusm_dict_s;
 				param[i].value.s = postcommand;
+				params[i] = &param[i];
+				i++;
+			}
+			if (anchor_files != NULL) {
+				param[i].key = CM_DBUS_PROP_ROOT_CERT_FILES;
+				param[i].value_type = cm_tdbusm_dict_as;
+				param[i].value.as = anchor_files;
+				params[i] = &param[i];
+				i++;
+			}
+			if (anchor_dbs != NULL) {
+				param[i].key = CM_DBUS_PROP_ROOT_CERT_NSSDBS;
+				param[i].value_type = cm_tdbusm_dict_as;
+				param[i].value.as = anchor_dbs;
 				params[i] = &param[i];
 				i++;
 			}
@@ -1628,7 +1868,7 @@ set_tracking(const char *argv0, const char *category,
 			if (((dbdir != NULL) && (nickname == NULL)) ||
 			    ((dbdir == NULL) && (nickname != NULL))) {
 				printf(_("Database location or nickname "
-				         "specified without the other.\n"));
+					 "specified without the other.\n"));
 				help(argv0, category);
 				return 1;
 			}
@@ -1653,8 +1893,9 @@ set_tracking(const char *argv0, const char *category,
 						 pin, pinfile,
 						 ca, profile,
 						 precommand, postcommand,
+						 anchor_dbs, anchor_files,
 						 (auto_renew_stop > 0),
-						 verbose);
+						 waitreq, verbose);
 		}
 	} else {
 		/* Drop a request. */
@@ -1716,20 +1957,22 @@ resubmit(const char *argv0, int argc, char **argv)
 	DBusMessage *req, *rep;
 	const char *request;
 	char *capath;
-	struct cm_tdbusm_dict param[18];
-	const struct cm_tdbusm_dict *params[19];
+	struct cm_tdbusm_dict param[23];
+	const struct cm_tdbusm_dict *params[24];
 	char *dbdir = NULL, *token = NULL, *nickname = NULL, *certfile = NULL;
+	char **anchor_dbs = NULL, **anchor_files = NULL;
 	char *pin = NULL, *pinfile = NULL;
 	char *id = NULL, *new_id = NULL, *ca = NULL, *new_request, *nss_scheme;
 	char *subject = NULL, **eku = NULL, *oid = NULL;
-	char **principal = NULL, **dns = NULL, **email = NULL;
-	char *profile = NULL;
+	char **principal = NULL, **dns = NULL, **email = NULL, **ipaddr = NULL;
+	char *profile = NULL, kustring[16];
 	dbus_bool_t b;
-	int verbose = 0, c, i;
+	char *p;
+	int verbose = 0, ku = 0, kubit, c, i, j, waitreq = 0;
 	krb5_context kctx;
 	krb5_error_code kret;
-	krb5_principal kprincipal;
-	char *kuprincipal, *precommand = NULL, *postcommand = NULL;
+	krb5_principal kprinc;
+	char *kuprinc, *precommand = NULL, *postcommand = NULL;
 
 	kctx = NULL;
 	if ((kret = krb5_init_context(&kctx)) != 0) {
@@ -1741,7 +1984,7 @@ resubmit(const char *argv0, int argc, char **argv)
 
 	opterr = 0;
 	while ((c = getopt(argc, argv,
-			   ":d:n:N:t:U:K:E:D:f:i:I:sSp:P:vB:C:T:"
+			   ":d:n:N:t:u:U:K:E:D:f:i:I:sSp:P:vB:C:T:A:a:F:w"
 			   GETOPT_CA)) != -1) {
 		switch (c) {
 		case 'd':
@@ -1776,6 +2019,15 @@ resubmit(const char *argv0, int argc, char **argv)
 		case 'N':
 			subject = talloc_strdup(globals.tctx, optarg);
 			break;
+		case 'u':
+			kubit = cm_ku_from_name(optarg);
+			if (kubit == -1) {
+				printf(_("Unrecognized keyUsage \"%s\".\n"),
+				       optarg);
+				return 1;
+			}
+			ku |= (1 << kubit);
+			break;
 		case 'U':
 			oid = cm_oid_from_name(globals.tctx, optarg);
 			if ((oid == NULL) ||
@@ -1787,30 +2039,39 @@ resubmit(const char *argv0, int argc, char **argv)
 			add_string(globals.tctx, &eku, oid);
 			break;
 		case 'K':
-			kprincipal = NULL;
-			if ((kret = krb5_parse_name(kctx, optarg,
-						    &kprincipal)) != 0) {
-				printf(_("Error parsing Kerberos principal "
-				         "name \"%s\": %s.\n"), optarg,
-				       error_message(kret));
-				return 1;
+			kprinc = NULL;
+			if (strlen(optarg) > 0) {
+				if ((kret = krb5_parse_name(kctx, optarg,
+							    &kprinc)) != 0) {
+					printf(_("Error parsing Kerberos "
+						 "principal name \"%s\": "
+						 "%s.\n"), optarg,
+					       error_message(kret));
+					return 1;
+				}
+				kuprinc = NULL;
+				if ((kret = krb5_unparse_name(kctx, kprinc,
+							      &kuprinc)) != 0) {
+					printf(_("Error unparsing Kerberos "
+						 "principal name \"%s\": "
+						 "%s.\n"), optarg,
+					       error_message(kret));
+					return 1;
+				}
+				add_string(globals.tctx, &principal, kuprinc);
+				krb5_free_principal(kctx, kprinc);
+			} else {
+				add_string(globals.tctx, &principal, "");
 			}
-			kuprincipal = NULL;
-			if ((kret = krb5_unparse_name(kctx, kprincipal,
-						      &kuprincipal)) != 0) {
-				printf(_("Error unparsing Kerberos principal "
-				         "name \"%s\": %s.\n"), optarg,
-				       error_message(kret));
-				return 1;
-			}
-			add_string(globals.tctx, &principal, kuprincipal);
-			krb5_free_principal(kctx, kprincipal);
 			break;
 		case 'D':
 			add_string(globals.tctx, &dns, optarg);
 			break;
 		case 'E':
 			add_string(globals.tctx, &email, optarg);
+			break;
+		case 'A':
+			add_string(globals.tctx, &ipaddr, optarg);
 			break;
 		case 's':
 			bus = cm_tdbus_session;
@@ -1829,6 +2090,29 @@ resubmit(const char *argv0, int argc, char **argv)
 			break;
 		case 'C':
 			postcommand = optarg;
+			break;
+		case 'a':
+			p = ensure_nss(globals.tctx, optarg, &nss_scheme);
+			if ((nss_scheme != NULL) && (p != NULL)) {
+				p = talloc_asprintf(globals.tctx, "%s:%s",
+						    nss_scheme, p);
+			}
+			if (p != NULL) {
+				add_string(globals.tctx, &anchor_dbs, p);
+			} else {
+				fprintf(stderr,
+					_("%s: invalid value -- '%s'\n"),
+					"request", optarg);
+				help(argv0, "request");
+				return 1;
+			}
+			break;
+		case 'F':
+			add_string(globals.tctx, &anchor_files,
+				   ensure_pem(globals.tctx, optarg));
+			break;
+		case 'w':
+			waitreq++;
 			break;
 		case 'v':
 			verbose++;
@@ -1914,35 +2198,54 @@ resubmit(const char *argv0, int argc, char **argv)
 		i++;
 	}
 	if (subject != NULL) {
-		param[i].key = "SUBJECT";
+		param[i].key = CM_DBUS_PROP_TEMPLATE_SUBJECT;
 		param[i].value_type = cm_tdbusm_dict_s;
 		param[i].value.s = subject;
 		params[i] = &param[i];
 		i++;
 	}
 	if (principal != NULL) {
-		param[i].key = "PRINCIPAL";
+		param[i].key = CM_DBUS_PROP_TEMPLATE_PRINCIPAL;
 		param[i].value_type = cm_tdbusm_dict_as;
 		param[i].value.as = principal;
 		params[i] = &param[i];
 		i++;
 	}
 	if (dns != NULL) {
-		param[i].key = "DNS";
+		param[i].key = CM_DBUS_PROP_TEMPLATE_HOSTNAME;
 		param[i].value_type = cm_tdbusm_dict_as;
 		param[i].value.as = dns;
 		params[i] = &param[i];
 		i++;
 	}
 	if (email != NULL) {
-		param[i].key = "EMAIL";
+		param[i].key = CM_DBUS_PROP_TEMPLATE_EMAIL;
 		param[i].value_type = cm_tdbusm_dict_as;
 		param[i].value.as = email;
 		params[i] = &param[i];
 		i++;
 	}
+	if (ipaddr != NULL) {
+		param[i].key = CM_DBUS_PROP_TEMPLATE_IP_ADDRESS;
+		param[i].value_type = cm_tdbusm_dict_as;
+		param[i].value.as = ipaddr;
+		params[i] = &param[i];
+		i++;
+	}
+	if (ku != 0) {
+		for (j = 0; (ku >> j) != 0; j++) {
+			kustring[j] = ((ku >> j) & 1) ?
+				      '1' : '0';
+		}
+		kustring[j] = '\0';
+		param[i].key = CM_DBUS_PROP_TEMPLATE_KU;
+		param[i].value_type = cm_tdbusm_dict_s;
+		param[i].value.s = kustring;
+		params[i] = &param[i];
+		i++;
+	}
 	if (eku != NULL) {
-		param[i].key = "EKU";
+		param[i].key = CM_DBUS_PROP_TEMPLATE_EKU;
 		param[i].value_type = cm_tdbusm_dict_as;
 		param[i].value.as = eku;
 		params[i] = &param[i];
@@ -1963,7 +2266,7 @@ resubmit(const char *argv0, int argc, char **argv)
 		i++;
 	}
 	if (profile != NULL) {
-		param[i].key = CM_DBUS_PROP_CA_PROFILE;
+		param[i].key = CM_DBUS_PROP_TEMPLATE_PROFILE;
 		param[i].value_type = cm_tdbusm_dict_s;
 		param[i].value.s = profile;
 		params[i] = &param[i];
@@ -1980,6 +2283,20 @@ resubmit(const char *argv0, int argc, char **argv)
 		param[i].key = CM_DBUS_PROP_CERT_POSTSAVE_COMMAND;
 		param[i].value_type = cm_tdbusm_dict_s;
 		param[i].value.s = postcommand;
+		params[i] = &param[i];
+		i++;
+	}
+	if (anchor_files != NULL) {
+		param[i].key = CM_DBUS_PROP_ROOT_CERT_FILES;
+		param[i].value_type = cm_tdbusm_dict_as;
+		param[i].value.as = anchor_files;
+		params[i] = &param[i];
+		i++;
+	}
+	if (anchor_dbs != NULL) {
+		param[i].key = CM_DBUS_PROP_ROOT_CERT_NSSDBS;
+		param[i].value_type = cm_tdbusm_dict_as;
+		param[i].value.as = anchor_dbs;
 		params[i] = &param[i];
 		i++;
 	}
@@ -2024,6 +2341,9 @@ resubmit(const char *argv0, int argc, char **argv)
 			printf(_("Resubmitting \"%s\".\n"),
 			       nickname ? nickname : request);
 		}
+		if (waitreq) {
+			return waitfor(globals.tctx, bus, request, verbose);
+		}
 		return 0;
 	} else {
 		if (ca != NULL) {
@@ -2035,6 +2355,180 @@ resubmit(const char *argv0, int argc, char **argv)
 		}
 		return 1;
 	}
+}
+
+static int
+refresh(const char *argv0, int argc, char **argv)
+{
+	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
+	DBusMessage *rep;
+	char **requests, *p, *nickname, *only_ca = DEFAULT_CA, *ca_name;
+	char *dbdir = NULL, *dbnickname = NULL, *certfile = NULL, *id = NULL;
+	char *nss_scheme;
+	const char *capath;
+	dbus_bool_t b, all = FALSE;
+	char *s1, *s2, *s3, *s4;
+	enum cm_state state;
+	int verbose = 0, c, i;
+
+	opterr = 0;
+	while ((c = getopt(argc, argv, ":sSad:n:f:i:v" GETOPT_CA)) != -1) {
+		switch (c) {
+		case 'c':
+			only_ca = optarg;
+			break;
+		case 's':
+			bus = cm_tdbus_session;
+			break;
+		case 'S':
+			bus = cm_tdbus_system;
+			break;
+		case 'a':
+			all = TRUE;
+			nss_scheme = NULL;
+			dbdir = NULL;
+			dbnickname = NULL;
+			certfile = NULL;
+			id = NULL;
+			break;
+		case 'd':
+			all = FALSE;
+			nss_scheme = NULL;
+			dbdir = ensure_nss(globals.tctx, optarg, &nss_scheme);
+			if ((nss_scheme != NULL) && (dbdir != NULL)) {
+				dbdir = talloc_asprintf(globals.tctx, "%s:%s",
+							nss_scheme, dbdir);
+			}
+			break;
+		case 'n':
+			all = FALSE;
+			dbnickname = talloc_strdup(globals.tctx, optarg);
+			break;
+		case 'f':
+			all = FALSE;
+			certfile = ensure_pem(globals.tctx, optarg);
+			break;
+		case 'i':
+			all = FALSE;
+			id = talloc_strdup(globals.tctx, optarg);
+			break;
+		case 'v':
+			verbose++;
+			break;
+		default:
+			if (c == ':') {
+				fprintf(stderr,
+					_("%s: option requires an argument -- '%c'\n"),
+					"list", optopt);
+			} else {
+				fprintf(stderr, _("%s: invalid option -- '%c'\n"),
+					"list", optopt);
+			}
+			help(argv0, "refresh");
+			return 1;
+		}
+	}
+	if (!all && (id == NULL) &&
+	    ((dbdir == NULL) || (dbnickname == NULL)) && (certfile == NULL)) {
+		printf(_("None of ID or database directory and nickname or "
+			 "certificate file specified.\n"));
+		help(argv0, "refresh");
+		return 1;
+	}
+	if (optind < argc) {
+		printf(_("Error: unused extra arguments were supplied.\n"));
+		help(argv0, "refresh");
+		return 1;
+	}
+	if (only_ca != NULL) {
+		capath = find_ca_by_name(globals.tctx, bus, only_ca, verbose);
+		if (capath == NULL) {
+			printf(_("No CA with name \"%s\" found.\n"), only_ca);
+			return 1;
+		}
+	}
+	requests = query_rep_ap(bus, CM_DBUS_BASE_PATH, CM_DBUS_BASE_INTERFACE,
+				"get_requests", verbose, globals.tctx);
+	for (i = 0; (requests != NULL) && (requests[i] != NULL); i++) {
+		/* Filter out based on the CA. */
+		ca_name = NULL;
+		rep = query_rep(bus, requests[i],
+				CM_DBUS_REQUEST_INTERFACE, "get_ca", verbose);
+		if (cm_tdbusm_get_p(rep, globals.tctx, &p) == 0) {
+			ca_name = find_ca_name(globals.tctx, bus, p, verbose);
+		}
+		dbus_message_unref(rep);
+		if (only_ca != NULL) {
+			if (ca_name == NULL) {
+				continue;
+			}
+			if (strcmp(only_ca, ca_name) != 0) {
+				continue;
+			}
+		}
+		/* Filter based on request name or storage. */
+		nickname = find_request_name(globals.tctx, bus, requests[i],
+					     verbose);
+		if ((id != NULL) && (strcmp(nickname, id) != 0)) {
+			continue;
+		}
+		if ((dbdir != NULL) || (dbnickname != NULL) ||
+		    (certfile != NULL)) {
+			rep = query_rep(bus, requests[i],
+					CM_DBUS_REQUEST_INTERFACE,
+					"get_cert_storage_info", verbose);
+			if (cm_tdbusm_get_ssosos(rep, globals.tctx,
+						 &s1, &s2, &s3, &s4) != 0) {
+				printf(_("Error parsing server response.\n"));
+				exit(1);
+			}
+			dbus_message_unref(rep);
+			if ((dbdir != NULL) || (dbnickname != NULL)) {
+				if ((strcmp(s1, "NSSDB") != 0) ||
+				    ((dbdir != NULL) &&
+				     (strcmp(dbdir, s2) != 0)) ||
+				    ((dbnickname != NULL) &&
+				     (s3 != NULL) &&
+				     (strcmp(dbnickname, s3) != 0))) {
+					continue;
+				}
+			}
+			if (certfile != NULL) {
+				if ((strcmp(s1, "FILE") != 0) ||
+				    (strcmp(certfile, s2) != 0)) {
+					continue;
+				}
+			}
+		}
+		/* Get the status of this request. */
+		rep = query_rep(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				"get_status", verbose);
+		if (cm_tdbusm_get_sb(rep, globals.tctx, &s1, &b) != 0) {
+			printf(_("Error parsing server response.\n"));
+			exit(1);
+		}
+		dbus_message_unref(rep);
+		/* Filter out based on the current state. */
+		state = cm_store_state_from_string(s1);
+		switch (state) {
+		case CM_CA_WORKING:
+		case CM_CA_UNREACHABLE:
+			break;
+		default:
+			continue;
+			break;
+		}
+		/* Tell the daemon to refresh for this request. */
+		b = query_rep_b(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				"refresh", verbose, globals.tctx);
+		if (b) {
+			printf(_("Request ID '%s' being refreshed.\n"), nickname);
+		} else {
+			printf(_("Request ID '%s' NOT being refreshed.\n"),
+			       nickname);
+		}
+	}
+	return 0;
 }
 
 static int
@@ -2050,8 +2544,10 @@ list(const char *argv0, int argc, char **argv)
 	dbus_bool_t b;
 	char *s1, *s2, *s3, *s4, *s5, *s6;
 	long n1, n2;
-	char **as1, **as2, **as3, **as4, t[24];
+	char **as, **as1, **as2, **as3, **as4, **as5, t[25];
 	int requests_only = 0, tracking_only = 0, verbose = 0, c, i, j;
+	unsigned int k;
+	char key_usages[LINE_MAX];
 
 	opterr = 0;
 	while ((c = getopt(argc, argv, ":rtsSvd:n:f:i:" GETOPT_CA)) != -1) {
@@ -2176,6 +2672,7 @@ list(const char *argv0, int argc, char **argv)
 			continue;
 			break;
 		case CM_NEED_KEY_PAIR:
+		case CM_NEED_KEY_GEN_PERMS:
 		case CM_NEED_KEY_GEN_PIN:
 		case CM_NEED_KEY_GEN_TOKEN:
 		case CM_GENERATING_KEY_PAIR:
@@ -2196,6 +2693,7 @@ list(const char *argv0, int argc, char **argv)
 		case CM_PRE_SAVE_CERT:
 		case CM_START_SAVING_CERT:
 		case CM_SAVING_CERT:
+		case CM_NEED_CERTSAVE_PERMS:
 		case CM_SAVED_CERT:
 		case CM_POST_SAVED_CERT:
 		case CM_NEED_TO_READ_CERT:
@@ -2214,6 +2712,13 @@ list(const char *argv0, int argc, char **argv)
 		case CM_NEWLY_ADDED_START_READING_CERT:
 		case CM_NEWLY_ADDED_READING_CERT:
 		case CM_NEWLY_ADDED_DECIDING:
+		case CM_NEED_TO_SAVE_CA_CERTS:
+		case CM_NEED_TO_SAVE_ONLY_CA_CERTS:
+		case CM_START_SAVING_CA_CERTS:
+		case CM_START_SAVING_ONLY_CA_CERTS:
+		case CM_SAVING_CA_CERTS:
+		case CM_SAVING_ONLY_CA_CERTS:
+		case CM_NEED_CA_CERT_SAVE_PERMS:
 			if (tracking_only) {
 				continue;
 			}
@@ -2227,6 +2732,8 @@ list(const char *argv0, int argc, char **argv)
 		case CM_NOTIFYING_ISSUED_FAILED:
 		case CM_NEED_TO_NOTIFY_ISSUED_SAVED:
 		case CM_NOTIFYING_ISSUED_SAVED:
+		case CM_NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED:
+		case CM_NOTIFYING_ONLY_CA_SAVE_FAILED:
 			if (requests_only) {
 				continue;
 			}
@@ -2279,7 +2786,7 @@ list(const char *argv0, int argc, char **argv)
 		rep = query_rep(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
 				"get_key_storage_info", verbose);
 		if (cm_tdbusm_get_sososos(rep, globals.tctx,
-				          &s1, &s2, &s3, &s4) != 0) {
+					  &s1, &s2, &s3, &s4) != 0) {
 			printf(_("Error parsing server response.\n"));
 			exit(1);
 		}
@@ -2314,7 +2821,7 @@ list(const char *argv0, int argc, char **argv)
 		rep = query_rep(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
 				"get_cert_storage_info", verbose);
 		if (cm_tdbusm_get_ssosos(rep, globals.tctx,
-				         &s1, &s2, &s3, &s4) != 0) {
+					 &s1, &s2, &s3, &s4) != 0) {
 			printf(_("Error parsing server response.\n"));
 			exit(1);
 		}
@@ -2365,11 +2872,90 @@ list(const char *argv0, int argc, char **argv)
 			       as3[j],
 			       as3[j + 1] ? "" : "\n");
 		}
+		as5 = query_prop_as(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				    CM_DBUS_PROP_TEMPLATE_IP_ADDRESS, verbose, globals.tctx);
+		for (j = 0; (as5 != NULL) && (as5[j] != NULL); j++) {
+			printf("%s%s%s",
+			       j == 0 ? _("\tIP address: ") : ",",
+			       as5[j],
+			       as5[j + 1] ? "" : "\n");
+		}
+		if (n2 != 0) {
+			const char *ku;
+			memset(key_usages, '\0', sizeof(key_usages));
+			for (k = 0; (n2 >> k) != 0; k++) {
+				if ((((n2 >> k) & 1) != 0) &&
+				    ((ku = cm_ku_to_name(k)) != NULL)) {
+					snprintf(key_usages +
+						 strlen(key_usages),
+						 sizeof(key_usages) -
+						 strlen(key_usages),
+						 "%s%s",
+						 strlen(key_usages) ? "," : "",
+						 ku);
+				}
+			}
+			printf(_("\tkey usage: %s\n"), key_usages);
+		}
 		for (j = 0; (as4 != NULL) && (as4[j] != NULL); j++) {
 			printf("%s%s%s",
 			       j == 0 ? _("\teku: ") : ",",
 			       cm_oid_to_name(NULL, as4[j]),
 			       as4[j + 1] ? "" : "\n");
+		}
+		as = query_prop_as(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				   CM_DBUS_PROP_ROOT_CERT_FILES,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\troot certificates saved to files:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				   CM_DBUS_PROP_OTHER_ROOT_CERT_FILES,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\tother root certificates saved to files:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				   CM_DBUS_PROP_OTHER_CERT_FILES,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\tother certificates saved to files:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				   CM_DBUS_PROP_ROOT_CERT_NSSDBS,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\troot certificates saved to databases:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				   CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\tother root certificates saved to databases:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				   CM_DBUS_PROP_OTHER_CERT_NSSDBS,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\tother certificates saved to databases:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
 		}
 		printf(_("\tpre-save command: %s\n"),
 		       query_prop_s(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
@@ -2387,6 +2973,100 @@ list(const char *argv0, int argc, char **argv)
 		       "yes" : "no");
 	}
 	return 0;
+}
+
+static int
+status(const char *argv0, int argc, char **argv)
+{
+	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
+	DBusMessage *rep;
+	char *dbdir = NULL, *dbnickname = NULL, *certfile = NULL, *id = NULL;
+	char *nss_scheme;
+	const char *request;
+	char *s;
+	dbus_bool_t b;
+	int verbose = 0, c;
+
+	opterr = 0;
+	while ((c = getopt(argc, argv, ":sSvd:n:f:i:")) != -1) {
+		switch (c) {
+		case 's':
+			bus = cm_tdbus_session;
+			break;
+		case 'S':
+			bus = cm_tdbus_system;
+			break;
+		case 'd':
+			nss_scheme = NULL;
+			dbdir = ensure_nss(globals.tctx, optarg, &nss_scheme);
+			if ((nss_scheme != NULL) && (dbdir != NULL)) {
+				dbdir = talloc_asprintf(globals.tctx, "%s:%s",
+							nss_scheme, dbdir);
+			}
+			break;
+		case 'n':
+			dbnickname = talloc_strdup(globals.tctx, optarg);
+			break;
+		case 'f':
+			certfile = ensure_pem(globals.tctx, optarg);
+			break;
+		case 'i':
+			id = talloc_strdup(globals.tctx, optarg);
+			break;
+		case 'v':
+			verbose++;
+			break;
+		default:
+			if (c == ':') {
+				fprintf(stderr,
+					_("%s: option requires an argument -- '%c'\n"),
+					"list", optopt);
+			} else {
+				fprintf(stderr, _("%s: invalid option -- '%c'\n"),
+					"list", optopt);
+			}
+			help(argv0, "list");
+			return 1;
+		}
+	}
+	if (optind < argc) {
+		printf(_("Error: unused extra arguments were supplied.\n"));
+		help(argv0, "list");
+		return 1;
+	}
+	if (id != NULL) {
+		request = find_request_by_name(globals.tctx, bus, id, verbose);
+		if (request == NULL) {
+			printf(_("No request found with specified "
+				 "nickname.\n"));
+			return 1;
+		}
+	} else {
+		request = find_request_by_storage(globals.tctx, bus,
+						  dbdir, dbnickname, NULL,
+						  certfile, verbose);
+		if (request == NULL) {
+			if (((dbdir != NULL) && (dbnickname != NULL)) ||
+			    (certfile != NULL)) {
+				printf(_("No request found that matched "
+					 "arguments.\n"));
+				return 1;
+			}
+		}
+	}
+	/* Get the status of this request. */
+	rep = query_rep(bus, request, CM_DBUS_REQUEST_INTERFACE,
+			"get_status", verbose);
+	if (cm_tdbusm_get_sb(rep, globals.tctx, &s, &b) != 0) {
+		printf(_("Error parsing server response.\n"));
+		exit(1);
+	}
+	dbus_message_unref(rep);
+	if (verbose) {
+		printf(_("State %s, stuck: %s.\n"),
+		       s, b ? "yes" : "no");
+	}
+	return evaluate_status(s, b);
 }
 
 static int
@@ -2441,6 +3121,14 @@ list_cas(const char *argv0, int argc, char **argv)
 			}
 		}
 		printf(_("CA '%s':\n"), s);
+		if (verbose > 0) {
+			s = query_prop_s(bus, cas[i], CM_DBUS_CA_INTERFACE,
+					 CM_DBUS_PROP_AKA,
+					 verbose, globals.tctx);
+			if ((s != NULL) && (strlen(s) > 0)) {
+				printf(_("\tself-identifies as: %s\n"), s);
+			}
+		}
 		printf("\tis-default: %s\n",
 		       query_rep_b(bus, cas[i], CM_DBUS_CA_INTERFACE,
 				   "get_is_default", verbose, globals.tctx) ?
@@ -2469,6 +3157,165 @@ list_cas(const char *argv0, int argc, char **argv)
 				printf("\t\t%s\n", as[j]);
 			}
 		}
+		as = query_prop_as(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				   CM_DBUS_PROP_DEFAULT_PROFILE,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\tknown profiles/templates/certtypes:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				   CM_DBUS_PROP_ROOT_CERT_FILES,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\troot certificates saved to files:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				   CM_DBUS_PROP_OTHER_ROOT_CERT_FILES,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\tother root certificates saved to files:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				   CM_DBUS_PROP_OTHER_CERT_FILES,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\tother certificates saved to files:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				   CM_DBUS_PROP_ROOT_CERT_NSSDBS,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\troot certificates saved to databases:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				   CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\tother root certificates saved to databases:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		as = query_prop_as(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				   CM_DBUS_PROP_OTHER_CERT_NSSDBS,
+				   verbose, globals.tctx);
+		if (as != NULL) {
+			printf(_("\tother certificates saved to databases:\n"));
+			for (j = 0; as[j] != NULL; j++) {
+				printf("\t\t%s\n", as[j]);
+			}
+		}
+		s = query_prop_s(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				 CM_DBUS_PROP_DEFAULT_PROFILE,
+				 verbose, globals.tctx);
+		if ((s != NULL) && (strlen(s) > 0)) {
+			printf(_("\tdefault profile/template/certtype: %s\n"),
+			       s);
+		}
+		s = query_prop_s(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				 CM_DBUS_PROP_CA_PRESAVE_COMMAND,
+				 verbose, globals.tctx);
+		if ((s != NULL) && (strlen(s) > 0)) {
+			printf(_("\tpre-save command: %s\n"), s);
+		}
+		s = query_prop_s(bus, cas[i], CM_DBUS_CA_INTERFACE,
+				 CM_DBUS_PROP_CA_POSTSAVE_COMMAND,
+				 verbose, globals.tctx);
+		if ((s != NULL) && (strlen(s) > 0)) {
+			printf(_("\tpost-save command: %s\n"), s);
+		}
+	}
+	return 0;
+}
+
+static int
+refresh_ca(const char *argv0, int argc, char **argv)
+{
+	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
+	char **cas, *s, *only_ca = DEFAULT_CA;
+	int c, i, verbose = 0;
+	dbus_bool_t b, all = FALSE;
+
+	opterr = 0;
+	while ((c = getopt(argc, argv, ":asSv" GETOPT_CA)) != -1) {
+		switch (c) {
+		case 'a':
+			all = TRUE;
+			break;
+		case 'c':
+			all = FALSE;
+			only_ca = optarg;
+			break;
+		case 's':
+			bus = cm_tdbus_session;
+			break;
+		case 'S':
+			bus = cm_tdbus_system;
+			break;
+		case 'v':
+			verbose++;
+			break;
+		default:
+			if (c == ':') {
+				fprintf(stderr,
+					_("%s: option requires an argument -- '%c'\n"),
+					"refresh-ca", optopt);
+			} else {
+				fprintf(stderr, _("%s: invalid option -- '%c'\n"),
+					"refresh-ca", optopt);
+			}
+			help(argv0, "refresh-ca");
+			return 1;
+		}
+	}
+	if (!all && (only_ca == NULL)) {
+		printf(_("Neither CA nickname nor -a flag specified.\n"));
+		help(argv0, "refresh-ca");
+		return 1;
+	}
+	if (optind < argc) {
+		printf(_("Error: unused extra arguments were supplied.\n"));
+		help(argv0, "refresh-ca");
+		return 1;
+	}
+	cas = query_rep_ap(bus, CM_DBUS_BASE_PATH, CM_DBUS_BASE_INTERFACE,
+			   "get_known_cas", verbose, globals.tctx);
+	for (i = 0; (cas != NULL) && (cas[i] != NULL); i++) {
+		/* Filter out based on the CA. */
+		s = find_ca_name(globals.tctx, bus, cas[i], verbose);
+		if ((s != NULL) && !all) {
+			if ((only_ca != NULL) && (strcmp(s, only_ca) != 0)) {
+				continue;
+			}
+		}
+		b = query_rep_b(bus, cas[i],
+				CM_DBUS_CA_INTERFACE, "refresh",
+				verbose,
+				globals.tctx);
+		if (b) {
+			if (s != NULL) {
+				printf(_("Data for CA '%s' being refreshed.\n"), s);
+			} else {
+				printf(_("Data for unnamed CA being refreshed.\n"));
+			}
+		} else {
+			printf(_("\terror refreshing CA data\n"));
+		}
 	}
 	return 0;
 }
@@ -2481,8 +3328,11 @@ static struct {
 	{"start-tracking", start_tracking},
 	{"stop-tracking", stop_tracking},
 	{"resubmit", resubmit},
+	{"refresh", refresh},
 	{"list", list},
+	{"status", status},
 	{"list-cas", list_cas},
+	{"refresh-ca", refresh_ca},
 };
 
 static void
@@ -2511,6 +3361,7 @@ help(const char *cmd, const char *category)
 		N_("Optional arguments:\n"),
 		N_("* Certificate handling settings:\n"),
 		N_("  -I NAME	nickname to assign to the request\n"),
+		N_("  -G TYPE	type of key to be generated if one is not already in place\n"),
 		N_("  -g SIZE	size of key to be generated if one is not already in place\n"),
 		N_("  -r		attempt to renew the certificate when expiration nears (default)\n"),
 		N_("  -R		don't attempt to renew the certificate when expiration nears\n"),
@@ -2521,15 +3372,20 @@ help(const char *cmd, const char *category)
 		N_("* Parameters for the signing request:\n"),
 		N_("  -N NAME	set requested subject name (default: CN=<hostname>)\n"),
 		N_("  -U EXTUSAGE	set requested extended key usage OID\n"),
+		N_("  -u KEYUSAGE	set requested key usage value\n"),
 		N_("  -K NAME	set requested principal name\n"),
 		N_("  -D DNSNAME	set requested DNS name\n"),
 		N_("  -E EMAIL	set requested email address\n"),
+		N_("  -A ADDRESS	set requested IP address\n"),
 		N_("* Bus options:\n"),
 		N_("  -S		connect to the certmonger service on the system bus\n"),
 		N_("  -s		connect to the certmonger service on the session bus\n"),
 		N_("* Other options:\n"),
 		N_("  -B	command to run before saving the certificate\n"),
 		N_("  -C	command to run after saving the certificate\n"),
+		N_("  -F	file in which to store the CA's certificates\n"),
+		N_("  -a	NSS database in which to store the CA's certificates\n"),
+		N_("  -w	try to wait for the certificate to be issued\n"),
 		N_("  -v	report all details of errors\n"),
 		NULL,
 	};
@@ -2561,15 +3417,20 @@ help(const char *cmd, const char *category)
 		N_("  -T PROFILE	ask the CA to process the request using the named profile or template\n"),
 		N_("* Parameters for the signing request at renewal time:\n"),
 		N_("  -U EXTUSAGE	override requested extended key usage OID\n"),
+		N_("  -u KEYUSAGE	set requested key usage value\n"),
 		N_("  -K NAME	override requested principal name\n"),
 		N_("  -D DNSNAME	override requested DNS name\n"),
 		N_("  -E EMAIL	override requested email address\n"),
+		N_("  -A ADDRESS	override requested IP address\n"),
 		N_("* Bus options:\n"),
 		N_("  -S		connect to the certmonger service on the system bus\n"),
 		N_("  -s		connect to the certmonger service on the session bus\n"),
 		N_("* Other options:\n"),
 		N_("  -B	command to run before saving the certificate\n"),
 		N_("  -C	command to run after saving the certificate\n"),
+		N_("  -F	file in which to store the CA's certificates\n"),
+		N_("  -a	NSS database in which to store the CA's certificates\n"),
+		N_("  -w	try to wait for the certificate to be issued\n"),
 		N_("  -v	report all details of errors\n"),
 		NULL,
 	};
@@ -2615,9 +3476,11 @@ help(const char *cmd, const char *category)
 		N_("* New parameter values for the signing request:\n"),
 		N_("  -N NAME	set requested subject name (default: CN=<hostname>)\n"),
 		N_("  -U EXTUSAGE	set requested extended key usage OID\n"),
+		N_("  -u KEYUSAGE	set requested key usage value\n"),
 		N_("  -K NAME	set requested principal name\n"),
 		N_("  -D DNSNAME	set requested DNS name\n"),
 		N_("  -E EMAIL	set requested email address\n"),
+		N_("  -A ADDRESS	set requested IP address\n"),
 		"\n",
 		N_("Optional arguments:\n"),
 		N_("* Certificate handling settings:\n"),
@@ -2632,6 +3495,9 @@ help(const char *cmd, const char *category)
 		N_("* Other options:\n"),
 		N_("  -B	command to run before saving the certificate\n"),
 		N_("  -C	command to run after saving the certificate\n"),
+		N_("  -F	file in which to store the CA's certificates\n"),
+		N_("  -a	NSS database in which to store the CA's certificates\n"),
+		N_("  -w	try to wait for the certificate to be issued\n"),
 		N_("  -v	report all details of errors\n"),
 		NULL,
 	};
@@ -2659,6 +3525,47 @@ help(const char *cmd, const char *category)
 		N_("  -v	report all details of errors\n"),
 		NULL,
 	};
+	const char *refresh_help[] = {
+		N_("Usage: %s refresh [options]\n"),
+		"\n",
+		N_("* General options:\n"),
+		N_("  -a   	refresh information about all outstanding requests\n"),
+		"\n",
+		N_("Required arguments:\n"),
+		N_("* By request identifier:\n"),
+		N_("  -i NAME	nickname for tracking request\n"),
+		N_("* If using an NSS database for storage:\n"),
+		N_("  -d DIR	NSS database for key and cert\n"),
+		N_("  -n NAME	nickname for NSS-based storage (only valid with -d)\n"),
+		N_("  -t NAME	optional token name for NSS-based storage (only valid with -d)\n"),
+		N_("* If using files for storage:\n"),
+		N_("  -f FILE	PEM file for certificate\n"),
+		"\n",
+		N_("Optional arguments:\n"),
+		N_("* Bus options:\n"),
+		N_("  -S		connect to the certmonger service on the system bus\n"),
+		N_("  -s		connect to the certmonger service on the session bus\n"),
+		N_("  -v	report all details of errors\n"),
+		NULL,
+	};
+	const char *status_help[] = {
+		N_("Usage: %s status [options]\n"),
+		"\n",
+		N_("Optional arguments:\n"),
+		N_("* Selecting a specific request:\n"),
+		N_("  -i NAME	nickname for tracking request\n"),
+		N_("* When using an NSS database for storage:\n"),
+		N_("  -d DIR	return status for the request in this NSS database\n"),
+		N_("  -n NAME	return status for cert which uses this nickname\n"),
+		N_("* When using files for storage:\n"),
+		N_("  -f FILE	return status for cert stored in this PEM file\n"),
+		N_("* Bus options:\n"),
+		N_("  -S	connect to the certmonger service on the system bus\n"),
+		N_("  -s	connect to the certmonger service on the session bus\n"),
+		N_("* Other options:\n"),
+		N_("  -v	report all details of errors\n"),
+		NULL,
+	};
 	const char *list_cas_help[] = {
 		N_("Usage: %s list-cas [options]\n"),
 		"\n",
@@ -2666,6 +3573,22 @@ help(const char *cmd, const char *category)
 #ifndef FORCE_CA
 		N_("* General options:\n"),
 		N_("  -c CA	list only information about the CA with this name\n"),
+#endif
+		N_("* Bus options:\n"),
+		N_("  -S	connect to the certmonger service on the system bus\n"),
+		N_("  -s	connect to the certmonger service on the session bus\n"),
+		N_("* Other options:\n"),
+		N_("  -v	report all details of errors\n"),
+		NULL,
+	};
+	const char *refresh_ca_help[] = {
+		N_("Usage: %s refresh-ca [options]\n"),
+		"\n",
+		N_("Optional arguments:\n"),
+#ifndef FORCE_CA
+		N_("* General options:\n"),
+		N_("  -c CA	refresh information about the CA with this name\n"),
+		N_("  -a   	refresh information about all known CAs\n"),
 #endif
 		N_("* Bus options:\n"),
 		N_("  -S	connect to the certmonger service on the system bus\n"),
@@ -2683,8 +3606,11 @@ help(const char *cmd, const char *category)
 		{"start-tracking", start_tracking_help},
 		{"stop-tracking", stop_tracking_help},
 		{"resubmit", resubmit_help},
+		{"refresh", refresh_help},
 		{"list", list_help},
+		{"status", status_help},
 		{"list-cas", list_cas_help},
+		{"refresh-ca", refresh_ca_help},
 	};
 	for (i = 0; i < sizeof(msgs) / sizeof(msgs[0]); i++) {
 		if ((category != NULL) && (msgs[i].category != NULL) &&

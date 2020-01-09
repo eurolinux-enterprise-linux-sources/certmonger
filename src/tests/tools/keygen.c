@@ -50,6 +50,8 @@ main(int argc, char **argv)
 	struct cm_store_entry *entry;
 	int fd, ret;
 	void *parent;
+	const char *ktype = "UNKNOWN";
+
 	cm_log_set_method(cm_log_stderr);
 	cm_log_set_level(3);
 	parent = talloc_new(NULL);
@@ -67,24 +69,48 @@ main(int argc, char **argv)
 	state = cm_keygen_start(entry);
 	if (state != NULL) {
 		for (;;) {
-			fd = cm_keygen_get_fd(entry, state);
+			fd = cm_keygen_get_fd(state);
 			if (fd != -1) {
 				wait_to_read(fd);
 			} else {
 				sleep(1);
 			}
-			if (cm_keygen_ready(entry, state) == 0) {
+			if (cm_keygen_ready(state) == 0) {
 				break;
 			}
 		}
-		if (cm_keygen_saved_keypair(entry, state) == 0) {
+		switch (entry->cm_key_storage_type) {
+		case cm_key_storage_none:
+			ktype = "NONE";
+			break;
+		case cm_key_storage_file:
+			ktype = "FILE";
+			break;
+		case cm_key_storage_nssdb:
+			ktype = "NSS";
+			break;
+		}
+		if (cm_keygen_saved_keypair(state) == 0) {
 			printf("OK.\n");
 			ret = 0;
+		} else if (cm_keygen_need_pin(state) == 0) {
+			printf("Failed to save %s:%s: need PIN.\n",
+			       ktype, entry->cm_key_storage_location);
+			ret = 1;
+		} else if (cm_keygen_need_token(state) == 0) {
+			printf("Failed to save %s:%s: token not present.\n",
+			       ktype, entry->cm_key_storage_location);
+			ret = 1;
+		} else if (cm_keygen_need_perms(state) == 0) {
+			printf("Failed to save %s:%s: need fs permissions.\n",
+			       ktype, entry->cm_key_storage_location);
+			ret = 1;
 		} else {
-			printf("Failed to save.\n");
+			printf("Failed to save %s:%s, don't know why.\n",
+			       ktype, entry->cm_key_storage_location);
 			ret = 1;
 		}
-		cm_keygen_done(entry, state);
+		cm_keygen_done(state);
 	} else {
 		printf("Failed to start.\n");
 		ret = 1;

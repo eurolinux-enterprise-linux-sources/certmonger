@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,6 +23,8 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 #include <talloc.h>
 
@@ -48,6 +50,7 @@
 /* Things we know about the calling client. */
 struct cm_client_info {
 	uid_t uid;
+	pid_t pid;
 };
 
 /* Convenience functions. */
@@ -190,7 +193,12 @@ send_internal_base_no_such_entry_error(DBusConnection *conn, DBusMessage *req)
 static int
 check_arg_is_absolute_path(const char *path)
 {
-	return (path[0] == '/') ? 0 : -1;
+	if (path[0] == '/') {
+		return 0;
+	} else {
+		errno = EINVAL;
+		return -1;
+	}
 }
 
 static int
@@ -208,7 +216,12 @@ check_arg_is_absolute_nss_path(const char *path)
 	if (strncmp(path, "extern:", 7) == 0) {
 		path += 7;
 	}
-	return (path[0] == '/') ? 0 : -1;
+	if (path[0] == '/') {
+		return 0;
+	} else {
+		errno = EINVAL;
+		return -1;
+	}
 }
 
 static int
@@ -217,7 +230,9 @@ check_arg_is_directory(const char *path)
 	struct stat st;
 	if (stat(path, &st) == 0) {
 		if (S_ISDIR(st.st_mode)) {
-			return 0;
+			if (access(path, R_OK | W_OK) == 0) {
+				return 0;
+			}
 		}
 	}
 	return -1;
@@ -241,7 +256,9 @@ check_arg_is_nss_directory(const char *path)
 	}
 	if (stat(path, &st) == 0) {
 		if (S_ISDIR(st.st_mode)) {
-			return 0;
+			if (access(path, R_OK | W_OK) == 0) {
+				return 0;
+			}
 		}
 	}
 	return -1;
@@ -267,7 +284,8 @@ static int
 check_arg_parent_is_directory(const char *path)
 {
 	char *tmp, *p;
-	int ret;
+	int ret, err;
+
 	if (check_arg_is_absolute_path(path) != 0) {
 		return -1;
 	}
@@ -281,11 +299,17 @@ check_arg_parent_is_directory(const char *path)
 				*(p + 1) = '\0';
 			}
 			ret = check_arg_is_directory(tmp);
+			err = errno;
 			free(tmp);
+			errno = err;
 			return ret;
+		} else {
+			free(tmp);
+			errno = EINVAL;
+			return -1;
 		}
-		free(tmp);
 	}
+	errno = ENOMEM;
 	return -1;
 }
 
@@ -325,7 +349,7 @@ base_add_known_ca(DBusConnection *conn, DBusMessage *msg,
 		}
 	}
 	/* Okay, we can go ahead and add the CA. */
-	new_ca = talloc_ptrtype(parent, new_ca);
+	new_ca = cm_store_ca_new(parent);
 	if (new_ca == NULL) {
 		talloc_free(parent);
 		return send_internal_base_error(conn, msg);
@@ -386,6 +410,9 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 	enum cm_cert_storage_type cert_storage;
 	char *cert_location, *cert_nickname, *cert_token;
 	char *path, *pre_command, *post_command;
+	char **root_cert_nssdbs, **root_cert_files;
+	char **other_root_cert_nssdbs, **other_root_cert_files;
+	char **other_cert_nssdbs, **other_cert_files;
 
 	parent = talloc_new(NULL);
 	if (cm_tdbusm_get_d(msg, parent, &d) != 0) {
@@ -403,7 +430,7 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 	}
 	if (param == NULL) {
 		/* This is a required parameter. */
-		cm_log(1, "Cert storage type not specified.\n");
+		cm_log(1, "Certificate storage type not specified.\n");
 		talloc_free(parent);
 		return send_internal_base_missing_arg_error(conn, msg,
 							    _("Certificate storage type not specified."),
@@ -480,15 +507,14 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 							  cm_tdbusm_dict_s);
 		}
 		if (param == NULL) {
-			cm_log(1, "Cert storage location not specified.\n");
+			cm_log(1, "Certificate storage location not specified.\n");
 			talloc_free(parent);
 			return send_internal_base_missing_arg_error(conn, msg,
 								    _("Certificate storage location not specified."),
 								    "CERT_LOCATION");
 		}
 		if (check_arg_is_absolute_path(param->value.s) != 0) {
-			cm_log(1, "Cert storage location is not an absolute "
-			       "path.\n");
+			cm_log(1, "Certificate storage location is not an absolute path.\n");
 			ret = send_internal_base_bad_arg_error(conn, msg,
 							       _("The location \"%s\" must be an absolute path."),
 							       param->value.s,
@@ -497,18 +523,29 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 			return ret;
 		}
 		if (check_arg_parent_is_directory(param->value.s) != 0) {
-			cm_log(1, "Cert storage location is not inside of "
-			       "a directory.\n");
-			ret = send_internal_base_bad_arg_error(conn, msg,
-							       _("The parent of location \"%s\" must be a valid directory."),
-							       param->value.s,
-							       "CERT_LOCATION");
+			switch (errno) {
+			case EACCES:
+			case EPERM:
+				cm_log(1, "Not allowed to access certificate storage location.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The parent of location \"%s\" could not be accessed due "
+									"to insufficient permissions."),
+								       param->value.s,
+								       "CERT_LOCATION");
+				break;
+			default:
+				cm_log(1, "Certificate storage location is not inside of a directory.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The parent of location \"%s\" must be a valid directory."),
+								       param->value.s,
+								       "CERT_LOCATION");
+				break;
+			}
 			talloc_free(parent);
 			return ret;
 		}
 		if (check_arg_is_reg_or_missing(param->value.s) != 0) {
-			cm_log(1, "Cert storage location is "
-			       "not a regular file.\n");
+			cm_log(1, "Certificate storage location is not a regular file.\n");
 			ret = send_internal_base_bad_arg_error(conn, msg,
 							       _("The location \"%s\" must be a file."),
 							       param->value.s,
@@ -529,15 +566,14 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 							  cm_tdbusm_dict_s);
 		}
 		if (param == NULL) {
-			cm_log(1, "Cert storage location not specified.\n");
+			cm_log(1, "Certificate storage location not specified.\n");
 			talloc_free(parent);
 			return send_internal_base_missing_arg_error(conn, msg,
 								    _("Certificate storage location not specified."),
 								    "CERT_LOCATION");
 		}
 		if (check_arg_is_absolute_nss_path(param->value.s) != 0) {
-			cm_log(1, "Cert storage location is not an absolute "
-			       "path.\n");
+			cm_log(1, "Certificate storage location is not an absolute path.\n");
 			ret = send_internal_base_bad_arg_error(conn, msg,
 							       _("The location \"%s\" must be an absolute path."),
 							       param->value.s,
@@ -546,12 +582,24 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 			return ret;
 		}
 		if (check_arg_is_nss_directory(param->value.s) != 0) {
-			cm_log(1, "Cert storage location must be "
-			       "a directory.\n");
-			ret = send_internal_base_bad_arg_error(conn, msg,
-							       _("The location \"%s\" must be a directory."),
-							       param->value.s,
-							       "CERT_LOCATION");
+			switch (errno) {
+			case EACCES:
+			case EPERM:
+				cm_log(1, "Not allowed to access certificate storage location.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The location \"%s\" could not be accessed due "
+									"to insufficient permissions."),
+								       param->value.s,
+								       "CERT_LOCATION");
+				break;
+			default:
+				cm_log(1, "Certificate storage location must be a directory.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The location \"%s\" must be a directory."),
+								       param->value.s,
+								       "CERT_LOCATION");
+				break;
+			}
 			talloc_free(parent);
 			return ret;
 		}
@@ -565,7 +613,7 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 							  cm_tdbusm_dict_s);
 		}
 		if (param == NULL) {
-			cm_log(1, "Cert nickname not specified.\n");
+			cm_log(1, "Certificate nickname not specified.\n");
 			talloc_free(parent);
 			return send_internal_base_missing_arg_error(conn, msg,
 								    _("Certificate nickname not specified."),
@@ -587,7 +635,7 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 		break;
 	}
 	if (cert_location == NULL) {
-		cm_log(1, "Cert storage location not specified.\n");
+		cm_log(1, "Certificate storage location not specified.\n");
 		talloc_free(parent);
 		return send_internal_base_missing_arg_error(conn, msg,
 							    _("Certificate storage location not specified."),
@@ -642,7 +690,7 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 	}
 	if (i < n_entries) {
 		/* We found a match, and that's bad. */
-		cm_log(1, "Cert at same location is already being "
+		cm_log(1, "Certificate at same location is already being "
 		       "used for request %s with nickname \"%s\".\n",
 		       e->cm_busname, e->cm_nickname);
 		talloc_free(parent);
@@ -703,16 +751,14 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 								  cm_tdbusm_dict_s);
 			}
 			if (param == NULL) {
-				cm_log(1,
-				       "Key storage location not specified.\n");
+				cm_log(1, "Key storage location not specified.\n");
 				talloc_free(parent);
 				return send_internal_base_missing_arg_error(conn, msg,
 									    _("Key storage location not specified."),
 									    "KEY_LOCATION");
 			}
 			if (check_arg_is_absolute_path(param->value.s) != 0) {
-				cm_log(1, "Key storage location is not an "
-				       "absolute path.\n");
+				cm_log(1, "Key storage location is not an absolute path.\n");
 				ret = send_internal_base_bad_arg_error(conn, msg,
 								       _("The location \"%s\" must be an absolute path."),
 								       param->value.s,
@@ -721,18 +767,29 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 				return ret;
 			}
 			if (check_arg_parent_is_directory(param->value.s) != 0) {
-				cm_log(1, "Key storage location is not inside "
-				       "of a directory.\n");
-				ret = send_internal_base_bad_arg_error(conn, msg,
-								       _("The parent of location \"%s\" must be a valid directory."),
-								       param->value.s,
-								       "KEY_LOCATION");
+				switch (errno) {
+				case EACCES:
+				case EPERM:
+					cm_log(1, "Not allowed to access key storage location.\n");
+					ret = send_internal_base_bad_arg_error(conn, msg,
+									       _("The parent of location \"%s\" could not be accessed due "
+										 "to insufficient permissions."),
+									       param->value.s,
+									       "KEY_LOCATION");
+					break;
+				default:
+					cm_log(1, "Key storage location is not inside of a directory.\n");
+					ret = send_internal_base_bad_arg_error(conn, msg,
+									       _("The parent of location \"%s\" must be a valid directory."),
+									       param->value.s,
+									       "KEY_LOCATION");
+					break;
+				}
 				talloc_free(parent);
 				return ret;
 			}
 			if (check_arg_is_reg_or_missing(param->value.s) != 0) {
-				cm_log(1, "Key storage location is "
-				       "not a regular file.\n");
+				cm_log(1, "Key storage location is not a regular file.\n");
 				ret = send_internal_base_bad_arg_error(conn, msg,
 								       _("The location \"%s\" must be a file."),
 								       param->value.s,
@@ -753,16 +810,14 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 								  cm_tdbusm_dict_s);
 			}
 			if (param == NULL) {
-				cm_log(1,
-				       "Key storage location not specified.\n");
+				cm_log(1, "Key storage location not specified.\n");
 				talloc_free(parent);
 				return send_internal_base_missing_arg_error(conn, msg,
 									    _("Key storage location not specified."),
 									    "KEY_LOCATION");
 			}
 			if (check_arg_is_absolute_nss_path(param->value.s) != 0) {
-				cm_log(1, "Key storage location is not an "
-				       "absolute path.\n");
+				cm_log(1, "Key storage location is not an absolute path.\n");
 				ret = send_internal_base_bad_arg_error(conn, msg,
 								       _("The location \"%s\" must be an absolute path."),
 								       param->value.s,
@@ -771,8 +826,7 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 				return ret;
 			}
 			if (check_arg_is_nss_directory(param->value.s) != 0) {
-				cm_log(1, "Key storage location must be "
-				       "a directory.\n");
+				cm_log(1, "Key storage location must be a directory.\n");
 				ret = send_internal_base_bad_arg_error(conn, msg,
 								       _("The location \"%s\" must be a directory."),
 								       param->value.s,
@@ -856,6 +910,306 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 								  "KEY_NICKNAME" : NULL);
 		}
 	}
+	/* Find out where to save the root certificates. */
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_ROOT_CERT_NSSDBS,
+					  cm_tdbusm_dict_as);
+	for (i = 0;
+	     (param != NULL) &&
+	     (param->value.as != NULL) &&
+	     (param->value.as[i] != NULL);
+	     i++) {
+		if (check_arg_is_absolute_nss_path(param->value.as[i]) != 0) {
+			cm_log(1, "Root certificate storage location is not an absolute path.\n");
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("The location \"%s\" must be an absolute path."),
+							       param->value.as[i],
+							       CM_DBUS_PROP_ROOT_CERT_NSSDBS);
+			talloc_free(parent);
+			return ret;
+		}
+		if (check_arg_is_nss_directory(param->value.as[i]) != 0) {
+			switch (errno) {
+			case EACCES:
+			case EPERM:
+				cm_log(1, "Not allowed to access root certificate storage location.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The location \"%s\" could not be accessed due "
+									 "to insufficient permissions."),
+								       param->value.s,
+								       CM_DBUS_PROP_ROOT_CERT_NSSDBS);
+				break;
+			default:
+				cm_log(1, "Certificate storage location must be a directory.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The location \"%s\" must be a directory."),
+								       param->value.s,
+								       CM_DBUS_PROP_ROOT_CERT_NSSDBS);
+				break;
+			}
+			talloc_free(parent);
+			return ret;
+		}
+	}
+	if (param != NULL) {
+		root_cert_nssdbs = param->value.as;
+	} else {
+		root_cert_nssdbs = NULL;
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_ROOT_CERT_FILES,
+					  cm_tdbusm_dict_as);
+	for (i = 0;
+	     (param != NULL) &&
+	     (param->value.as != NULL) &&
+	     (param->value.as[i] != NULL);
+	     i++) {
+		if (check_arg_is_absolute_path(param->value.as[i]) != 0) {
+			cm_log(1, "Root certificate storage location is not an absolute path.\n");
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("The location \"%s\" must be an absolute path."),
+							       param->value.as[i],
+							       CM_DBUS_PROP_ROOT_CERT_FILES);
+			talloc_free(parent);
+			return ret;
+		}
+		if (check_arg_parent_is_directory(param->value.as[i]) != 0) {
+			switch (errno) {
+			case EACCES:
+			case EPERM:
+				cm_log(1, "Not allowed to access root certificate storage location.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The parent of location \"%s\" could not be accessed due "
+									 "to insufficient permissions."),
+								       param->value.as[i],
+								       CM_DBUS_PROP_ROOT_CERT_FILES);
+				break;
+			default:
+				cm_log(1, "Root certificate storage location is not inside of a directory.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The parent of location \"%s\" must be a valid directory."),
+								       param->value.as[i],
+								       CM_DBUS_PROP_ROOT_CERT_FILES);
+				break;
+			}
+			talloc_free(parent);
+			return ret;
+		}
+		if (check_arg_is_reg_or_missing(param->value.as[i]) != 0) {
+			cm_log(1, "Root certificate storage location is not a regular file.\n");
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("The location \"%s\" must be a file."),
+							       param->value.as[i],
+							       CM_DBUS_PROP_ROOT_CERT_FILES);
+			talloc_free(parent);
+			return ret;
+		}
+	}
+	if (param != NULL) {
+		root_cert_files = param->value.as;
+	} else {
+		root_cert_files = NULL;
+	}
+	/* Find out where to save the other root certificates. */
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS,
+					  cm_tdbusm_dict_as);
+	for (i = 0;
+	     (param != NULL) &&
+	     (param->value.as != NULL) &&
+	     (param->value.as[i] != NULL);
+	     i++) {
+		if (check_arg_is_absolute_nss_path(param->value.as[i]) != 0) {
+			cm_log(1, "Other root certificate storage location is not an absolute path.\n");
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("The location \"%s\" must be an absolute path."),
+							       param->value.as[i],
+							       CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS);
+			talloc_free(parent);
+			return ret;
+		}
+		if (check_arg_is_nss_directory(param->value.as[i]) != 0) {
+			switch (errno) {
+			case EACCES:
+			case EPERM:
+				cm_log(1, "Not allowed to access root certificate storage location.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The location \"%s\" could not be accessed due "
+									 "to insufficient permissions."),
+								       param->value.s,
+								       CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS);
+				break;
+			default:
+				cm_log(1, "Certificate storage location must be a directory.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The location \"%s\" must be a directory."),
+								       param->value.s,
+								       CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS);
+				break;
+			}
+			talloc_free(parent);
+			return ret;
+		}
+	}
+	if (param != NULL) {
+		other_root_cert_nssdbs = param->value.as;
+	} else {
+		other_root_cert_nssdbs = NULL;
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_OTHER_ROOT_CERT_FILES,
+					  cm_tdbusm_dict_as);
+	for (i = 0;
+	     (param != NULL) &&
+	     (param->value.as != NULL) &&
+	     (param->value.as[i] != NULL);
+	     i++) {
+		if (check_arg_is_absolute_path(param->value.as[i]) != 0) {
+			cm_log(1, "Other root certificate storage location is not an absolute path.\n");
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("The location \"%s\" must be an absolute path."),
+							       param->value.as[i],
+							       CM_DBUS_PROP_OTHER_ROOT_CERT_FILES);
+			talloc_free(parent);
+			return ret;
+		}
+		if (check_arg_parent_is_directory(param->value.as[i]) != 0) {
+			switch (errno) {
+			case EACCES:
+			case EPERM:
+				cm_log(1, "Not allowed to access other root certificate storage location.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The parent of location \"%s\" could not be accessed due "
+									 "to insufficient permissions."),
+								       param->value.as[i],
+								       CM_DBUS_PROP_OTHER_ROOT_CERT_FILES);
+				break;
+			default:
+				cm_log(1, "Other root certificate storage location is not inside of a directory.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The parent of location \"%s\" must be a valid directory."),
+								       param->value.as[i],
+								       CM_DBUS_PROP_OTHER_ROOT_CERT_FILES);
+				break;
+			}
+			talloc_free(parent);
+			return ret;
+		}
+		if (check_arg_is_reg_or_missing(param->value.as[i]) != 0) {
+			cm_log(1, "Other root certificate storage location is not a regular file.\n");
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("The location \"%s\" must be a file."),
+							       param->value.as[i],
+							       CM_DBUS_PROP_OTHER_ROOT_CERT_FILES);
+			talloc_free(parent);
+			return ret;
+		}
+	}
+	if (param != NULL) {
+		other_root_cert_files = param->value.as;
+	} else {
+		other_root_cert_files = NULL;
+	}
+	/* Find out where to save the other certificates supplied by the CA. */
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_OTHER_CERT_NSSDBS,
+					  cm_tdbusm_dict_as);
+	for (i = 0;
+	     (param != NULL) &&
+	     (param->value.as != NULL) &&
+	     (param->value.as[i] != NULL);
+	     i++) {
+		if (check_arg_is_absolute_nss_path(param->value.as[i]) != 0) {
+			cm_log(1, "Other certificate storage location is not an absolute path.\n");
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("The location \"%s\" must be an absolute path."),
+							       param->value.as[i],
+							       CM_DBUS_PROP_OTHER_CERT_NSSDBS);
+			talloc_free(parent);
+			return ret;
+		}
+		if (check_arg_is_nss_directory(param->value.as[i]) != 0) {
+			switch (errno) {
+			case EACCES:
+			case EPERM:
+				cm_log(1, "Not allowed to access other certificate storage location.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The location \"%s\" could not be accessed due "
+									 "to insufficient permissions."),
+								       param->value.s,
+								       CM_DBUS_PROP_OTHER_CERT_NSSDBS);
+				break;
+			default:
+				cm_log(1, "Other certificate storage location must be a directory.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The location \"%s\" must be a directory."),
+								       param->value.s,
+								       CM_DBUS_PROP_OTHER_CERT_NSSDBS);
+				break;
+			}
+			talloc_free(parent);
+			return ret;
+		}
+	}
+	if (param != NULL) {
+		other_cert_nssdbs = param->value.as;
+	} else {
+		other_cert_nssdbs = NULL;
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_OTHER_CERT_FILES,
+					  cm_tdbusm_dict_as);
+	for (i = 0;
+	     (param != NULL) &&
+	     (param->value.as != NULL) &&
+	     (param->value.as[i] != NULL);
+	     i++) {
+		if (check_arg_is_absolute_path(param->value.as[i]) != 0) {
+			cm_log(1, "Other root certificate storage location is not an absolute path.\n");
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("The location \"%s\" must be an absolute path."),
+							       param->value.as[i],
+							       CM_DBUS_PROP_OTHER_CERT_FILES);
+			talloc_free(parent);
+			return ret;
+		}
+		if (check_arg_parent_is_directory(param->value.as[i]) != 0) {
+			switch (errno) {
+			case EACCES:
+			case EPERM:
+				cm_log(1, "Not allowed to access other root certificate storage location.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The parent of location \"%s\" could not be accessed due "
+									 "to insufficient permissions."),
+								       param->value.as[i],
+								       CM_DBUS_PROP_OTHER_CERT_FILES);
+				break;
+			default:
+				cm_log(1, "Other root certificate storage location is not inside of a directory.\n");
+				ret = send_internal_base_bad_arg_error(conn, msg,
+								       _("The parent of location \"%s\" must be a valid directory."),
+								       param->value.as[i],
+								       CM_DBUS_PROP_OTHER_CERT_FILES);
+				break;
+			}
+			talloc_free(parent);
+			return ret;
+		}
+		if (check_arg_is_reg_or_missing(param->value.as[i]) != 0) {
+			cm_log(1, "Other root certificate storage location is not a regular file.\n");
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("The location \"%s\" must be a file."),
+							       param->value.as[i],
+							       CM_DBUS_PROP_OTHER_CERT_FILES);
+			talloc_free(parent);
+			return ret;
+		}
+	}
+	if (param != NULL) {
+		other_cert_files = param->value.as;
+	} else {
+		other_cert_files = NULL;
+	}
 	/* What to run before we save the certificate. */
 	param = cm_tdbusm_find_dict_entry(d,
 					  CM_DBUS_PROP_CERT_PRESAVE_COMMAND,
@@ -875,7 +1229,7 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 		post_command = NULL;
 	}
 	/* Okay, we can go ahead and add the entry. */
-	new_entry = talloc_ptrtype(parent, new_entry);
+	new_entry = cm_store_entry_new(parent);
 	if (new_entry == NULL) {
 		talloc_free(parent);
 		return send_internal_base_error(conn, msg);
@@ -893,6 +1247,42 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 		new_entry->cm_nickname = talloc_strdup(new_entry,
 						       param->value.s);
 	}
+	param = cm_tdbusm_find_dict_entry(d, "KEY_TYPE", cm_tdbusm_dict_s);
+	if (param == NULL) {
+		param = cm_tdbusm_find_dict_entry(d,
+						  CM_DBUS_PROP_KEY_TYPE,
+						  cm_tdbusm_dict_s);
+	}
+	if (param != NULL) {
+		if (strcasecmp(param->value.s, "RSA") == 0) {
+			new_entry->cm_key_type.cm_key_gen_algorithm =
+				cm_key_rsa;
+#ifdef CM_ENABLE_DSA
+		} else
+		if (strcasecmp(param->value.s, "DSA") == 0) {
+			new_entry->cm_key_type.cm_key_gen_algorithm =
+				cm_key_dsa;
+#endif
+#ifdef CM_ENABLE_EC
+		} else
+		if ((strcasecmp(param->value.s, "ECDSA") == 0) ||
+		    (strcasecmp(param->value.s, "EC") == 0)) {
+			new_entry->cm_key_type.cm_key_gen_algorithm =
+				cm_key_ecdsa;
+#endif
+		} else {
+			cm_log(1, "No support for generating \"%s\" keys.\n",
+			       param->value.s);
+			ret = send_internal_base_bad_arg_error(conn, msg,
+							       _("No support for key type \"%s\"."),
+							       param->value.s,
+							       "KEY_TYPE");
+			talloc_free(parent);
+			return ret;
+		}
+	} else {
+		new_entry->cm_key_type.cm_key_gen_algorithm = cm_prefs_preferred_key_algorithm();
+	}
 	param = cm_tdbusm_find_dict_entry(d, "KEY_SIZE", cm_tdbusm_dict_n);
 	if (param == NULL) {
 		param = cm_tdbusm_find_dict_entry(d,
@@ -900,14 +1290,33 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 						  cm_tdbusm_dict_n);
 	}
 	if (param != NULL) {
-		new_entry->cm_key_type.cm_key_gen_algorithm = CM_DEFAULT_PUBKEY_TYPE;
 		new_entry->cm_key_type.cm_key_gen_size = param->value.n;
 	} else {
-		new_entry->cm_key_type.cm_key_gen_algorithm = CM_DEFAULT_PUBKEY_TYPE;
 		new_entry->cm_key_type.cm_key_gen_size = CM_DEFAULT_PUBKEY_SIZE;
 	}
-	if (new_entry->cm_key_type.cm_key_gen_size < CM_MINIMUM_PUBKEY_SIZE) {
-		new_entry->cm_key_type.cm_key_gen_size = CM_MINIMUM_PUBKEY_SIZE;
+	switch (new_entry->cm_key_type.cm_key_gen_algorithm) {
+	case cm_key_rsa:
+		if (new_entry->cm_key_type.cm_key_gen_size < CM_MINIMUM_RSA_KEY_SIZE) {
+			new_entry->cm_key_type.cm_key_gen_size = CM_MINIMUM_RSA_KEY_SIZE;
+		}
+		break;
+#ifdef CM_ENABLE_DSA
+	case cm_key_dsa:
+		if (new_entry->cm_key_type.cm_key_gen_size < CM_MINIMUM_DSA_KEY_SIZE) {
+			new_entry->cm_key_type.cm_key_gen_size = CM_MINIMUM_DSA_KEY_SIZE;
+		}
+		break;
+#endif
+#ifdef CM_ENABLE_EC
+	case cm_key_ecdsa:
+		if (new_entry->cm_key_type.cm_key_gen_size < CM_MINIMUM_EC_KEY_SIZE) {
+			new_entry->cm_key_type.cm_key_gen_size = CM_MINIMUM_EC_KEY_SIZE;
+		}
+		break;
+#endif
+	case cm_key_unspecified:
+	default:
+		break;
 	}
 	/* Key and certificate storage. */
 	new_entry->cm_key_storage_type = key_storage;
@@ -922,6 +1331,14 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 							   cert_location);
 	new_entry->cm_cert_nickname = maybe_strdup(new_entry, cert_nickname);
 	new_entry->cm_cert_token = maybe_strdup(new_entry, cert_token);
+
+	new_entry->cm_root_cert_store_nssdbs = maybe_strdupv(new_entry, root_cert_nssdbs);
+	new_entry->cm_root_cert_store_files = maybe_strdupv(new_entry, root_cert_files);
+	new_entry->cm_other_root_cert_store_nssdbs = maybe_strdupv(new_entry, other_root_cert_nssdbs);
+	new_entry->cm_other_root_cert_store_files = maybe_strdupv(new_entry, other_root_cert_files);
+	new_entry->cm_other_cert_store_nssdbs = maybe_strdupv(new_entry, other_cert_nssdbs);
+	new_entry->cm_other_cert_store_files = maybe_strdupv(new_entry, other_cert_files);
+
 	/* Which CA to use. */
 	param = cm_tdbusm_find_dict_entry(d, "CA", cm_tdbusm_dict_p);
 	if (param == NULL) {
@@ -945,11 +1362,12 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 			return ret;
 		}
 	}
+
 	/* What to tell the CA we want. */
 	param = cm_tdbusm_find_dict_entry(d, CM_DBUS_PROP_CA_PROFILE, cm_tdbusm_dict_s);
 	if (param != NULL) {
-		new_entry->cm_ca_profile = maybe_strdup(new_entry,
-							param->value.s);
+		new_entry->cm_template_profile = maybe_strdup(new_entry,
+							      param->value.s);
 	}
 	/* Behavior settings. */
 	param = cm_tdbusm_find_dict_entry(d, "TRACK", cm_tdbusm_dict_b);
@@ -1003,6 +1421,16 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 		new_entry->cm_template_subject = maybe_strdup(new_entry,
 							      param->value.s);
 	}
+	param = cm_tdbusm_find_dict_entry(d, "KU", cm_tdbusm_dict_s);
+	if (param == NULL) {
+		param = cm_tdbusm_find_dict_entry(d,
+						  CM_DBUS_PROP_TEMPLATE_KU,
+						  cm_tdbusm_dict_s);
+	}
+	if (param != NULL) {
+		new_entry->cm_template_ku = maybe_strdup(new_entry,
+							 param->value.s);
+	}
 	param = cm_tdbusm_find_dict_entry(d, "EKU", cm_tdbusm_dict_as);
 	if (param == NULL) {
 		param = cm_tdbusm_find_dict_entry(d,
@@ -1043,6 +1471,53 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
 	if (param != NULL) {
 		new_entry->cm_template_email = maybe_strdupv(new_entry,
 							     param->value.as);
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_TEMPLATE_IP_ADDRESS,
+					  cm_tdbusm_dict_as);
+	if (param != NULL) {
+		new_entry->cm_template_ipaddress = maybe_strdupv(new_entry,
+								 param->value.as);
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_TEMPLATE_IS_CA,
+					  cm_tdbusm_dict_b);
+	if (param != NULL) {
+		new_entry->cm_template_is_ca = param->value.b;
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_TEMPLATE_CA_PATH_LENGTH,
+					  cm_tdbusm_dict_n);
+	if (param != NULL) {
+		new_entry->cm_template_ca_path_length = param->value.n;
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_TEMPLATE_OCSP,
+					  cm_tdbusm_dict_as);
+	if (param != NULL) {
+		new_entry->cm_template_ocsp_location = maybe_strdupv(new_entry,
+								     param->value.as);
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_TEMPLATE_CRL_DP,
+					  cm_tdbusm_dict_as);
+	if (param != NULL) {
+		new_entry->cm_template_crl_distribution_point = maybe_strdupv(new_entry,
+									      param->value.as);
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_TEMPLATE_NS_COMMENT,
+					  cm_tdbusm_dict_s);
+	if (param != NULL) {
+		new_entry->cm_template_ns_comment = maybe_strdup(new_entry,
+								 param->value.s);
+	}
+	param = cm_tdbusm_find_dict_entry(d,
+					  CM_DBUS_PROP_TEMPLATE_PROFILE,
+					  cm_tdbusm_dict_s);
+	if (param != NULL) {
+		new_entry->cm_template_profile = maybe_strdup(new_entry,
+							      param->value.s);
 	}
 	/* Hand it off to the main loop. */
 	new_entry->cm_state = CM_NEWLY_ADDED;
@@ -1239,7 +1714,16 @@ static DBusHandlerResult
 base_get_supported_key_types(DBusConnection *conn, DBusMessage *msg,
 			     struct cm_client_info *ci, struct cm_context *ctx)
 {
-	const char *key_types[] = {"RSA", NULL};
+	const char *key_types[] = {
+		"RSA",
+#ifdef CM_ENABLE_DSA
+		"DSA",
+#endif
+#ifdef CM_ENABLE_EC
+		"EC",
+#endif
+		NULL
+	};
 	DBusMessage *rep;
 	rep = dbus_message_new_method_return(msg);
 	if (rep != NULL) {
@@ -1539,6 +2023,36 @@ ca_get_serial(DBusConnection *conn, DBusMessage *msg,
 	}
 }
 
+/* org.fedorahosted.certonger.ca.refresh */
+static DBusHandlerResult
+ca_refresh(DBusConnection *conn, DBusMessage *msg,
+	   struct cm_client_info *ci, struct cm_context *ctx)
+{
+	DBusMessage *rep;
+	struct cm_store_ca *ca;
+	enum cm_ca_phase phase;
+	dbus_bool_t result = TRUE;
+
+	ca = get_ca_for_request_message(msg, ctx);
+	if (ca == NULL) {
+		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+	}
+	for (phase = 0; phase < cm_ca_phase_invalid; phase++) {
+		if (!cm_restart_ca(ctx, ca->cm_nickname, phase)) {
+			result = FALSE;
+		}
+	}
+	rep = dbus_message_new_method_return(msg);
+	if (rep != NULL) {
+		cm_tdbusm_set_b(rep, result);
+		dbus_connection_send(conn, rep, NULL);
+		dbus_message_unref(rep);
+		return DBUS_HANDLER_RESULT_HANDLED;
+	} else {
+		return send_internal_ca_error(conn, msg);
+	}
+}
+
 /* Custom property get/set logic for CA structures. */
 static dbus_bool_t
 ca_prop_get_is_default(struct cm_context *ctx, void *parent,
@@ -1565,6 +2079,7 @@ ca_prop_set_is_default(struct cm_context *ctx, void *parent,
 		propname[1] = NULL;
 		if (new_value) {
 			i = 0;
+			/* There can be only one... default. */
 			while ((other = cm_get_ca_by_index(ctx, i++)) != NULL) {
 				if ((other != ca) &&
 				    (other->cm_ca_is_default)) {
@@ -1589,6 +2104,99 @@ ca_prop_set_is_default(struct cm_context *ctx, void *parent,
 							propname);
 		}
 	}
+}
+
+static const char *
+ca_prop_get_external_helper(struct cm_context *ctx, void *parent,
+			    void *record, const char *name)
+{
+	struct cm_store_ca *ca = record;
+
+	if (strcmp(name, CM_DBUS_PROP_EXTERNAL_HELPER) == 0) {
+		if (ca->cm_ca_type != cm_ca_external) {
+			return "";
+		}
+		if (ca->cm_ca_external_helper != NULL) {
+			return ca->cm_ca_external_helper;
+		} else {
+			return "";
+		}
+	}
+	return NULL;
+}
+
+static void
+ca_prop_set_external_helper(struct cm_context *ctx, void *parent,
+			    void *record, const char *name,
+			    const char *new_value)
+{
+	const char *propname[2], *path;
+	struct cm_store_ca *ca = record;
+
+	if (strcmp(name, CM_DBUS_PROP_EXTERNAL_HELPER) == 0) {
+		if (ca->cm_ca_type != cm_ca_external) {
+			return;
+		}
+		talloc_free(ca->cm_ca_external_helper);
+		ca->cm_ca_external_helper = new_value ?
+					    talloc_strdup(ca, new_value) :
+					    NULL;
+		propname[0] = CM_DBUS_PROP_EXTERNAL_HELPER;
+		propname[1] = NULL;
+		path = talloc_asprintf(parent, "%s/%s",
+				       CM_DBUS_CA_PATH,
+				       ca->cm_busname);
+		cm_tdbush_property_emit_changed(ctx, path,
+						CM_DBUS_CA_INTERFACE,
+						propname);
+	}
+}
+
+static const char **
+ca_prop_read_nickcerts(struct cm_context *ctx, void *parent,
+		       struct cm_nickcert **nickcerts)
+{
+	char **ret = NULL, **tmp;
+	int i;
+
+	for (i = 0; (nickcerts != NULL) && (nickcerts[i] != NULL); i++) {
+		tmp = talloc_realloc(parent, ret, char *, i * 2 + 3);
+		if (tmp == NULL) {
+			talloc_free(ret);
+			return NULL;
+		}
+		tmp[i * 2] = talloc_strdup(tmp, nickcerts[i]->cm_nickname);
+		tmp[i * 2 + 1] = talloc_strdup(tmp, nickcerts[i]->cm_cert);
+		tmp[i * 2 + 2] = NULL;
+		ret = tmp;
+	}
+	return (const char **) ret;
+}
+
+static const char **
+ca_prop_get_nickcerts(struct cm_context *ctx, void *parent,
+		      void *record, const char *name)
+{
+	struct cm_store_entry *entry = record;
+	struct cm_store_ca *ca = record;
+
+	if (strcmp(name, CM_DBUS_PROP_CERT_CHAIN) == 0) {
+		return ca_prop_read_nickcerts(ctx, parent,
+					      entry->cm_cert_chain);
+	} else
+	if (strcmp(name, CM_DBUS_PROP_ROOT_CERTS) == 0) {
+		return ca_prop_read_nickcerts(ctx, parent,
+					      ca->cm_ca_root_certs);
+	} else
+	if (strcmp(name, CM_DBUS_PROP_OTHER_ROOT_CERTS) == 0) {
+		return ca_prop_read_nickcerts(ctx, parent,
+					      ca->cm_ca_other_root_certs);
+	} else
+	if (strcmp(name, CM_DBUS_PROP_OTHER_CERTS) == 0) {
+		return ca_prop_read_nickcerts(ctx, parent,
+					      ca->cm_ca_other_certs);
+	}
+	return NULL;
 }
 
 /* Convenience functions for returning errors from a request object to callers. */
@@ -1727,13 +2335,44 @@ request_get_cert_data(DBusConnection *conn, DBusMessage *msg,
 static long
 ku_from_string(const char *ku)
 {
-	long i = 0;
-	while ((ku != NULL) && (*ku++ != '\0')) {
-		i <<= 1;
-		i |= 1;
+	long i = 0, mask = 1;
+	while ((ku != NULL) && (*ku != '\0')) {
+		switch (*ku++) {
+		case '1':
+			i |= mask;
+			break;
+		case '0':
+		default:
+			break;
+		}
+		mask <<= 1;
 	}
 	return i;
 }
+
+#if 0
+/* convert our number into a text bit string */
+static const char *
+ku_to_string(unsigned long ku, char *output, ssize_t len)
+{
+	static char local_output[33];
+	char *p;
+	if (output == NULL) {
+		output = local_output;
+		len = sizeof(local_output);
+	}
+	p = output;
+	while (((p - output) < len) && (ku != 0)) {
+		*p++ = (ku & 1) ? '1' : '0';
+		ku >>= 1;
+	}
+	if (p - output == len) {
+		return NULL;
+	}
+	*p++ = '\0';
+	return output;
+}
+#endif
 
 /* split the comma-separated list into an array */
 static char **
@@ -1996,6 +2635,16 @@ request_get_key_type_and_size(DBusConnection *conn, DBusMessage *msg,
 	case cm_key_rsa:
 		type = "RSA";
 		break;
+#ifdef CM_ENABLE_DSA
+	case cm_key_dsa:
+		type = "DSA";
+		break;
+#endif
+#ifdef CM_ENABLE_EC
+	case cm_key_ecdsa:
+		type = "EC";
+		break;
+#endif
 	}
 	if (rep != NULL) {
 		size = entry->cm_key_type.cm_key_size;
@@ -2317,9 +2966,9 @@ request_modify(DBusConnection *conn, DBusMessage *msg,
 			} else
 			if ((param->value_type == cm_tdbusm_dict_s) &&
 			    (strcasecmp(param->key, CM_DBUS_PROP_CA_PROFILE) == 0)) {
-				talloc_free(entry->cm_ca_profile);
-				entry->cm_ca_profile = talloc_strdup(entry,
-								     param->value.s);
+				talloc_free(entry->cm_template_profile);
+				entry->cm_template_profile = talloc_strdup(entry,
+									   param->value.s);
 				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
 					propname[n_propname++] = CM_DBUS_PROP_CA_PROFILE;
 				}
@@ -2343,6 +2992,9 @@ request_modify(DBusConnection *conn, DBusMessage *msg,
 				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
 					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_SUBJECT;
 				}
+				/* Clear the would-be-preferred DER version. */
+				talloc_free(entry->cm_template_subject_der);
+				entry->cm_template_subject_der = NULL;
 			} else
 			if ((param->value_type == cm_tdbusm_dict_s) &&
 			    ((strcasecmp(param->key, "KEY_PIN") == 0) ||
@@ -2378,6 +3030,16 @@ request_modify(DBusConnection *conn, DBusMessage *msg,
 				}
 				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
 					propname[n_propname++] = CM_DBUS_PROP_KEY_PIN_FILE;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_s) &&
+			    ((strcasecmp(param->key, "KU") == 0) ||
+			     (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_KU) == 0))) {
+				talloc_free(entry->cm_template_ku);
+				entry->cm_template_ku = maybe_strdup(entry,
+								     param->value.s);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_KU;
 				}
 			} else
 			if ((param->value_type == cm_tdbusm_dict_as) &&
@@ -2421,6 +3083,64 @@ request_modify(DBusConnection *conn, DBusMessage *msg,
 					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_EMAIL;
 				}
 			} else
+			if ((param->value_type == cm_tdbusm_dict_as) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_IP_ADDRESS) == 0)) {
+				entry->cm_template_ipaddress = maybe_strdupv(entry,
+									     param->value.as);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_IP_ADDRESS;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_b) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_IS_CA) == 0)) {
+				entry->cm_template_is_ca = param->value.b;
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_IS_CA;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_n) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_CA_PATH_LENGTH) == 0)) {
+				entry->cm_template_ca_path_length = param->value.n;
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_CA_PATH_LENGTH;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_as) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_OCSP) == 0)) {
+				talloc_free(entry->cm_template_ocsp_location);
+				entry->cm_template_ocsp_location = maybe_strdupv(entry,
+										 param->value.as);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_OCSP;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_as) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_CRL_DP) == 0)) {
+				talloc_free(entry->cm_template_crl_distribution_point);
+				entry->cm_template_crl_distribution_point = maybe_strdupv(entry,
+											  param->value.as);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_CRL_DP;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_s) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_NS_COMMENT) == 0)) {
+				talloc_free(entry->cm_template_ns_comment);
+				entry->cm_template_ns_comment = maybe_strdup(entry,
+									     param->value.s);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_NS_COMMENT;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_s) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_PROFILE) == 0)) {
+				talloc_free(entry->cm_template_profile);
+				entry->cm_template_profile = maybe_strdup(entry,
+									  param->value.s);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_PROFILE;
+				}
+			} else
 			if ((param->value_type == cm_tdbusm_dict_s) &&
 			    (strcasecmp(param->key, CM_DBUS_PROP_CERT_PRESAVE_COMMAND) == 0)) {
 				talloc_free(entry->cm_pre_certsave_command);
@@ -2462,6 +3182,60 @@ request_modify(DBusConnection *conn, DBusMessage *msg,
 					propname[n_propname++] = CM_DBUS_PROP_CERT_POSTSAVE_COMMAND;
 					propname[n_propname++] = CM_DBUS_PROP_CERT_POSTSAVE_UID;
 				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_as) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_ROOT_CERT_FILES) == 0)) {
+				talloc_free(entry->cm_root_cert_store_files);
+				entry->cm_root_cert_store_files = maybe_strdupv(entry,
+										param->value.as);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_ROOT_CERT_FILES;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_as) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_OTHER_ROOT_CERT_FILES) == 0)) {
+				talloc_free(entry->cm_other_root_cert_store_files);
+				entry->cm_other_root_cert_store_files = maybe_strdupv(entry,
+										      param->value.as);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_OTHER_ROOT_CERT_FILES;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_as) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_OTHER_CERT_FILES) == 0)) {
+				talloc_free(entry->cm_other_cert_store_nssdbs);
+				entry->cm_other_cert_store_nssdbs = maybe_strdupv(entry,
+										 param->value.as);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_OTHER_CERT_FILES;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_as) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_ROOT_CERT_NSSDBS) == 0)) {
+				talloc_free(entry->cm_root_cert_store_nssdbs);
+				entry->cm_root_cert_store_nssdbs = maybe_strdupv(entry,
+										param->value.as);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_ROOT_CERT_NSSDBS;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_as) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS) == 0)) {
+				talloc_free(entry->cm_other_root_cert_store_nssdbs);
+				entry->cm_other_root_cert_store_nssdbs = maybe_strdupv(entry,
+										      param->value.as);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS;
+				}
+			} else
+			if ((param->value_type == cm_tdbusm_dict_as) &&
+			    (strcasecmp(param->key, CM_DBUS_PROP_OTHER_CERT_NSSDBS) == 0)) {
+				talloc_free(entry->cm_other_cert_store_nssdbs);
+				entry->cm_other_cert_store_nssdbs = maybe_strdupv(entry,
+										 param->value.as);
+				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
+					propname[n_propname++] = CM_DBUS_PROP_OTHER_CERT_NSSDBS;
+				}
 			} else {
 				break;
 			}
@@ -2478,8 +3252,8 @@ request_modify(DBusConnection *conn, DBusMessage *msg,
 								propname);
 			}
 			cm_tdbusm_set_bp(rep,
-					 cm_restart_one(ctx,
-							entry->cm_nickname),
+					 cm_restart_entry(ctx,
+							  entry->cm_nickname),
 					 new_request_path);
 			dbus_connection_send(conn, rep, NULL);
 			dbus_message_unref(rep);
@@ -2519,7 +3293,7 @@ request_resubmit(DBusConnection *conn, DBusMessage *msg,
 	}
 	rep = dbus_message_new_method_return(msg);
 	if (rep != NULL) {
-		if (cm_stop_one(ctx, entry->cm_nickname)) {
+		if (cm_stop_entry(ctx, entry->cm_nickname)) {
 			/* if we have a key, the thing to do now is to generate
 			 * a new CSR, otherwise we have to generate a key first
 			 * */
@@ -2538,13 +3312,52 @@ request_resubmit(DBusConnection *conn, DBusMessage *msg,
 							CM_DBUS_REQUEST_INTERFACE,
 							propname);
 			talloc_free(path);
-			if (cm_start_one(ctx, entry->cm_nickname)) {
+			if (cm_start_entry(ctx, entry->cm_nickname)) {
 				cm_tdbusm_set_b(rep, TRUE);
 			} else {
 				cm_tdbusm_set_b(rep, FALSE);
 			}
 		} else {
 			cm_tdbusm_set_b(rep, FALSE);
+		}
+		dbus_connection_send(conn, rep, NULL);
+		dbus_message_unref(rep);
+		return DBUS_HANDLER_RESULT_HANDLED;
+	} else {
+		return send_internal_request_error(conn, msg);
+	}
+}
+
+/* org.fedorahosted.certmonger.request.refresh */
+static DBusHandlerResult
+request_refresh(DBusConnection *conn, DBusMessage *msg,
+		struct cm_client_info *ci, struct cm_context *ctx)
+{
+	DBusMessage *rep;
+	struct cm_store_entry *entry;
+
+	entry = get_entry_for_request_message(msg, ctx);
+	if (entry == NULL) {
+		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+	}
+	rep = dbus_message_new_method_return(msg);
+	if (rep != NULL) {
+		switch (entry->cm_state) {
+		case CM_CA_WORKING:
+		case CM_CA_UNREACHABLE:
+			if (cm_stop_entry(ctx, entry->cm_nickname)) {
+				if (cm_start_entry(ctx, entry->cm_nickname)) {
+					cm_tdbusm_set_b(rep, TRUE);
+				} else {
+					cm_tdbusm_set_b(rep, FALSE);
+				}
+			} else {
+				cm_tdbusm_set_b(rep, FALSE);
+			}
+			break;
+		default:
+			cm_tdbusm_set_b(rep, FALSE);
+			break;
 		}
 		dbus_connection_send(conn, rep, NULL);
 		dbus_message_unref(rep);
@@ -2742,6 +3555,16 @@ request_prop_get_key_type(struct cm_context *ctx, void *parent,
 	case cm_key_rsa:
 		return "RSA";
 		break;
+#ifdef CM_ENABLE_DSA
+	case cm_key_dsa:
+		return "DSA";
+		break;
+#endif
+#ifdef CM_ENABLE_EC
+	case cm_key_ecdsa:
+		return "EC";
+		break;
+#endif
 	}
 	return "";
 }
@@ -2756,6 +3579,14 @@ request_prop_get_key_size(struct cm_context *ctx, void *parent,
 		return 0;
 		break;
 	case cm_key_rsa:
+		/* fall through */
+#ifdef CM_ENABLE_DSA
+	case cm_key_dsa:
+		/* fall through */
+#endif
+#ifdef CM_ENABLE_EC
+	case cm_key_ecdsa:
+#endif
 		return entry->cm_key_type.cm_key_size;
 		break;
 	}
@@ -2869,7 +3700,7 @@ request_prop_set_key_pin(struct cm_context *ctx, void *parent,
 		entry->cm_key_pin_file = NULL;
 		properties[0] = CM_DBUS_PROP_KEY_PIN_FILE;
 		properties[1] = NULL;
-		path = talloc_asprintf(parent, "%s/%s",
+		path = talloc_asprintf(record, "%s/%s",
 				       CM_DBUS_REQUEST_PATH,
 				       entry->cm_busname);
 		cm_tdbush_property_emit_changed(ctx, path,
@@ -2899,7 +3730,7 @@ request_prop_set_key_pin_file(struct cm_context *ctx, void *parent,
 		entry->cm_key_pin = NULL;
 		properties[0] = CM_DBUS_PROP_KEY_PIN;
 		properties[1] = NULL;
-		path = talloc_asprintf(parent, "%s/%s",
+		path = talloc_asprintf(record, "%s/%s",
 				       CM_DBUS_REQUEST_PATH,
 				       entry->cm_busname);
 		cm_tdbush_property_emit_changed(ctx, path,
@@ -2936,6 +3767,7 @@ request_prop_get_stuck(struct cm_context *ctx, void *parent,
 	case CM_NEED_TO_SUBMIT:
 	case CM_SUBMITTING:
 	case CM_CA_WORKING:
+	case CM_CA_UNREACHABLE:
 	case CM_NEED_TO_SAVE_CERT:
 	case CM_PRE_SAVE_CERT:
 	case CM_START_SAVING_CERT:
@@ -2959,20 +3791,30 @@ request_prop_get_stuck(struct cm_context *ctx, void *parent,
 	case CM_NEWLY_ADDED_START_READING_CERT:
 	case CM_NEWLY_ADDED_READING_CERT:
 	case CM_NEWLY_ADDED_DECIDING:
+	case CM_NEED_TO_SAVE_CA_CERTS:
+	case CM_START_SAVING_CA_CERTS:
+	case CM_SAVING_CA_CERTS:
+	case CM_NEED_TO_SAVE_ONLY_CA_CERTS:
+	case CM_START_SAVING_ONLY_CA_CERTS:
+	case CM_SAVING_ONLY_CA_CERTS:
+	case CM_NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED:
+	case CM_NOTIFYING_ONLY_CA_SAVE_FAILED:
 		stuck = FALSE;
 		break;
 	case CM_NEED_KEYINFO_READ_TOKEN:
 	case CM_NEED_KEYINFO_READ_PIN:
+	case CM_NEED_KEY_GEN_PERMS:
 	case CM_NEED_KEY_GEN_TOKEN:
 	case CM_NEED_KEY_GEN_PIN:
 	case CM_NEED_CSR_GEN_TOKEN:
 	case CM_NEED_CSR_GEN_PIN:
 	case CM_NEWLY_ADDED_NEED_KEYINFO_READ_TOKEN:
 	case CM_NEWLY_ADDED_NEED_KEYINFO_READ_PIN:
+	case CM_NEED_CA_CERT_SAVE_PERMS:
+	case CM_NEED_CERTSAVE_PERMS:
 	case CM_NEED_GUIDANCE:
 	case CM_NEED_CA:
 	case CM_CA_REJECTED:
-	case CM_CA_UNREACHABLE:
 	case CM_CA_UNCONFIGURED:
 		stuck = TRUE;
 		break;
@@ -2995,6 +3837,24 @@ request_prop_get_ca(struct cm_context *ctx, void *parent,
 		}
 	}
 	return "";
+}
+
+static dbus_bool_t
+request_prop_get_template_is_ca(struct cm_context *ctx, void *parent,
+				void *record, const char *name)
+{
+	struct cm_store_entry *entry = record;
+	return entry->cm_template_is_ca != 0;
+}
+
+static long
+request_prop_get_template_ca_path_length(struct cm_context *ctx, void *parent,
+					 void *record, const char *name)
+{
+	struct cm_store_entry *entry = record;
+	return entry->cm_template_is_ca != 0 ?
+	       entry->cm_template_ca_path_length :
+	       -1;
 }
 
 /* the types of objects we have in our D-Bus object tree */
@@ -3054,6 +3914,7 @@ struct cm_tdbush_property {
 		cm_tdbush_property_path,
 		cm_tdbush_property_string,
 		cm_tdbush_property_strings,
+		cm_tdbush_property_string_pairs,
 		cm_tdbush_property_boolean,
 		cm_tdbush_property_number
 	} cm_bus_type;
@@ -3077,6 +3938,9 @@ struct cm_tdbush_property {
 				       void *structure, const char *name);
 	const char ** (*cm_read_strings)(struct cm_context *ctx, void *parent,
 					 void *structure, const char *name);
+	const char ** (*cm_read_string_pairs)(struct cm_context *ctx,
+					      void *parent, void *structure,
+					      const char *name);
 	dbus_bool_t (*cm_read_boolean)(struct cm_context *ctx, void *parent,
 				       void *structure, const char *name);
 	long (*cm_read_number)(struct cm_context *ctx, void *parent,
@@ -3087,6 +3951,9 @@ struct cm_tdbush_property {
 	void (*cm_write_strings)(struct cm_context *ctx, void *parent,
 				 void *structure, const char *name,
 				 const char **new_value);
+	void (*cm_write_string_pairs)(struct cm_context *ctx, void *parent,
+				      void *structure, const char *name,
+				      const char **new_value);
 	void (*cm_write_boolean)(struct cm_context *ctx, void *parent,
 				 void *structure, const char *name,
 				 dbus_bool_t new_value);
@@ -3217,6 +4084,10 @@ make_property(const char *name,
 					    void *parent,
 					    void *structure,
 					    const char *name),
+	      const char ** (*read_string_pairs)(struct cm_context *ctx,
+						 void *parent,
+						 void *structure,
+						 const char *name),
 	      dbus_bool_t (*read_boolean)(struct cm_context *ctx, void *parent,
 					  void *structure, const char *name),
 	      long (*read_number)(struct cm_context *ctx, void *parent,
@@ -3227,6 +4098,9 @@ make_property(const char *name,
 	      void (*write_strings)(struct cm_context *ctx, void *parent,
 				    void *structure, const char *name,
 				    const char **new_values),
+	      void (*write_string_pairs)(struct cm_context *ctx, void *parent,
+					 void *structure, const char *name,
+					 const char **new_values),
 	      void (*write_boolean)(struct cm_context *ctx, void *parent,
 				    void *structure, const char *name,
 				    dbus_bool_t),
@@ -3247,10 +4121,12 @@ make_property(const char *name,
 	ret->cm_offset = offset;
 	ret->cm_read_string = read_string;
 	ret->cm_read_strings = read_strings;
+	ret->cm_read_string_pairs = read_string_pairs;
 	ret->cm_read_number = read_number;
 	ret->cm_read_boolean = read_boolean;
 	ret->cm_write_string = write_string;
 	ret->cm_write_strings = write_strings;
+	ret->cm_write_string_pairs = write_string_pairs;
 	ret->cm_write_number = write_number;
 	ret->cm_write_boolean = write_boolean;
 	ret->cm_annotations = annotations;
@@ -3273,6 +4149,9 @@ make_property(const char *name,
 			case cm_tdbush_property_strings:
 				assert(ret->cm_read_strings != NULL);
 				break;
+			case cm_tdbush_property_string_pairs:
+				assert(ret->cm_read_string_pairs != NULL);
+				break;
 			case cm_tdbush_property_boolean:
 				assert(ret->cm_read_boolean != NULL);
 				break;
@@ -3290,6 +4169,9 @@ make_property(const char *name,
 				break;
 			case cm_tdbush_property_strings:
 				assert(ret->cm_write_strings != NULL);
+				break;
+			case cm_tdbush_property_string_pairs:
+				assert(ret->cm_write_string_pairs != NULL);
 				break;
 			case cm_tdbush_property_boolean:
 				assert(ret->cm_write_boolean != NULL);
@@ -3427,6 +4309,13 @@ cm_tdbush_introspect_property(void *parent,
 	case cm_tdbush_property_strings:
 		bus_type = DBUS_TYPE_ARRAY_AS_STRING
 			   DBUS_TYPE_STRING_AS_STRING;
+		break;
+	case cm_tdbush_property_string_pairs:
+		bus_type = DBUS_TYPE_ARRAY_AS_STRING
+			   DBUS_STRUCT_BEGIN_CHAR_AS_STRING
+			   DBUS_TYPE_STRING_AS_STRING
+			   DBUS_TYPE_STRING_AS_STRING
+			   DBUS_STRUCT_END_CHAR_AS_STRING;
 		break;
 	case cm_tdbush_property_boolean:
 		bus_type = DBUS_TYPE_BOOLEAN_AS_STRING;
@@ -3657,11 +4546,13 @@ cm_tdbush_property_get(DBusConnection *conn,
 	unsigned int i;
 	struct cm_store_entry *entry;
 	struct cm_store_ca *ca;
-	char *record, **wpp;
-	const char *p, **pp, ***ppp;
-	time_t *tp;
+	char *record, **wpp, ***wppp;
+	const char *p, **pp;
 	dbus_bool_t b;
 	long l;
+	time_t *tp;
+	enum cm_tdbusm_dict_value_type value_type;
+	union cm_tdbusm_variant value;
 	DBusMessage *rep;
 
 	path = dbus_message_get_path(msg);
@@ -3708,6 +4599,16 @@ cm_tdbush_property_get(DBusConnection *conn,
 	parent = talloc_new(NULL);
 	if (cm_tdbusm_get_ss(msg, parent, &interface, &property) != 0) {
 		cm_log(1, "Error parsing arguments.\n");
+		rep = dbus_message_new_error(msg,
+					     CM_DBUS_ERROR_REQUEST_BAD_ARG,
+					     _("Error parsing arguments."));
+		if (rep != NULL) {
+			cm_tdbusm_set_s(rep, property);
+			dbus_connection_send(conn, rep, NULL);
+			dbus_message_unref(rep);
+			talloc_free(parent);
+			return DBUS_HANDLER_RESULT_HANDLED;
+		}
 		talloc_free(parent);
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 	}
@@ -3752,6 +4653,16 @@ cm_tdbush_property_get(DBusConnection *conn,
 		}
 	}
 	if (item == NULL) {
+		rep = dbus_message_new_error(msg,
+					     CM_DBUS_ERROR_REQUEST_BAD_ARG,
+					     _("Unrecognized property name."));
+		if (rep != NULL) {
+			cm_tdbusm_set_s(rep, property);
+			dbus_connection_send(conn, rep, NULL);
+			dbus_message_unref(rep);
+			talloc_free(parent);
+			return DBUS_HANDLER_RESULT_HANDLED;
+		}
 		talloc_free(parent);
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 	}
@@ -3765,47 +4676,30 @@ cm_tdbush_property_get(DBusConnection *conn,
 	}
 
 	/* Read the property data and set it as an argument. */
+	memset(&value, 0, sizeof(value));
 	switch (prop->cm_local_type) {
 	case cm_tdbush_property_char_p:
 		record += prop->cm_offset;
-		pp = (const char **) record;
-		if (*pp != NULL) {
-			p = *pp;
-			if ((p == NULL) || (strlen(p) == 0)) {
-				if (prop->cm_bus_type == cm_tdbush_property_path) {
-					p = NULL;
-				}
-				if (prop->cm_bus_type == cm_tdbush_property_string) {
-					p = "";
-				}
-			}
-			if (p != NULL) {
-				if (prop->cm_bus_type == cm_tdbush_property_path) {
-					cm_tdbusm_set_p(rep, p);
-				}
-				if (prop->cm_bus_type == cm_tdbush_property_string) {
-					cm_tdbusm_set_s(rep, p);
-				}
-			}
-		}
+		wpp = (char **) record;
+		value.s = *wpp;
 		break;
 	case cm_tdbush_property_char_pp:
 		record += prop->cm_offset;
-		ppp = (const char ***) record;
-		cm_tdbusm_set_as(rep, *ppp);
+		wppp = (char ***) record;
+		value.as = *wppp;
+		value.ass = *wppp;
 		break;
 	case cm_tdbush_property_time_t:
 		record += prop->cm_offset;
 		tp = (time_t *) record;
-		cm_tdbusm_set_n(rep, (long) *tp);
+		value.n = *tp;
 		break;
 	case cm_tdbush_property_comma_list:
 		record += prop->cm_offset;
 		pp = (const char **) record;
 		wpp = eku_splitv(record - prop->cm_offset, *pp);
-		pp = (const char **) wpp;
 		if (wpp != NULL) {
-			cm_tdbusm_set_as(rep, pp);
+			value.as = wpp;
 		}
 		break;
 	case cm_tdbush_property_special:
@@ -3813,36 +4707,64 @@ cm_tdbush_property_get(DBusConnection *conn,
 		case cm_tdbush_property_path:
 			p = (*(prop->cm_read_string))(ctx, parent,
 						      record, property);
-			/* libdbus won't allow us to set NULL or empty paths */
-			if ((p != NULL) && (strlen(p) > 0)) {
-				cm_tdbusm_set_p(rep, p);
-			}
+			value.s = (char *) p;
 			break;
 		case cm_tdbush_property_string:
 			p = (*(prop->cm_read_string))(ctx, parent,
 						      record, property);
-			/* libdbus won't allow us to set NULL strings */
-			if (p == NULL) {
-				p = "";
-			}
-			cm_tdbusm_set_s(rep, p);
+			value.s = (char *) p;
 			break;
 		case cm_tdbush_property_strings:
 			pp = (*(prop->cm_read_strings))(ctx, parent,
 							record, property);
-			cm_tdbusm_set_as(rep, pp);
+			value.as = (char **) pp;
+			break;
+		case cm_tdbush_property_string_pairs:
+			pp = (*(prop->cm_read_string_pairs))(ctx, parent,
+							     record, property);
+			value.ass = (char **) pp;
 			break;
 		case cm_tdbush_property_boolean:
 			b = (*(prop->cm_read_boolean))(ctx, parent,
 						       record, property);
-			cm_tdbusm_set_b(rep, b);
+			value.b = b;
 			break;
 		case cm_tdbush_property_number:
 			l = (*(prop->cm_read_number))(ctx, parent,
 						      record, property);
-			cm_tdbusm_set_n(rep, l);
+			value.n = l;
 			break;
 		}
+		break;
+	}
+	switch (prop->cm_bus_type) {
+	case cm_tdbush_property_path:
+		value_type = cm_tdbusm_dict_p;
+		if ((value.s != NULL) && (strlen(value.s) > 0)) {
+			cm_tdbusm_set_v(rep, value_type, &value);
+		}
+		break;
+	case cm_tdbush_property_string:
+		value_type = cm_tdbusm_dict_s;
+		if (value.s != NULL) {
+			cm_tdbusm_set_v(rep, value_type, &value);
+		}
+		break;
+	case cm_tdbush_property_strings:
+		value_type = cm_tdbusm_dict_as;
+		cm_tdbusm_set_v(rep, value_type, &value);
+		break;
+	case cm_tdbush_property_string_pairs:
+		value_type = cm_tdbusm_dict_ass;
+		cm_tdbusm_set_v(rep, value_type, &value);
+		break;
+	case cm_tdbush_property_boolean:
+		value_type = cm_tdbusm_dict_b;
+		cm_tdbusm_set_v(rep, value_type, &value);
+		break;
+	case cm_tdbush_property_number:
+		value_type = cm_tdbusm_dict_n;
+		cm_tdbusm_set_v(rep, value_type, &value);
 		break;
 	}
 	if (rep != NULL) {
@@ -3870,14 +4792,14 @@ cm_tdbush_property_set(DBusConnection *conn,
 	struct cm_tdbush_property *prop;
 	enum cm_tdbush_object_type type;
 	unsigned int i;
-	struct cm_store_entry *entry;
-	struct cm_store_ca *ca;
+	struct cm_store_entry *entry = NULL;
+	struct cm_store_ca *ca = NULL;
 	char *record, *wp, **wpp, ***wppp;
 	time_t *tp;
-	dbus_bool_t b;
-	long l;
 	DBusMessage *rep;
 	const char *properties[2];
+	enum cm_tdbusm_dict_value_type value_type;
+	union cm_tdbusm_variant v;
 
 	path = dbus_message_get_path(msg);
 	type = cm_tdbush_classify_path(ctx, path);
@@ -3921,7 +4843,8 @@ cm_tdbush_property_set(DBusConnection *conn,
 	}
 
 	parent = talloc_new(NULL);
-	if (cm_tdbusm_get_ss(msg, parent, &interface, &property) != 0) {
+	if (cm_tdbusm_get_ssv(msg, parent, &interface, &property,
+			      &value_type, &v) != 0) {
 		cm_log(1, "Error parsing arguments.\n");
 		talloc_free(parent);
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
@@ -3979,53 +4902,63 @@ cm_tdbush_property_set(DBusConnection *conn,
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 	}
 
-	/* Read the argument and set the data. */
+	/* Set the property. */
 	switch (prop->cm_local_type) {
 	case cm_tdbush_property_char_p:
-		if (cm_tdbusm_get_sss(msg, parent, &interface, &property,
-				      &wp) != 0) {
-			cm_log(1, "Error parsing arguments.\n");
-			dbus_message_unref(rep);
+		if (value_type == cm_tdbusm_dict_invalid) {
+			v.s = NULL;
+		} else
+		if ((value_type != cm_tdbusm_dict_s) &&
+		    (value_type != cm_tdbusm_dict_p)) {
+			cm_log(1, "Error: arguments type mismatch.\n");
 			talloc_free(parent);
 			return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 		}
 		record += prop->cm_offset;
 		wpp = (char **) record;
-		*wpp = maybe_strdup(record, wp);
+		*wpp = maybe_strdup(record - prop->cm_offset, v.s);
 		break;
 	case cm_tdbush_property_char_pp:
-		if (cm_tdbusm_get_ssas(msg, parent, &interface, &property,
-				       &wpp) != 0) {
-			cm_log(1, "Error parsing arguments.\n");
-			dbus_message_unref(rep);
+		if (value_type == cm_tdbusm_dict_invalid) {
+			wpp = NULL;
+		} else
+		if (value_type == cm_tdbusm_dict_as) {
+			wpp = v.as;
+		} else
+		if (value_type == cm_tdbusm_dict_ass) {
+			wpp = v.ass;
+		} else {
+			cm_log(1, "Error: arguments type mismatch.\n");
 			talloc_free(parent);
 			return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 		}
 		record += prop->cm_offset;
 		wppp = (char ***) record;
-		*wppp = maybe_strdupv(record, wpp);
+		*wppp = maybe_strdupv(record - prop->cm_offset, wpp);
 		break;
 	case cm_tdbush_property_time_t:
-		if (cm_tdbusm_get_ssn(msg, parent, &interface, &property,
-				      &l) != 0) {
-			cm_log(1, "Error parsing arguments.\n");
-			dbus_message_unref(rep);
+		if (value_type == cm_tdbusm_dict_invalid) {
+			v.n = 0;
+		} else
+		if (value_type != cm_tdbusm_dict_n) {
+			cm_log(1, "Error: arguments type mismatch.\n");
 			talloc_free(parent);
 			return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 		}
 		record += prop->cm_offset;
 		tp = (time_t *) record;
-		*tp = l;
+		*tp = v.n;
 		break;
 	case cm_tdbush_property_comma_list:
-		if (cm_tdbusm_get_ssas(msg, parent, &interface, &property,
-				       &wpp) != 0) {
-			cm_log(1, "Error parsing arguments.\n");
-			dbus_message_unref(rep);
+		if (value_type == cm_tdbusm_dict_invalid) {
+			v.as = NULL;
+		} else
+		if (value_type != cm_tdbusm_dict_as) {
+			cm_log(1, "Error: arguments type mismatch.\n");
 			talloc_free(parent);
 			return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 		}
-		wp = cm_submit_maybe_joinv(record, ",", wpp);
+		wp = cm_submit_maybe_joinv(record, ",", v.as);
 		record += prop->cm_offset;
 		wpp = (char **) record;
 		*wpp = maybe_strdup(record - prop->cm_offset, wp);
@@ -4034,49 +4967,67 @@ cm_tdbush_property_set(DBusConnection *conn,
 		switch (prop->cm_bus_type) {
 		case cm_tdbush_property_path:
 		case cm_tdbush_property_string:
-			if (cm_tdbusm_get_sss(msg, parent, &interface,
-					      &property, &wp) != 0) {
-				cm_log(1, "Error parsing arguments.\n");
-				dbus_message_unref(rep);
+			if (value_type == cm_tdbusm_dict_invalid) {
+				v.s = NULL;
+			} else
+			if ((value_type != cm_tdbusm_dict_s) &&
+			    (value_type != cm_tdbusm_dict_p)) {
+				cm_log(1, "Error: arguments type mismatch.\n");
 				talloc_free(parent);
 				return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 			}
 			(*(prop->cm_write_string))(ctx, parent,
-						   record, property, wp);
+						   record, property, v.s);
 			break;
 		case cm_tdbush_property_strings:
-			if (cm_tdbusm_get_ssas(msg, parent, &interface,
-					       &property, &wpp) != 0) {
-				cm_log(1, "Error parsing arguments.\n");
-				dbus_message_unref(rep);
+			if (value_type == cm_tdbusm_dict_invalid) {
+				v.as = NULL;
+			} else
+			if (value_type != cm_tdbusm_dict_as) {
+				cm_log(1, "Error: arguments type mismatch.\n");
 				talloc_free(parent);
 				return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 			}
 			(*(prop->cm_write_strings))(ctx, parent,
 						    record, property,
-						    (const char **) wpp);
+						    (const char **) v.as);
+			break;
+		case cm_tdbush_property_string_pairs:
+			if (value_type == cm_tdbusm_dict_invalid) {
+				v.ass = NULL;
+			} else
+			if (value_type != cm_tdbusm_dict_ass) {
+				cm_log(1, "Error: arguments type mismatch.\n");
+				talloc_free(parent);
+				return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+			}
+			(*(prop->cm_write_string_pairs))(ctx, parent,
+							 record, property,
+							 (const char **) v.ass);
 			break;
 		case cm_tdbush_property_boolean:
-			if (cm_tdbusm_get_ssb(msg, parent, &interface,
-					      &property, &b) != 0) {
-				cm_log(1, "Error parsing arguments.\n");
-				dbus_message_unref(rep);
+			if (value_type == cm_tdbusm_dict_invalid) {
+				v.b = FALSE;
+			} else
+			if (value_type != cm_tdbusm_dict_b) {
+				cm_log(1, "Error: arguments type mismatch.\n");
 				talloc_free(parent);
 				return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 			}
 			(*(prop->cm_write_boolean))(ctx, parent,
-						    record, property, b);
+						    record, property, v.b);
 			break;
 		case cm_tdbush_property_number:
-			if (cm_tdbusm_get_ssn(msg, parent, &interface,
-					      &property, &l) != 0) {
-				cm_log(1, "Error parsing arguments.\n");
-				dbus_message_unref(rep);
+			if (value_type == cm_tdbusm_dict_invalid) {
+				v.n = 0;
+			} else
+			if (value_type != cm_tdbusm_dict_n) {
+				cm_log(1, "Error: arguments type mismatch.\n");
 				talloc_free(parent);
 				return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 			}
 			(*(prop->cm_write_number))(ctx, parent,
-						   record, property, l);
+						   record, property, v.n);
 			break;
 		}
 		break;
@@ -4085,11 +5036,31 @@ cm_tdbush_property_set(DBusConnection *conn,
 		dbus_connection_send(conn, rep, NULL);
 		dbus_message_unref(rep);
 	}
-	talloc_free(parent);
+
+	switch (type) {
+	case cm_tdbush_object_type_none:
+	case cm_tdbush_object_type_parent_of_base:
+	case cm_tdbush_object_type_parent_of_requests:
+	case cm_tdbush_object_type_parent_of_cas:
+	case cm_tdbush_object_type_group_of_requests:
+	case cm_tdbush_object_type_group_of_cas:
+		/* Not reached, since we returned on these earlier. */
+		break;
+	case cm_tdbush_object_type_base:
+		break;
+	case cm_tdbush_object_type_ca:
+		cm_store_ca_save(ca);
+		break;
+	case cm_tdbush_object_type_request:
+		cm_store_entry_save(entry);
+		break;
+	}
 
 	properties[0] = prop->cm_name;
 	properties[1] = NULL;
 	cm_tdbush_property_emit_changed(ctx, path, interface, properties);
+
+	talloc_free(parent);
 
 	return DBUS_HANDLER_RESULT_HANDLED;
 }
@@ -4321,6 +5292,9 @@ cm_tdbush_property_get_all_or_changed(struct cm_context *ctx,
 			case cm_tdbush_property_strings:
 				dict[n].value_type = cm_tdbusm_dict_as;
 				break;
+			case cm_tdbush_property_string_pairs:
+				dict[n].value_type = cm_tdbusm_dict_ass;
+				break;
 			case cm_tdbush_property_boolean:
 				dict[n].value_type = cm_tdbusm_dict_b;
 				break;
@@ -4378,6 +5352,7 @@ cm_tdbush_property_get_all_or_changed(struct cm_context *ctx,
 				}
 				if ((ppp != NULL) && (*ppp != NULL)) {
 					dict[n].value.as = (char **) *ppp;
+					dict[n].value.ass = (char **) *ppp;
 					d[n] = &dict[n];
 					n++;
 				}
@@ -4480,6 +5455,28 @@ cm_tdbush_property_get_all_or_changed(struct cm_context *ctx,
 					}
 					if ((pp != NULL) && (*pp != NULL)) {
 						dict[n].value.as = (char **) pp;
+						d[n] = &dict[n];
+						n++;
+					}
+					break;
+				case cm_tdbush_property_string_pairs:
+					pp = (*(prop->cm_read_string_pairs))(ctx, parent,
+									     record,
+									     prop->cm_name);
+					if (old_record != NULL) {
+						/* if we have an old record,
+						 * compare its value to the
+						 * current one, and skip this
+						 * if they're "the same" */
+						old_pp = (*(prop->cm_read_string_pairs))(ctx, parent,
+											 old_record,
+											 prop->cm_name);
+						if (compare_strv(old_pp, pp) == 0) {
+							continue;
+						}
+					}
+					if ((pp != NULL) && (*pp != NULL)) {
+						dict[n].value.ass = (char **) pp;
 						d[n] = &dict[n];
 						n++;
 					}
@@ -4670,7 +5667,7 @@ cm_tdbush_iface_introspection(void)
 							 make_method("Introspect",
 								     cm_tdbush_introspect,
 								     make_method_arg("xml_data",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -4690,13 +5687,13 @@ cm_tdbush_iface_properties(void)
 							 make_method("Get",
 								     cm_tdbush_property_get,
 								     make_method_arg("interface_name",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("property_name",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("value",
-										     "v",
+										     DBUS_TYPE_VARIANT_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL))),
 								     NULL),
@@ -4704,13 +5701,13 @@ cm_tdbush_iface_properties(void)
 							 make_method("Set",
 								     cm_tdbush_property_set,
 								     make_method_arg("interface_name",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("property_name",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("value",
-										     "v",
+										     DBUS_TYPE_VARIANT_AS_STRING,
 										     cm_tdbush_method_arg_in,
 										     NULL))),
 								     NULL),
@@ -4718,21 +5715,30 @@ cm_tdbush_iface_properties(void)
 							 make_method("GetAll",
 								     cm_tdbush_property_get_all,
 								     make_method_arg("interface_name",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("props",
-										     "a{sv}",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING
+										     DBUS_TYPE_VARIANT_AS_STRING
+										     DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL)),
 								     NULL),
 				     make_interface_item(cm_tdbush_interface_signal,
 							 make_signal("PropertiesChanged",
 								     make_signal_arg("interface_name",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 								     make_signal_arg("changed_properties",
-										     "a{sv}",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING
+										     DBUS_TYPE_VARIANT_AS_STRING
+										     DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
 								     make_signal_arg("invalidated_properties",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     NULL)))),
 							 NULL)))));
 	}
@@ -4751,7 +5757,7 @@ cm_tdbush_iface_request(void)
 							 make_method("get_nickname",
 								     request_get_nickname,
 								     make_method_arg("nickname",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -4761,13 +5767,13 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_nickname),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_autorenew",
 								     request_get_autorenew,
 								     make_method_arg("enabled",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -4777,13 +5783,14 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       NULL, NULL, request_prop_get_autorenew, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, request_prop_get_autorenew, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_cert_data",
 								     request_get_cert_data,
 								     make_method_arg("pem",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -4793,39 +5800,52 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_cert),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       make_member_annotation("org.freedesktop.DBus.Property.EmitsChangedSignal",
 											      "true",
 											      NULL)),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_CERT_CHAIN,
+								       cm_tdbush_property_string_pairs,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_special,
+								       0,
+								       NULL, NULL, ca_prop_get_nickcerts, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_cert_info",
 								     request_get_cert_info,
 								     make_method_arg("issuer",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("serial_hex",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("subject",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("not_after",
-										     "x",
+										     DBUS_TYPE_INT64_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("email",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("dns",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("principal_names",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("key_usage",
-										     "x",
+										     DBUS_TYPE_INT64_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("extended_key_usage",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL))))))))),
 								     NULL),
@@ -4835,7 +5855,7 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_cert_issuer),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_SERIAL,
@@ -4843,7 +5863,7 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_cert_serial),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_SUBJECT,
@@ -4851,7 +5871,7 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_cert_subject),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_EMAIL,
@@ -4859,7 +5879,15 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_pp,
 								       offsetof(struct cm_store_entry, cm_cert_email),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_CERT_KU,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_entry, cm_cert_ku),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_EKU,
@@ -4867,7 +5895,7 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_comma_list,
 								       offsetof(struct cm_store_entry, cm_cert_eku),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_HOSTNAME,
@@ -4875,7 +5903,7 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_pp,
 								       offsetof(struct cm_store_entry, cm_cert_hostname),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_PRINCIPAL,
@@ -4883,13 +5911,13 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_pp,
 								       offsetof(struct cm_store_entry, cm_cert_principal),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_cert_last_checked",
 								     request_get_cert_last_checked,
 								     make_method_arg("date",
-										     "x",
+										     DBUS_TYPE_INT64_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -4899,19 +5927,19 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_time_t,
 								       offsetof(struct cm_store_entry, cm_last_need_notify_check),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_cert_storage_info",
 								     request_get_cert_storage_info,
 								     make_method_arg("type",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("location_or_nickname",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("nss_token",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL))),
 								     NULL),
@@ -4921,8 +5949,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_cert_location_type, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_cert_location_type, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_LOCATION_FILE,
@@ -4930,8 +5958,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_cert_location_file, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_cert_location_file, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_LOCATION_DATABASE,
@@ -4939,8 +5967,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_cert_location_database, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_cert_location_database, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_LOCATION_NICKNAME,
@@ -4948,8 +5976,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_cert_location_nickname, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_cert_location_nickname, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_LOCATION_TOKEN,
@@ -4957,14 +5985,14 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_cert_location_token, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_cert_location_token, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_csr_data",
 								     request_get_csr_data,
 								     make_method_arg("pem",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -4974,28 +6002,32 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_csr),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_csr_info",
 								     request_get_csr_info,
 								     make_method_arg("subject",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("email",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("dns",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("principal_names",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("key_usage",
-										     "x",
+										     DBUS_TYPE_INT64_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("extended_key_usage",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL)))))),
 								     NULL),
@@ -5005,8 +6037,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_readwrite,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_key_pin, NULL, NULL, NULL,
-								       request_prop_set_key_pin, NULL, NULL, NULL,
+								       request_prop_get_key_pin, NULL, NULL, NULL, NULL,
+								       request_prop_set_key_pin, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_KEY_PIN_FILE,
@@ -5014,54 +6046,128 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_readwrite,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_key_pin_file, NULL, NULL, NULL,
-								       request_prop_set_key_pin_file, NULL, NULL, NULL,
+								       request_prop_get_key_pin_file, NULL, NULL, NULL, NULL,
+								       request_prop_set_key_pin_file, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_TEMPLATE_SUBJECT,
 								       cm_tdbush_property_string,
-								       cm_tdbush_property_read,
+								       cm_tdbush_property_readwrite,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_template_subject),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_TEMPLATE_EMAIL,
 								       cm_tdbush_property_strings,
-								       cm_tdbush_property_read,
+								       cm_tdbush_property_readwrite,
 								       cm_tdbush_property_char_pp,
 								       offsetof(struct cm_store_entry, cm_template_email),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_TEMPLATE_KU,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_entry, cm_template_ku),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_TEMPLATE_EKU,
 								       cm_tdbush_property_strings,
-								       cm_tdbush_property_read,
+								       cm_tdbush_property_readwrite,
 								       cm_tdbush_property_comma_list,
 								       offsetof(struct cm_store_entry, cm_template_eku),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_TEMPLATE_HOSTNAME,
 								       cm_tdbush_property_strings,
-								       cm_tdbush_property_read,
+								       cm_tdbush_property_readwrite,
 								       cm_tdbush_property_char_pp,
 								       offsetof(struct cm_store_entry, cm_template_hostname),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_TEMPLATE_PRINCIPAL,
 								       cm_tdbush_property_strings,
-								       cm_tdbush_property_read,
+								       cm_tdbush_property_readwrite,
 								       cm_tdbush_property_char_pp,
 								       offsetof(struct cm_store_entry, cm_template_principal),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_TEMPLATE_IP_ADDRESS,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_template_ipaddress),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_TEMPLATE_IS_CA,
+								       cm_tdbush_property_boolean,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_special,
+								       0,
+								       NULL, NULL, NULL, request_prop_get_template_is_ca, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_TEMPLATE_CA_PATH_LENGTH,
+								       cm_tdbush_property_number,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_special,
+								       0,
+								       NULL, NULL, NULL, NULL, request_prop_get_template_ca_path_length,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_TEMPLATE_OCSP,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_template_ocsp_location),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_TEMPLATE_CRL_DP,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_template_crl_distribution_point),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_TEMPLATE_FRESHEST_CRL,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_template_freshest_crl),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_TEMPLATE_NS_COMMENT,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_entry, cm_template_ns_comment),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_TEMPLATE_PROFILE,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_entry, cm_template_profile),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_key_pin",
 								     request_get_key_pin,
 								     make_method_arg("pin",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5069,7 +6175,7 @@ cm_tdbush_iface_request(void)
 							 make_method("get_key_pin_file",
 								     request_get_key_pin_file,
 								     make_method_arg("pin_file",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5077,13 +6183,13 @@ cm_tdbush_iface_request(void)
 							 make_method("get_key_storage_info",
 								     request_get_key_storage_info,
 								     make_method_arg("type",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("location_or_nickname",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("nss_token",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL))),
 								     NULL),
@@ -5093,8 +6199,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_key_location_type, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_key_location_type, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_KEY_LOCATION_FILE,
@@ -5102,8 +6208,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_key_location_file, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_key_location_file, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_KEY_LOCATION_DATABASE,
@@ -5111,8 +6217,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_key_location_database, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_key_location_database, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_KEY_LOCATION_NICKNAME,
@@ -5120,8 +6226,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_key_location_nickname, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_key_location_nickname, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_KEY_LOCATION_TOKEN,
@@ -5129,17 +6235,17 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_key_location_token, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_key_location_token, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_key_type_and_size",
 								     request_get_key_type_and_size,
 								     make_method_arg("type",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("size",
-										     "x",
+										     DBUS_TYPE_INT64_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL)),
 								     NULL),
@@ -5149,8 +6255,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_key_type, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_key_type, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_KEY_SIZE,
@@ -5158,14 +6264,14 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       NULL, NULL, NULL, request_prop_get_key_size,
-								       NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, request_prop_get_key_size,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_monitoring",
 								     request_get_monitoring,
 								     make_method_arg("enabled",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5175,16 +6281,17 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       NULL, NULL, request_prop_get_monitoring, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, request_prop_get_monitoring, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_notification_info",
 								     request_get_notification_info,
 								     make_method_arg("method",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("destination",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL)),
 								     NULL),
@@ -5194,8 +6301,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_notification_type, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_notification_type, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_NOTIFICATION_SYSLOG_PRIORITY,
@@ -5203,8 +6310,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_notification_syslog, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_notification_syslog, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_NOTIFICATION_EMAIL,
@@ -5212,8 +6319,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_notification_email, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_notification_email, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_NOTIFICATION_COMMAND,
@@ -5221,17 +6328,17 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_notification_command, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_notification_command, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_status",
 								     request_get_status,
 								     make_method_arg("state",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("blocked",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL)),
 								     NULL),
@@ -5241,8 +6348,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_status, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_status, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_STUCK,
@@ -5250,14 +6357,14 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       NULL, NULL, request_prop_get_stuck, NULL,
-								       NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, request_prop_get_stuck, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_ca",
 								     request_get_ca,
 								     make_method_arg("name",
-										     "o",
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5267,22 +6374,70 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_special,
 								       0,
-								       request_prop_get_ca, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       request_prop_get_ca, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CA_PROFILE,
 								       cm_tdbush_property_string,
-								       cm_tdbush_property_read,
+								       cm_tdbush_property_readwrite,
 								       cm_tdbush_property_char_p,
-								       offsetof(struct cm_store_entry, cm_ca_profile),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       offsetof(struct cm_store_entry, cm_template_profile),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_ROOT_CERT_FILES,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_root_cert_store_files),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_ROOT_CERT_FILES,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_other_root_cert_store_files),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_CERT_FILES,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_other_cert_store_files),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_ROOT_CERT_NSSDBS,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_root_cert_store_nssdbs),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_other_root_cert_store_nssdbs),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_CERT_NSSDBS,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_entry, cm_other_cert_store_nssdbs),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_submitted_cookie",
 								     request_get_submitted_cookie,
 								     make_method_arg("cookie",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5292,13 +6447,13 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_ca_cookie),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_ca_error",
 								     request_get_ca_error,
 								     make_method_arg("text",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5308,14 +6463,14 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_ca_error),
-								       NULL, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_submitted_date",
 								     request_get_submitted_date,
 								     make_method_arg("date",
-										     "x",
+										     DBUS_TYPE_INT64_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5325,20 +6480,24 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_time_t,
 								       offsetof(struct cm_store_entry, cm_submitted),
-								       NULL, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("modify",
 								     request_modify,
 								     make_method_arg("updates",
-										     "a{sv}",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING
+										     DBUS_TYPE_VARIANT_AS_STRING
+										     DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("status",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("path",
-										     "o",
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL))),
 								     NULL),
@@ -5346,7 +6505,15 @@ cm_tdbush_iface_request(void)
 							 make_method("resubmit",
 								     request_resubmit,
 								     make_method_arg("working",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
+										     cm_tdbush_method_arg_out,
+										     NULL),
+								     NULL),
+				     make_interface_item(cm_tdbush_interface_method,
+							 make_method("refresh",
+								     request_refresh,
+								     make_method_arg("working",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5356,8 +6523,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_pre_certsave_command),
-								       NULL, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_PRESAVE_UID,
@@ -5365,8 +6532,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_pre_certsave_uid),
-								       NULL, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_POSTSAVE_COMMAND,
@@ -5374,8 +6541,8 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_post_certsave_command),
-								       NULL, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_CERT_POSTSAVE_UID,
@@ -5383,13 +6550,13 @@ cm_tdbush_iface_request(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_entry, cm_post_certsave_uid),
-								       NULL, NULL, NULL, NULL,
-								       NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_signal,
 							 make_signal(CM_DBUS_SIGNAL_REQUEST_CERT_SAVED,
 								     NULL),
-							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
 	}
 	return ret;
 }
@@ -5405,7 +6572,7 @@ cm_tdbush_iface_ca(void)
 							 make_method("get_nickname",
 								     ca_get_nickname,
 								     make_method_arg("nickname",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5415,13 +6582,21 @@ cm_tdbush_iface_ca(void)
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_p,
 								       offsetof(struct cm_store_ca, cm_nickname),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_AKA,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_ca, cm_ca_aka),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_is_default",
 								     ca_get_is_default,
 								     make_method_arg("default",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5431,14 +6606,14 @@ cm_tdbush_iface_ca(void)
 								       cm_tdbush_property_readwrite,
 								       cm_tdbush_property_special,
 								       0,
-								       NULL, NULL, ca_prop_get_is_default, NULL,
-								       NULL, NULL, ca_prop_set_is_default, NULL,
+								       NULL, NULL, NULL, ca_prop_get_is_default, NULL,
+								       NULL, NULL, NULL, ca_prop_set_is_default, NULL,
 								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_type",
 								     ca_get_type,
 								     make_method_arg("type",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5446,7 +6621,7 @@ cm_tdbush_iface_ca(void)
 							 make_method("get_serial",
 								     ca_get_serial,
 								     make_method_arg("serial_hex",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5454,27 +6629,197 @@ cm_tdbush_iface_ca(void)
 							 make_method("get_location",
 								     ca_get_location,
 								     make_method_arg("path",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_EXTERNAL_HELPER,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_special,
+								       0,
+								       ca_prop_get_external_helper, NULL, NULL, NULL, NULL,
+								       ca_prop_set_external_helper, NULL, NULL, NULL, NULL,
+								       NULL),
 				     make_interface_item(cm_tdbush_interface_method,
 							 make_method("get_issuer_names",
 								     ca_get_issuer_names,
 								     make_method_arg("names",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
+				     make_interface_item(cm_tdbush_interface_method,
+							 make_method("refresh",
+								     ca_refresh,
+								     make_method_arg("working",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
+										     cm_tdbush_method_arg_out,
+										     NULL),
+								     NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_CA_ERROR,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_ca, cm_ca_error),
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
 				     make_interface_item(cm_tdbush_interface_property,
 							 make_property(CM_DBUS_PROP_ISSUER_NAMES,
 								       cm_tdbush_property_strings,
 								       cm_tdbush_property_read,
 								       cm_tdbush_property_char_pp,
 								       offsetof(struct cm_store_ca, cm_ca_known_issuer_names),
-								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
 								       NULL),
-				     NULL))))))))));
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_ROOT_CERTS,
+								       cm_tdbush_property_string_pairs,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_special,
+								       0,
+								       NULL, NULL, ca_prop_get_nickcerts, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_ROOT_CERTS,
+								       cm_tdbush_property_string_pairs,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_special,
+								       0,
+								       NULL, NULL, ca_prop_get_nickcerts, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_CERTS,
+								       cm_tdbush_property_string_pairs,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_special,
+								       0,
+								       NULL, NULL, ca_prop_get_nickcerts, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_REQUIRED_ENROLL_ATTRIBUTES,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_ca, cm_ca_required_enroll_attributes),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_REQUIRED_RENEW_ATTRIBUTES,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_ca, cm_ca_required_renewal_attributes),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_SUPPORTED_PROFILES,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_ca, cm_ca_profiles),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_DEFAULT_PROFILE,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_ca, cm_ca_default_profile),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_ROOT_CERT_FILES,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_ca, cm_ca_root_cert_store_files),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_ROOT_CERT_FILES,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_ca, cm_ca_other_root_cert_store_files),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_CERT_FILES,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_ca, cm_ca_other_cert_store_files),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_ROOT_CERT_NSSDBS,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_ca, cm_ca_root_cert_store_nssdbs),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_ROOT_CERT_NSSDBS,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_ca, cm_ca_other_root_cert_store_nssdbs),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_OTHER_CERT_NSSDBS,
+								       cm_tdbush_property_strings,
+								       cm_tdbush_property_readwrite,
+								       cm_tdbush_property_char_pp,
+								       offsetof(struct cm_store_ca, cm_ca_other_cert_store_nssdbs),
+								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_CA_PRESAVE_COMMAND,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_ca, cm_ca_pre_save_command),
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_CA_PRESAVE_UID,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_ca, cm_ca_pre_save_uid),
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_CA_POSTSAVE_COMMAND,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_ca, cm_ca_post_save_command),
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     make_interface_item(cm_tdbush_interface_property,
+							 make_property(CM_DBUS_PROP_CA_POSTSAVE_UID,
+								       cm_tdbush_property_string,
+								       cm_tdbush_property_read,
+								       cm_tdbush_property_char_p,
+								       offsetof(struct cm_store_ca, cm_ca_post_save_uid),
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL, NULL, NULL, NULL, NULL,
+								       NULL),
+				     NULL)))))))))))))))))))))))))))))));
 	}
 	return ret;
 }
@@ -5490,19 +6835,20 @@ cm_tdbush_iface_base(void)
 							 make_method("add_known_ca",
 								     base_add_known_ca,
 								     make_method_arg("nickname",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("command",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("known_names",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("status",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("name",
-										     "o",
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL))))),
 								     NULL),
@@ -5510,13 +6856,17 @@ cm_tdbush_iface_base(void)
 							 make_method("add_request",
 								     base_add_request,
 								     make_method_arg("template",
-										     "a{sv}",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING
+										     DBUS_TYPE_VARIANT_AS_STRING
+										     DBUS_DICT_ENTRY_END_CHAR_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("status",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 								     make_method_arg("name",
-										     "o",
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL))),
 								     NULL),
@@ -5524,10 +6874,10 @@ cm_tdbush_iface_base(void)
 							 make_method("find_ca_by_nickname",
 								     base_find_ca_by_nickname,
 								     make_method_arg("nickname",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("ca",
-										     "o",
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL)),
 								     NULL),
@@ -5535,10 +6885,10 @@ cm_tdbush_iface_base(void)
 							 make_method("find_request_by_nickname",
 								     base_find_request_by_nickname,
 								     make_method_arg("nickname",
-										     "s",
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("request",
-										     "o",
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL)),
 								     NULL),
@@ -5546,7 +6896,8 @@ cm_tdbush_iface_base(void)
 							 make_method("get_known_cas",
 								     base_get_known_cas,
 								     make_method_arg("ca_list",
-										     "ao",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5554,7 +6905,8 @@ cm_tdbush_iface_base(void)
 							 make_method("get_requests",
 								     base_get_requests,
 								     make_method_arg("requests",
-										     "ao",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5562,7 +6914,8 @@ cm_tdbush_iface_base(void)
 							 make_method("get_supported_key_types",
 								     base_get_supported_key_types,
 								     make_method_arg("key_type_list",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5570,7 +6923,8 @@ cm_tdbush_iface_base(void)
 							 make_method("get_supported_key_storage",
 								     base_get_supported_key_storage,
 								     make_method_arg("key_storage_type_list",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5578,7 +6932,8 @@ cm_tdbush_iface_base(void)
 							 make_method("get_supported_cert_storage",
 								     base_get_supported_cert_storage,
 								     make_method_arg("cert_storage_type_list",
-										     "as",
+										     DBUS_TYPE_ARRAY_AS_STRING
+										     DBUS_TYPE_STRING_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL),
 								     NULL),
@@ -5586,10 +6941,10 @@ cm_tdbush_iface_base(void)
 							 make_method("remove_known_ca",
 								     base_remove_known_ca,
 								     make_method_arg("ca",
-										     "o",
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("status",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL)),
 								     NULL),
@@ -5597,10 +6952,10 @@ cm_tdbush_iface_base(void)
 							 make_method("remove_request",
 								     base_remove_request,
 								     make_method_arg("request",
-										     "o",
+										     DBUS_TYPE_OBJECT_PATH_AS_STRING,
 										     cm_tdbush_method_arg_in,
 								     make_method_arg("status",
-										     "b",
+										     DBUS_TYPE_BOOLEAN_AS_STRING,
 										     cm_tdbush_method_arg_out,
 										     NULL)),
 								     NULL),
@@ -5709,7 +7064,10 @@ struct cm_tdbush_pending_call {
 				   struct cm_context *ctx);
 	dbus_bool_t cm_know_uid; /* GetConnectionUnixUser replied? */
 	dbus_uint32_t cm_pending_uid; /* pending GetConnectionUnixUser call */
+	dbus_bool_t cm_know_pid; /* GetConnectionUnixProcessID replied? */
+	dbus_uint32_t cm_pending_pid; /* pending GetConnectionUnixProcessID call */
 	uid_t cm_uid;
+	pid_t cm_pid;
 	struct cm_tdbush_pending_call *cm_next;
 } *cm_pending_calls;
 
@@ -5732,6 +7090,9 @@ cm_tdbush_handle_method_call(DBusConnection *conn, DBusMessage *msg,
 	pending.cm_method = dbus_message_get_member(pending.cm_msg);
 	pending.cm_type = cm_tdbush_classify_path(ctx, pending.cm_path);
 	pending.cm_know_uid = FALSE;
+	pending.cm_uid = (uid_t) -1;
+	pending.cm_know_pid = FALSE;
+	pending.cm_pid = (pid_t) -1;
 	for (i = 0;
 	     i < sizeof(cm_tdbush_object_type_map) / sizeof(cm_tdbush_object_type_map[i]);
 	     i++) {
@@ -5757,6 +7118,7 @@ cm_tdbush_handle_method_call(DBusConnection *conn, DBusMessage *msg,
 			pending.cm_fn = meth->cm_fn;
 			tmp = talloc_ptrtype(NULL, tmp);
 			if (tmp != NULL) {
+				memset(tmp, 0, sizeof(*tmp));
 				/* we need to know who this is */
 				msg = dbus_message_new_method_call(DBUS_SERVICE_DBUS,
 								   DBUS_PATH_DBUS,
@@ -5764,21 +7126,39 @@ cm_tdbush_handle_method_call(DBusConnection *conn, DBusMessage *msg,
 								   "GetConnectionUnixUser");
 				if (msg != NULL) {
 					cm_tdbusm_set_s(msg, dbus_message_get_sender(pending.cm_msg));
-					if (dbus_connection_send(conn, msg,
-								 &pending.cm_pending_uid)) {
-						*tmp = pending;
-						tmp->cm_next = cm_pending_calls;
-						cm_pending_calls = tmp;
-						cm_reset_timeout(ctx);
-						cm_log(4, "Pending GetConnectionUnixUser serial %lu\n",
-						       (unsigned long) pending.cm_pending_uid);
-						dbus_message_unref(msg);
-						cm_reset_timeout(ctx);
-						return DBUS_HANDLER_RESULT_HANDLED;
+					if (!dbus_connection_send(conn, msg,
+								  &pending.cm_pending_uid)) {
+						cm_log(4, "Error calling GetConnectionUnixUser\n");
+						talloc_free(tmp);
+						tmp = NULL;
 					}
 					dbus_message_unref(msg);
 				}
-				talloc_free(tmp);
+				msg = dbus_message_new_method_call(DBUS_SERVICE_DBUS,
+								   DBUS_PATH_DBUS,
+								   DBUS_INTERFACE_DBUS,
+								   "GetConnectionUnixProcessID");
+				if (msg != NULL) {
+					cm_tdbusm_set_s(msg, dbus_message_get_sender(pending.cm_msg));
+					if (!dbus_connection_send(conn, msg,
+								  &pending.cm_pending_pid)) {
+						cm_log(4, "Error calling GetConnectionUnixProcessID\n");
+						talloc_free(tmp);
+						tmp = NULL;
+					}
+					dbus_message_unref(msg);
+				}
+				if (tmp != NULL) {
+					*tmp = pending;
+					tmp->cm_next = cm_pending_calls;
+					cm_pending_calls = tmp;
+					cm_log(4, "Pending GetConnectionUnixUser serial %lu\n",
+					       (unsigned long) pending.cm_pending_uid);
+					cm_log(4, "Pending GetConnectionUnixProcessID serial %lu\n",
+					       (unsigned long) pending.cm_pending_pid);
+					cm_reset_timeout(ctx);
+					return DBUS_HANDLER_RESULT_HANDLED;
+				}
 			}
 			dbus_message_unref(pending.cm_msg);
 			cm_reset_timeout(ctx);
@@ -5800,7 +7180,7 @@ cm_tdbush_handle_method_return(DBusConnection *conn, DBusMessage *msg,
 	struct cm_tdbush_pending_call **p, *call, *next;
 	dbus_uint32_t serial;
 	struct cm_client_info client_info;
-	long uid;
+	long uid, pid;
 
 	serial = dbus_message_get_reply_serial(msg);
 	/* figure out which of our pending calls this goes with */
@@ -5821,20 +7201,34 @@ cm_tdbush_handle_method_return(DBusConnection *conn, DBusMessage *msg,
 			call->cm_know_uid = TRUE;
 			break;
 		}
+		if (call->cm_pending_pid == serial) {
+			if (cm_tdbusm_get_n(msg, call, &pid) != 0) {
+				cm_log(1, "Result error from GetConnectionUnixProcessID().\n");
+				dbus_message_unref(call->cm_msg);
+				talloc_free(call);
+				*p = next;
+				return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+			}
+			call->cm_pid = pid;
+			call->cm_know_pid = TRUE;
+			break;
+		}
 	}
 	if ((p == NULL) || (*p == NULL)) {
 		return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 	}
 	/* do we know enough now? if not, we're done here */
-	if (!call->cm_know_uid) {
+	if (!call->cm_know_uid || !call->cm_know_pid) {
 		return DBUS_HANDLER_RESULT_HANDLED;
 	}
 
 	/* actually run the method */
-	cm_log(4, "User ID %lu called %s:%s.%s.\n",
-	       uid, call->cm_path, call->cm_interface, call->cm_method);
+	cm_log(4, "User ID %lu PID %lu called %s:%s.%s.\n",
+	       (unsigned long) call->cm_uid, (unsigned long) call->cm_pid,
+	       call->cm_path, call->cm_interface, call->cm_method);
 
 	client_info.uid = call->cm_uid;
+	client_info.pid = call->cm_pid;
 	(*call->cm_fn)(conn, call->cm_msg, &client_info, ctx);
 
 	/* remove the pending call record */

@@ -7,9 +7,11 @@ ipa-getcert
  ipa-getcert request [options]
  ipa-getcert resubmit [options]
  ipa-getcert start-tracking [options]
+ ipa-getcert status [options]
  ipa-getcert stop-tracking [options]
  ipa-getcert list [options]
  ipa-getcert list-cas [options]
+ ipa-getcert refresh-cas [options]
 
 .SH DESCRIPTION
 The \fIipa-getcert\fR tool issues requests to a @CM_DBUS_NAME@
@@ -28,6 +30,11 @@ The \fIipa-getcert\fR tool behaves identically to the generic
 \fIgetcert\fR tool when it is used with the \fB-c
 \fI@CM_IPA_CA_NAME@\fR option.
 
+\fBcertmonger\fR supports retrieving trusted certificates from IPA CAs.  See
+\fBgetcert-request\fR(1) and \fBgetcert-resubmit\fR(1) for information about
+using the \fB-F\fR and \fB-a\fR options to specify where those certificates
+should be stored.
+
 .SH BUGS
 Please file tickets for any that you find at https://fedorahosted.org/certmonger/
 
@@ -35,9 +42,14 @@ Please file tickets for any that you find at https://fedorahosted.org/certmonger
 \fBcertmonger\fR(8)
 \fBgetcert-list\fR(1)
 \fBgetcert-list-cas\fR(1)
+\fBgetcert-refresh\fR(1)
+\fBgetcert-refresh-ca\fR(1)
 \fBgetcert-request\fR(1)
 \fBgetcert-resubmit\fR(1)
 \fBgetcert-start-tracking\fR(1)
+\fBgetcert-status\fR(1)
 \fBgetcert-stop-tracking\fR(1)
 \fBcertmonger-certmaster-submit\fR(8)
 \fBcertmonger-ipa-submit\fR(8)
+\fBcertmonger-local-submit\fR(8)
+\fBcertmonger_selinux\fR(8)
