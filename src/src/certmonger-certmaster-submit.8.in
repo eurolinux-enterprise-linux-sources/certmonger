@@ -31,7 +31,7 @@ if its certificate was issued by the CA whose certificate is in the named file.
 .TP
 \fB\-C\fR capath
 Submit the request over HTTPS instead of HTTP, and only trust the server
-if its certificate was issued by a CA whose certificate is in a file in 
+if its certificate was issued by a CA whose certificate is in a file in
 the named directory.
 
 .SH EXIT STATUS
@@ -73,13 +73,20 @@ Please file tickets for any that you find at https://fedorahosted.org/certmonger
 .SH SEE ALSO
 \fBcertmonger\fR(8)
 \fBgetcert\fR(1)
-\fBgetcert-list\fR(1)
+\fBgetcert-add-ca\fR(1)
+\fBgetcert-add-scep-ca\fR(1)
 \fBgetcert-list-cas\fR(1)
+\fBgetcert-list\fR(1)
+\fBgetcert-modify-ca\fR(1)
 \fBgetcert-refresh-ca\fR(1)
+\fBgetcert-remove-ca\fR(1)
 \fBgetcert-resubmit\fR(1)
 \fBgetcert-start-tracking\fR(1)
 \fBgetcert-status\fR(1)
 \fBgetcert-stop-tracking\fR(1)
 \fBcertmonger-dogtag-ipa-renew-agent-submit\fR(8)
+\fBcertmonger-dogtag-submit\fR(8)
 \fBcertmonger-ipa-submit\fR(8)
+\fBcertmonger-local-submit\fR(8)
+\fBcertmonger-scep-submit\fR(8)
 \fBcertmonger_selinux\fR(8)

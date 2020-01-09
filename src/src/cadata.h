@@ -28,6 +28,8 @@ struct cm_cadata_state *cm_cadata_start_profiles(struct cm_store_ca *ca);
 struct cm_cadata_state *cm_cadata_start_default_profile(struct cm_store_ca *ca);
 struct cm_cadata_state *cm_cadata_start_enroll_reqs(struct cm_store_ca *ca);
 struct cm_cadata_state *cm_cadata_start_renew_reqs(struct cm_store_ca *ca);
+struct cm_cadata_state *cm_cadata_start_capabilities(struct cm_store_ca *ca);
+struct cm_cadata_state *cm_cadata_start_encryption_certs(struct cm_store_ca *ca);
 
 /* Check if the data has been retrieved. */
 int cm_cadata_ready(struct cm_cadata_state *state);
@@ -49,6 +51,9 @@ int cm_cadata_unreachable(struct cm_cadata_state *state);
 
 /* Check if we're missing some configuration. */
 int cm_cadata_unconfigured(struct cm_cadata_state *state);
+
+/* Check if the server didn't support that. */
+int cm_cadata_rejected(struct cm_cadata_state *state);
 
 /* Check if the helper didn't support that. */
 int cm_cadata_unsupported(struct cm_cadata_state *state);

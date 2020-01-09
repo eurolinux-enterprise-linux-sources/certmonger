@@ -15,10 +15,15 @@ Request ID 'Buddy':
 	principal name: host/localhost@LOCALHOST
 	key usage: digitalSignature,dataEncipherment
 	eku: id-kp-serverAuth
-	pre-save command: 
-	post-save command: 
+	certificate template/profile: SomeProfileName
+	pre-save command: echo Pre
+	post-save command: echo Post
 	track: yes
 	auto-renew: yes
+CA 'local':
+	is-default: no
+	ca-type: EXTERNAL
+	helper-location: $tmpdir/local-submit
 CA 'SelfSign':
 	is-default: no
 	ca-type: INTERNAL:SELF
@@ -35,10 +40,6 @@ CA 'dogtag-ipa-renew-agent':
 	is-default: no
 	ca-type: EXTERNAL
 	helper-location: $libexecdir/dogtag-ipa-renew-agent-submit
-CA 'local':
-	is-default: no
-	ca-type: EXTERNAL
-	helper-location: $libexecdir/local-submit
 
 [[ API ]]
 [ simpleprop.py ]
@@ -273,6 +274,8 @@ OK
   <property name="issuer" type="s" access="read"/>
   <property name="serial" type="s" access="read"/>
   <property name="subject" type="s" access="read"/>
+  <property name="not-valid-before" type="x" access="read"/>
+  <property name="not-valid-after" type="x" access="read"/>
   <property name="email" type="as" access="read"/>
   <property name="ku" type="s" access="read"/>
   <property name="eku" type="as" access="read"/>
@@ -320,6 +323,8 @@ OK
   <property name="template-freshest-crl" type="as" access="readwrite"/>
   <property name="template-ns-comment" type="s" access="readwrite"/>
   <property name="template-profile" type="s" access="readwrite"/>
+  <property name="template-challenge-password" type="s" access="readwrite"/>
+  <property name="template-challenge-password-file" type="s" access="readwrite"/>
   <method name="get_key_pin">
    <arg name="pin" type="s" direction="out"/>
   </method>
@@ -364,7 +369,7 @@ OK
    <arg name="name" type="o" direction="out"/>
   </method>
   <property name="ca" type="o" access="read"/>
-  <property name="ca-profile" type="s" access="readwrite"/>
+  <property name="ca-profile" type="s" access="read"/>
   <property name="root-cert-files" type="as" access="read"/>
   <property name="root-other-cert-files" type="as" access="read"/>
   <property name="other-cert-files" type="as" access="read"/>
@@ -450,7 +455,7 @@ recently
 (dbus.String(u'MONITORING'), dbus.Boolean(False))
 
 [ /org/fedorahosted/certmonger/requests/Request2: org.fedorahosted.certmonger.request.get_ca ]
-/org/fedorahosted/certmonger/cas/CA5
+/org/fedorahosted/certmonger/cas/CA1
 
 [ /org/fedorahosted/certmonger/requests/Request2: org.fedorahosted.certmonger.request.get_submitted_cookie ]
 None
@@ -555,25 +560,29 @@ modify
   <property name="ca-presave-uid" type="s" access="read"/>
   <property name="ca-postsave-command" type="s" access="read"/>
   <property name="ca-postsave-uid" type="s" access="read"/>
+  <property name="scep-ca-identifier" type="s" access="readwrite"/>
+  <property name="scep-ca-capabilities" type="as" access="read"/>
+  <property name="scep-ra-cert" type="s" access="read"/>
+  <property name="scep-ca-cert" type="s" access="read"/>
+  <property name="scep-other-certs" type="s" access="read"/>
  </interface>
 </node>
 
 [ /org/fedorahosted/certmonger/cas/CA1: org.fedorahosted.certmonger.ca.get_nickname ]
-SelfSign
+local
 
 [ /org/fedorahosted/certmonger/cas/CA1: org.fedorahosted.certmonger.ca.get_is_default ]
 0
 
 [ /org/fedorahosted/certmonger/cas/CA1: org.fedorahosted.certmonger.ca.get_type ]
-INTERNAL:SELF
+EXTERNAL
 
 [ /org/fedorahosted/certmonger/cas/CA1: org.fedorahosted.certmonger.ca.get_serial ]
-01
+None
 
 [ /org/fedorahosted/certmonger/cas/CA1: org.fedorahosted.certmonger.ca.get_location ]
+$tmpdir/local-submit
 
-
-/org/fedorahosted/certmonger/cas/CA1: warning: property org.fedorahosted.certmonger.ca.external-helper not settable on this object
 [ /org/fedorahosted/certmonger/cas/CA1: org.fedorahosted.certmonger.ca.get_issuer_names ]
 dbus.Array([], signature=dbus.Signature('s'))
 
@@ -656,30 +665,37 @@ dbus.Array([], signature=dbus.Signature('s'))
   <property name="ca-presave-uid" type="s" access="read"/>
   <property name="ca-postsave-command" type="s" access="read"/>
   <property name="ca-postsave-uid" type="s" access="read"/>
+  <property name="scep-ca-identifier" type="s" access="readwrite"/>
+  <property name="scep-ca-capabilities" type="as" access="read"/>
+  <property name="scep-ra-cert" type="s" access="read"/>
+  <property name="scep-ca-cert" type="s" access="read"/>
+  <property name="scep-other-certs" type="s" access="read"/>
  </interface>
 </node>
 
 [ /org/fedorahosted/certmonger/cas/CA2: org.fedorahosted.certmonger.ca.get_nickname ]
-IPA
+SelfSign
 
 [ /org/fedorahosted/certmonger/cas/CA2: org.fedorahosted.certmonger.ca.get_is_default ]
 0
 
 [ /org/fedorahosted/certmonger/cas/CA2: org.fedorahosted.certmonger.ca.get_type ]
-EXTERNAL
+INTERNAL:SELF
 
 [ /org/fedorahosted/certmonger/cas/CA2: org.fedorahosted.certmonger.ca.get_serial ]
-None
+01
 
 [ /org/fedorahosted/certmonger/cas/CA2: org.fedorahosted.certmonger.ca.get_location ]
-$libexecdir/ipa-submit
 
+
+/org/fedorahosted/certmonger/cas/CA2: warning: property org.fedorahosted.certmonger.ca.external-helper not settable on this object
 [ /org/fedorahosted/certmonger/cas/CA2: org.fedorahosted.certmonger.ca.get_issuer_names ]
 dbus.Array([], signature=dbus.Signature('s'))
 
 [ /org/fedorahosted/certmonger/cas/CA2: org.fedorahosted.certmonger.ca.refresh ]
 1
 
+/org/fedorahosted/certmonger/cas/CA2: warning: property org.fedorahosted.certmonger.ca.scep-ca-identifier not settable on this object
 [ /org/fedorahosted/certmonger/cas/CA3: org.freedesktop.DBus.Introspectable.Introspect ]
 <!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
 "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
@@ -756,11 +772,16 @@ dbus.Array([], signature=dbus.Signature('s'))
   <property name="ca-presave-uid" type="s" access="read"/>
   <property name="ca-postsave-command" type="s" access="read"/>
   <property name="ca-postsave-uid" type="s" access="read"/>
+  <property name="scep-ca-identifier" type="s" access="readwrite"/>
+  <property name="scep-ca-capabilities" type="as" access="read"/>
+  <property name="scep-ra-cert" type="s" access="read"/>
+  <property name="scep-ca-cert" type="s" access="read"/>
+  <property name="scep-other-certs" type="s" access="read"/>
  </interface>
 </node>
 
 [ /org/fedorahosted/certmonger/cas/CA3: org.fedorahosted.certmonger.ca.get_nickname ]
-certmaster
+IPA
 
 [ /org/fedorahosted/certmonger/cas/CA3: org.fedorahosted.certmonger.ca.get_is_default ]
 0
@@ -772,7 +793,7 @@ EXTERNAL
 None
 
 [ /org/fedorahosted/certmonger/cas/CA3: org.fedorahosted.certmonger.ca.get_location ]
-$libexecdir/certmaster-submit
+$libexecdir/ipa-submit
 
 [ /org/fedorahosted/certmonger/cas/CA3: org.fedorahosted.certmonger.ca.get_issuer_names ]
 dbus.Array([], signature=dbus.Signature('s'))
@@ -856,11 +877,16 @@ dbus.Array([], signature=dbus.Signature('s'))
   <property name="ca-presave-uid" type="s" access="read"/>
   <property name="ca-postsave-command" type="s" access="read"/>
   <property name="ca-postsave-uid" type="s" access="read"/>
+  <property name="scep-ca-identifier" type="s" access="readwrite"/>
+  <property name="scep-ca-capabilities" type="as" access="read"/>
+  <property name="scep-ra-cert" type="s" access="read"/>
+  <property name="scep-ca-cert" type="s" access="read"/>
+  <property name="scep-other-certs" type="s" access="read"/>
  </interface>
 </node>
 
 [ /org/fedorahosted/certmonger/cas/CA4: org.fedorahosted.certmonger.ca.get_nickname ]
-dogtag-ipa-renew-agent
+certmaster
 
 [ /org/fedorahosted/certmonger/cas/CA4: org.fedorahosted.certmonger.ca.get_is_default ]
 0
@@ -872,7 +898,7 @@ EXTERNAL
 None
 
 [ /org/fedorahosted/certmonger/cas/CA4: org.fedorahosted.certmonger.ca.get_location ]
-$libexecdir/dogtag-ipa-renew-agent-submit
+$libexecdir/certmaster-submit
 
 [ /org/fedorahosted/certmonger/cas/CA4: org.fedorahosted.certmonger.ca.get_issuer_names ]
 dbus.Array([], signature=dbus.Signature('s'))
@@ -956,11 +982,16 @@ dbus.Array([], signature=dbus.Signature('s'))
   <property name="ca-presave-uid" type="s" access="read"/>
   <property name="ca-postsave-command" type="s" access="read"/>
   <property name="ca-postsave-uid" type="s" access="read"/>
+  <property name="scep-ca-identifier" type="s" access="readwrite"/>
+  <property name="scep-ca-capabilities" type="as" access="read"/>
+  <property name="scep-ra-cert" type="s" access="read"/>
+  <property name="scep-ca-cert" type="s" access="read"/>
+  <property name="scep-other-certs" type="s" access="read"/>
  </interface>
 </node>
 
 [ /org/fedorahosted/certmonger/cas/CA5: org.fedorahosted.certmonger.ca.get_nickname ]
-local
+dogtag-ipa-renew-agent
 
 [ /org/fedorahosted/certmonger/cas/CA5: org.fedorahosted.certmonger.ca.get_is_default ]
 0
@@ -972,7 +1003,7 @@ EXTERNAL
 None
 
 [ /org/fedorahosted/certmonger/cas/CA5: org.fedorahosted.certmonger.ca.get_location ]
-$libexecdir/local-submit
+$libexecdir/dogtag-ipa-renew-agent-submit
 
 [ /org/fedorahosted/certmonger/cas/CA5: org.fedorahosted.certmonger.ca.get_issuer_names ]
 dbus.Array([], signature=dbus.Signature('s'))

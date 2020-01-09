@@ -48,6 +48,8 @@ struct cm_store_ca *cm_get_ca_by_busname(struct cm_context *c,
 int cm_add_ca(struct cm_context *context, struct cm_store_ca *new_ca);
 int cm_remove_ca(struct cm_context *context, const char *nickname);
 dbus_bool_t cm_restart_entry(struct cm_context *c, const char *nickname);
+dbus_bool_t cm_restart_entries_by_ca(struct cm_context *c,
+				     const char *nickname);
 dbus_bool_t cm_stop_entry(struct cm_context *c, const char *nickname);
 dbus_bool_t cm_start_entry(struct cm_context *c, const char *nickname);
 dbus_bool_t cm_restart_ca(struct cm_context *c, const char *nickname,
@@ -59,5 +61,7 @@ dbus_bool_t cm_start_ca(struct cm_context *c, const char *nickname,
 
 void *cm_get_conn_ptr(struct cm_context *context);
 void cm_set_conn_ptr(struct cm_context *context, void *ptr);
+const char *cm_get_server_address(struct cm_context *context);
+void cm_set_server_address(struct cm_context *context, const char *address);
 
 #endif

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2012,2014 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2012,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -60,6 +60,7 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	SECStatus error;
 	SECItem *esdata = NULL, *ecert = NULL;
 	struct cm_keyiread_n_ctx_and_keys *keys;
+	SECKEYPrivateKey *privkey;
 	CERTCertificate *ucert = NULL;
 	CERTCertExtension **extensions;
 	CERTCertificateRequest *req = NULL, sreq;
@@ -78,6 +79,13 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	if (keys == NULL) {
 		cm_log(1, "Unable to locate private key for self-signing.\n");
 		_exit(2);
+	}
+	/* Select the right key pair. */
+	if ((entry->cm_key_next_marker != NULL) &&
+	    (strlen(entry->cm_key_next_marker) > 0)) {
+		privkey = keys->privkey_next;
+	} else {
+		privkey = keys->privkey;
 	}
 	/* Allocate a memory pool. */
 	arena = PORT_NewArena(sizeof(double));
@@ -115,7 +123,7 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	} else {
 		data = &sdata;
 	}
-	sigoid = SECOID_FindOIDByTag(cm_prefs_nss_sig_alg(keys->privkey));
+	sigoid = SECOID_FindOIDByTag(cm_prefs_nss_sig_alg(privkey));
 	if (sigoid == NULL) {
 		cm_log(1, "Internal error resolving signature OID.\n");
 		_exit(1);
@@ -144,7 +152,7 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	} else {
 		now = PR_Now();
 	}
-	if (cm_submit_u_delta_from_string(cm_prefs_validity_period(),
+	if (cm_submit_u_delta_from_string(cm_prefs_selfsign_validity_period(),
 					  now / 1000000,
 					  &lifedelta) == 0) {
 		life = lifedelta;
@@ -289,7 +297,7 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		_exit(1);
 	}
 	if (SEC_SignData(&scert.signature, ecert->data, ecert->len,
-			 keys->privkey, sigoid->offset) != SECSuccess) {
+			 privkey, sigoid->offset) != SECSuccess) {
 		cm_log(1, "Unable to generate signature.\n");
 		_exit(1);
 	}
@@ -329,7 +337,15 @@ cm_submit_sn_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	if (keys->pubkey != NULL) {
 		SECKEY_DestroyPublicKey(keys->pubkey);
 	}
-	SECKEY_DestroyPrivateKey(keys->privkey);
+	if (keys->privkey != NULL) {
+		SECKEY_DestroyPrivateKey(keys->privkey);
+	}
+	if (keys->pubkey_next != NULL) {
+		SECKEY_DestroyPublicKey(keys->pubkey_next);
+	}
+	if (keys->privkey_next != NULL) {
+		SECKEY_DestroyPrivateKey(keys->privkey_next);
+	}
 	PORT_FreeArena(arena, PR_TRUE);
 	error = NSS_ShutdownContext(keys->ctx);
 	PORT_FreeArena(keys->arena, PR_TRUE);
@@ -390,6 +406,13 @@ cm_submit_sn_rejected(struct cm_submit_state *state)
 	return -1; /* it never gets rejected */
 }
 
+/* Check if we need SCEP messages. */
+static int
+cm_submit_sn_need_scep_messages(struct cm_submit_state *state)
+{
+	return -1; /* nope */
+}
+
 /* Check if the CA was unreachable. */
 static int
 cm_submit_sn_unreachable(struct cm_submit_state *state)
@@ -439,6 +462,7 @@ cm_submit_sn_start(struct cm_store_ca *ca, struct cm_store_entry *entry)
 		state->ready = cm_submit_sn_ready;
 		state->issued = cm_submit_sn_issued;
 		state->rejected = cm_submit_sn_rejected;
+		state->need_scep_messages = cm_submit_sn_need_scep_messages;
 		state->unreachable = cm_submit_sn_unreachable;
 		state->unconfigured = cm_submit_sn_unconfigured;
 		state->unsupported = cm_submit_sn_unsupported;
@@ -450,6 +474,12 @@ cm_submit_sn_start(struct cm_store_ca *ca, struct cm_store_entry *entry)
 		if (state->subproc == NULL) {
 			talloc_free(state);
 			state = NULL;
+		}
+		if ((entry->cm_key_next_marker != NULL) &&
+		    (strlen(entry->cm_key_next_marker) > 0)) {
+			entry->cm_key_next_requested_count++;
+		} else {
+			entry->cm_key_requested_count++;
 		}
 	}
 	return state;

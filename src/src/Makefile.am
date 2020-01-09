@@ -8,7 +8,7 @@ endif
 if NOW
 LDFLAGS += -Wl,-z,relro,-z,now
 endif
-man_MANS = certmonger.8 getcert.1 getcert-request.1 getcert-list.1 getcert-list-cas.1 getcert-start-tracking.1 getcert-stop-tracking.1 selfsign-getcert.1 ipa-getcert.1 certmaster-getcert.1 getcert-resubmit.1 certmonger-ipa-submit.8 certmonger-certmaster-submit.8 certmonger-dogtag-ipa-renew-agent-submit.8 certmonger.conf.5 getcert-refresh.1 getcert-refresh-ca.1 local-getcert.1 certmonger-local-submit.8 getcert-status.1
+man_MANS = certmonger.8 getcert.1 getcert-request.1 getcert-list.1 getcert-list-cas.1 getcert-start-tracking.1 getcert-stop-tracking.1 selfsign-getcert.1 ipa-getcert.1 certmaster-getcert.1 getcert-resubmit.1 certmonger-ipa-submit.8 certmonger-certmaster-submit.8 certmonger-dogtag-ipa-renew-agent-submit.8 certmonger.conf.5 getcert-refresh.1 getcert-refresh-ca.1 local-getcert.1 certmonger-local-submit.8 getcert-status.1 certmonger-dogtag-submit.8 certmonger-scep-submit.8 getcert-add-ca.1 getcert-add-scep-ca.1 getcert-modify-ca.1 getcert-remove-ca.1
 pkgsysconfdir = $(sysconfdir)/$(PACKAGE)
 pkgsysconf_DATA = certmonger.conf
 EXTRA_PROGRAMS =
@@ -74,6 +74,11 @@ libcm_a_SOURCES = \
 	prefs.h \
 	prefs-n.c \
 	prefs-n.h \
+	scep.h \
+	scepgen.c \
+	scepgen.h \
+	scepgen-int.h \
+	scepgen-n.c \
 	store-files.c \
 	store-gen.c \
 	store.h \
@@ -83,6 +88,7 @@ libcm_a_SOURCES = \
 	submit-e.h \
 	submit.h \
 	submit-int.h \
+	submit-n.c \
 	submit-sn.c \
 	submit-u.c \
 	submit-u.h \
@@ -110,8 +116,13 @@ libcm_o_a_SOURCES += \
 	csrgen-o.c \
 	keygen-o.c \
 	keyiread-o.c \
-	prefs-o.h \
+	pkcs7.c \
+	pkcs7.h \
 	prefs-o.c \
+	prefs-o.h \
+	scep-o.c \
+	scep-o.h \
+	scepgen-o.c \
 	submit-so.c \
 	submit-o.c \
 	submit-o.h \
@@ -123,25 +134,31 @@ libcm_a_LIBADD = $(libcm_o_a_OBJECTS)
 bin_PROGRAMS = getcert
 pkglibexec_PROGRAMS = certmonger-session
 pkglibexecdir = $(libexecdir)/$(PACKAGE)
+getcert_CFLAGS = $(AM_CFLAGS) $(NSS_CFLAGS) $(UUID_CFLAGS)
 getcert_SOURCES = getcert.c tm.c tm.h
-getcert_LDADD = libcm.a $(GETCERT_LIBS) $(KRB5_LIBS) $(LTLIBICONV)
+getcert_LDADD = libcm.a $(GETCERT_LIBS) $(KRB5_LIBS) $(NSS_LIBS) $(UUID_LIBS) $(LTLIBICONV)
 if WITH_IPA
 bin_PROGRAMS += ipa-getcert
+ipa_getcert_CFLAGS = $(getcert_CFLAGS)
 ipa_getcert_SOURCES = ipa-getcert.c tm.c tm.h
 ipa_getcert_LDADD = $(getcert_LDADD)
 endif
 if WITH_IPA
 bin_PROGRAMS += certmaster-getcert
+certmaster_getcert_CFLAGS = $(getcert_CFLAGS)
 certmaster_getcert_SOURCES = certmaster-getcert.c tm.c tm.h
 certmaster_getcert_LDADD = $(getcert_LDADD)
 endif
 bin_PROGRAMS += selfsign-getcert
+selfsign_getcert_CFLAGS = $(getcert_CFLAGS)
 selfsign_getcert_SOURCES = selfsign-getcert.c tm.c tm.h
 selfsign_getcert_LDADD = $(getcert_LDADD)
 bin_PROGRAMS += local-getcert
+local_getcert_CFLAGS = $(getcert_CFLAGS)
 local_getcert_SOURCES = local-getcert.c tm.c tm.h
 local_getcert_LDADD = $(getcert_LDADD)
 sbin_PROGRAMS = certmonger
+certmonger_getcert_CFLAGS = $(getcert_CFLAGS)
 certmonger_SOURCES = main.c env-system.c tm.c tm.h
 certmonger_LDADD = libcm.a \
 		   $(OPENSSL_LIBS) $(CERTMONGER_LIBS) $(KRB5_LIBS) $(IDN_LIBS) \
@@ -168,32 +185,57 @@ endif
 if WITH_IPA
 pkglibexec_PROGRAMS += ipa-submit
 endif
-pkglibexec_PROGRAMS += dogtag-ipa-renew-agent-submit local-submit
+pkglibexec_PROGRAMS += dogtag-ipa-renew-agent-submit dogtag-submit
+if HAVE_OPENSSL
+pkglibexec_PROGRAMS += local-submit
+pkglibexec_PROGRAMS += scep-submit
+endif
 noinst_PROGRAMS += submit-h submit-d
-ipa_submit_SOURCES = ipa.c store.h store-gen.c \
+ipa_submit_SOURCES = ipa.c srvloc.c srvloc.h store.h store-gen.c \
 		submit-x.c submit-x.h submit-u.c submit-u.h \
 		submit-e.h util.c util.h log.c log.h tm.c tm.h
 ipa_submit_LDADD = $(XMLRPC_LIBS) $(LDAP_LIBS) $(KRB5_LIBS) $(TALLOC_LIBS) \
-		   $(GMP_LIBS) $(UUID_LIBS) $(LTLIBICONV)
+		   $(GMP_LIBS) $(IDN_LIBS) $(OPENSSL_LIBS) $(UUID_LIBS) \
+		   $(RESOLV_LIBS) $(LTLIBICONV)
 certmaster_submit_SOURCES = certmaster.c submit-x.c submit-x.h \
 		submit-e.h submit-u.c submit-u.h util.c util.h log.c log.h \
 		tm.c tm.h
 certmaster_submit_LDADD = $(XMLRPC_LIBS) $(KRB5_LIBS) $(TALLOC_LIBS) \
 			  $(GMP_LIBS) $(UUID_LIBS) $(LTLIBICONV)
 dogtag_ipa_renew_agent_submit_CFLAGS = $(AM_CFLAGS) $(XML_CFLAGS) \
-				       $(NSS_CFLAGS) $(CURL_CFLAGS)
+				       $(NSS_CFLAGS) $(CURL_CFLAGS) \
+				       -DDOGTAG_IPA_RENEW_AGENT=1
 dogtag_ipa_renew_agent_submit_SOURCES = dogtag.c submit-d.c submit-d.h \
 		submit-h.c submit-h.h util-m.c util-m.h util-n.c util-n.h \
 		submit-u.c submit-u.h submit-e.h util.c util.h log.c log.h \
-		store.h store-gen.c tm.c tm.h prefs.c prefs.h env.h env-system.c
+		store.h store-gen.c tm.c tm.h prefs.c prefs.h \
+		dogtag-ipa.c dogtag-ipa.h env.h env-system.c
 dogtag_ipa_renew_agent_submit_LDADD = $(CURL_LIBS) $(XML_LIBS) $(NSS_LIBS) \
 				      $(OPENSSL_LIBS) $(TALLOC_LIBS) \
 				      $(GMP_LIBS) $(UUID_LIBS) $(LTLIBICONV)
+dogtag_submit_CFLAGS = $(AM_CFLAGS) $(XML_CFLAGS) $(NSS_CFLAGS) $(CURL_CFLAGS)
+dogtag_submit_SOURCES = dogtag.c submit-d.c submit-d.h \
+		submit-h.c submit-h.h util-m.c util-m.h util-n.c util-n.h \
+		submit-u.c submit-u.h submit-e.h util.c util.h log.c log.h \
+		store.h store-gen.c tm.c tm.h prefs.c prefs.h \
+		env.h env-system.c
+dogtag_submit_LDADD = $(CURL_LIBS) $(XML_LIBS) $(NSS_LIBS) \
+		      $(OPENSSL_LIBS) $(TALLOC_LIBS) \
+		      $(GMP_LIBS) $(UUID_LIBS) $(LTLIBICONV)
+scep_submit_CFLAGS = $(AM_CFLAGS) $(XML_CFLAGS) $(NSS_CFLAGS) $(CURL_CFLAGS)
+scep_submit_SOURCES = scep.c scep.h \
+		submit-h.c submit-h.h util-m.c util-m.h util-o.c util-o.h \
+		submit-u.c submit-u.h submit-e.h util.c util.h log.c log.h \
+		pkcs7.c pkcs7.h store.h store-gen.c tm.c tm.h prefs.c prefs.h \
+		prefs-o.c prefs-o.h scep-o.c scep-o.h env.h env-system.c
+scep_submit_LDADD = $(CURL_LIBS) $(XML_LIBS) $(NSS_LIBS) \
+		      $(OPENSSL_LIBS) $(TALLOC_LIBS) \
+		      $(GMP_LIBS) $(UUID_LIBS) $(LTLIBICONV)
 local_submit_CFLAGS = $(AM_CFLAGS) $(NSS_CFLAGS)
 local_submit_SOURCES = local.c env.h store.h store-gen.c submit-o.c submit-o.h \
-		       submit-u.c submit-u.h env-session.c log.c log.h \
+		       submit-u.c submit-u.h env-session.c env-shared.c log.c log.h \
 		       prefs.c prefs.h prefs-o.c prefs-o.h tm.c tm.h \
-		       util.c util.h util-o.c util-o.h
+		       util.c util.h util-o.c util-o.h pin.c pin.h
 local_submit_LDADD = $(NSS_LIBS) $(OPENSSL_LIBS) $(TALLOC_LIBS) $(UUID_LIBS)
 submit_d_CFLAGS = $(AM_CFLAGS) $(CURL_CFLAGS) $(XML_CFLAGS) -DCM_SUBMIT_D_MAIN
 submit_d_SOURCES = submit-d.c submit-d.h submit-h.c submit-h.h \

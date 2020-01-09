@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -52,6 +52,7 @@
 #include "store.h"
 #include "store-int.h"
 #include "subproc.h"
+#include "util-m.h"
 
 struct cm_csrgen_state {
 	struct cm_csrgen_state_pvt pvt;
@@ -130,6 +131,7 @@ cm_csrgen_n_attributes(struct cm_store_entry *entry, NSSInitContext *ctx,
 	SECOidData *oid;
 	SECItem *item, friendly, *friendlies[2], encoded, encattr[3], plain;
 	SECItem *encattrs[4], **encattrs_ptr, password, *passwords[2], bmp;
+	char *challenge_password;
 	int i, n_attrs;
 
 	i = 0;
@@ -178,12 +180,13 @@ cm_csrgen_n_attributes(struct cm_store_entry *entry, NSSInitContext *ctx,
 		}
 	}
 	/* Build an attribute to hold the challenge password. */
+	cm_csrgen_read_challenge_password(entry, &challenge_password);
 	oid = SECOID_FindOIDByTag(SEC_OID_PKCS9_CHALLENGE_PASSWORD);
 	if (oid != NULL) {
 		memset(&plain, 0, sizeof(plain));
-		plain.data = (unsigned char *) entry->cm_challenge_password;
+		plain.data = (unsigned char *) challenge_password;
 		if (plain.data != NULL) {
-			plain.len = strlen(entry->cm_challenge_password);
+			plain.len = strlen(challenge_password);
 			if (SEC_ASN1EncodeItem(arena, &password, &plain,
 					       SEC_PrintableStringTemplate) == &password) {
 				passwords[0] = &password;
@@ -237,16 +240,24 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	FILE *status;
 	SECStatus error;
 	struct cm_keyiread_n_ctx_and_keys *keys;
+	SECKEYPrivateKey *privkey;
+	SECKEYPublicKey *pubkey;
 	CERTSubjectPublicKeyInfo *spki;
 	CERTPublicKeyAndChallenge pkac;
 	CERTCertificateRequest *req;
-	CERTSignedData sreq, spkac;
+	CERTCertificate *minicert;
+	CERTValidity *validity;
+	CERTSignedData sreq, spkac, sminicert;
 	CERTName *name;
 	PLArenaPool *arena;
-	SECItem ereq, esreq, epkac, espkac, *attrs, item, utf8;
+	PRExplodedTime exploded;
+	PRTime vstart, vend;
+	SECItem ereq, esreq, epkac, espkac, eminicert, esminicert;
+	SECItem *attrs, item, utf8, nowe;
 	int ec;
-	char *b64, *b642, *p, *q;
-	const char *es;
+	char *b64, *b642, *b643, *now, *p, *q, *challenge_password;
+	const char *es, *spkihex, *spkidec;
+	unsigned char spkidigest[CM_DIGEST_MAX + 1];
 	SECOidData *sigoid;
 
 	/* Allocate an arena pool and a place to write status updates. */
@@ -268,6 +279,15 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		       entry->cm_busname, entry->cm_nickname);
 		PORT_FreeArena(arena, PR_TRUE);
 		_exit(CM_SUB_STATUS_ERROR_NO_TOKEN);
+	}
+	/* Select the right key pair. */
+	if ((entry->cm_key_next_marker != NULL) &&
+	    (strlen(entry->cm_key_next_marker) > 0)) {
+		privkey = keys->privkey_next;
+		pubkey = keys->pubkey_next;
+	} else {
+		privkey = keys->privkey;
+		pubkey = keys->pubkey;
 	}
 	/* Select a subject name. */
 	name = NULL;
@@ -333,7 +353,15 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		if (keys->pubkey != NULL) {
 			SECKEY_DestroyPublicKey(keys->pubkey);
 		}
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -344,7 +372,7 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
 	}
 	/* Find the public key. */
-	if (keys->pubkey == NULL) {
+	if (pubkey == NULL) {
 		ec = PORT_GetError();
 		if (ec != 0) {
 			es = PR_ErrorToName(ec);
@@ -356,7 +384,18 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		} else {
 			cm_log(1, "Error retrieving public key: %d.\n", ec);
 		}
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -367,7 +406,7 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
 	}
 	/* Generate a subjectPublicKeyInfo. */
-	spki = SECKEY_CreateSubjectPublicKeyInfo(keys->pubkey);
+	spki = SECKEY_CreateSubjectPublicKeyInfo(pubkey);
 	if (spki == NULL) {
 		ec = PORT_GetError();
 		if (ec == 0) {
@@ -376,8 +415,18 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			cm_log(1, "Error building spki value: %s.\n",
 			       PR_ErrorToName(ec));
 		}
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -397,8 +446,18 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			cm_log(1, "Error building certificate request: %s.\n",
 			       PR_ErrorToName(ec));
 		}
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -429,8 +488,18 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			       CERT_CertificateRequestTemplate) !=
 	    &ereq) {
 		cm_log(1, "Error encoding certificate request.\n");
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -446,8 +515,18 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			       CERT_SubjectPublicKeyInfoTemplate) !=
 	    &pkac.spki) {
 		cm_log(1, "Error encoding subject public key info.\n");
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -457,16 +536,49 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		fclose(status);
 		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
 	}
-	pkac.challenge.data = (unsigned char *) entry->cm_challenge_password;
-	pkac.challenge.len = entry->cm_challenge_password ?
-			     strlen(entry->cm_challenge_password) : 0;
+	if (cm_csrgen_read_challenge_password(entry,
+					      &challenge_password) != 0) {
+		cm_log(1, "Error reading challenge password file.\n");
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
+		PORT_FreeArena(arena, PR_TRUE);
+		error = NSS_ShutdownContext(keys->ctx);
+		PORT_FreeArena(keys->arena, PR_TRUE);
+		if (error != SECSuccess) {
+			cm_log(1, "Error shutting down NSS.\n");
+		}
+		fclose(status);
+		_exit(CM_SUB_STATUS_ERROR_AUTH);
+	}
+	pkac.challenge.data = (unsigned char *) challenge_password;
+	pkac.challenge.len = challenge_password ? strlen(challenge_password) : 0;
 	/* Encode the PublicKeyAndChallenge. */
 	if (SEC_ASN1EncodeItem(arena, &epkac, &pkac,
 			       cm_csrgen_n_cert_pkac_template) !=
 	    &epkac) {
 		cm_log(1, "Error encoding public key and challenge.\n");
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -477,15 +589,25 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
 	}
 	/* Sign the request using the private key. */
-	sigoid = SECOID_FindOIDByTag(cm_prefs_nss_sig_alg(keys->privkey));
+	sigoid = SECOID_FindOIDByTag(cm_prefs_nss_sig_alg(privkey));
 	memset(&sreq, 0, sizeof(sreq));
 	sreq.data = ereq;
 	if (SECOID_SetAlgorithmID(arena, &sreq.signatureAlgorithm,
 				  sigoid->offset, NULL) != SECSuccess) {
 		cm_log(1, "Error setting up algorithm ID for signing the "
 		       "certificate request.\n");
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -496,12 +618,22 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
 	}
 	if (SEC_SignData(&sreq.signature, sreq.data.data, sreq.data.len,
-			 keys->privkey, sigoid->offset) != SECSuccess) {
+			 privkey, sigoid->offset) != SECSuccess) {
 		cm_log(1, "Error signing certificate request with the client's "
 		       "key using \"%s\": %s.\n",
 		       sigoid->desc, PR_ErrorToName(PORT_GetError()));
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -518,8 +650,18 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 				  sigoid->offset, NULL) != SECSuccess) {
 		cm_log(1, "Error setting up algorithm ID for signing the "
 		       "certificate request.\n");
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -530,12 +672,22 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
 	}
 	if (SEC_SignData(&spkac.signature, spkac.data.data, spkac.data.len,
-			 keys->privkey, sigoid->offset) != SECSuccess) {
+			 privkey, sigoid->offset) != SECSuccess) {
 		cm_log(1, "Error signing public-key-and-challenge with "
 		       "the client's key using \"%s\": %s.\n",
 		       sigoid->desc, PR_ErrorToName(PORT_GetError()));
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -551,8 +703,18 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			       CERT_SignedDataTemplate) !=
 	    &esreq) {
 		cm_log(1, "Error encoding signed certificate request.\n");
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -568,8 +730,201 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			       CERT_SignedDataTemplate) !=
 	    &espkac) {
 		cm_log(1, "Error encoding signed public key and challenge.\n");
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
+		PORT_FreeArena(arena, PR_TRUE);
+		error = NSS_ShutdownContext(keys->ctx);
+		PORT_FreeArena(keys->arena, PR_TRUE);
+		if (error != SECSuccess) {
+			cm_log(1, "Error shutting down NSS.\n");
+		}
+		fclose(status);
+		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+	}
+	/* Generate the SCEP transaction ID. */
+	spkidec = "";
+	memset(spkidigest, 0, sizeof(spkidigest));
+	if (PK11_HashBuf(cm_prefs_nss_dig_alg(), spkidigest + 1,
+			 pkac.spki.data, pkac.spki.len) == SECSuccess) {
+		spkihex = cm_store_hex_from_bin(NULL, spkidigest + 1,
+						cm_prefs_nss_dig_alg_len());
+		if (spkihex != NULL) {
+			spkidec = util_dec_from_hex(spkihex);
+		}
+	}
+	/* Generate a "mini" certificate. */
+	memset(&exploded, 0, sizeof(exploded));
+	PR_ExplodeTime(PR_Now(), PR_GMTParameters, &exploded);
+	exploded.tm_usec = 0;
+	exploded.tm_sec = 0;
+	exploded.tm_min = 0;
+	exploded.tm_hour = 0;
+	vstart = PR_ImplodeTime(&exploded);
+	exploded.tm_year += 100;
+	vend = PR_ImplodeTime(&exploded);
+	validity = CERT_CreateValidity(vstart, vend);
+	now = talloc_asprintf(entry, "%04d%02d%02d000000Z",
+			      exploded.tm_year - 100, exploded.tm_month + 1,
+			      exploded.tm_mday);
+	memset(&nowe, 0, sizeof(nowe));
+	nowe.type = siGeneralizedTime;
+	nowe.data = (unsigned char *) now;
+	nowe.len = strlen(now);
+	validity->notBefore = nowe;
+	now = talloc_asprintf(entry, "%04d%02d%02d000000Z",
+			      exploded.tm_year, exploded.tm_month + 1,
+			      exploded.tm_mday);
+	memset(&nowe, 0, sizeof(nowe));
+	nowe.type = siGeneralizedTime;
+	nowe.data = (unsigned char *) now;
+	nowe.len = strlen(now);
+	validity->notAfter = nowe;
+	minicert = CERT_CreateCertificate(1, name, validity, req);
+	SEC_ASN1EncodeInteger(arena, &minicert->version, 0);
+	if ((spkidigest[1] & 0x80) != 0) {
+		minicert->serialNumber.data = spkidigest;
+		minicert->serialNumber.len = cm_prefs_nss_dig_alg_len() + 1;
+	} else {
+		minicert->serialNumber.data = spkidigest + 1;
+		minicert->serialNumber.len = cm_prefs_nss_dig_alg_len();
+	}
+	if (SECOID_SetAlgorithmID(arena, &minicert->signature,
+				  sigoid->offset, NULL) != SECSuccess) {
+		cm_log(1, "Unable to set signature algorithm ID.\n");
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
+		PORT_FreeArena(arena, PR_TRUE);
+		error = NSS_ShutdownContext(keys->ctx);
+		PORT_FreeArena(keys->arena, PR_TRUE);
+		if (error != SECSuccess) {
+			cm_log(1, "Error shutting down NSS.\n");
+		}
+		fclose(status);
+		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+	}
+	minicert->issuer = req->subject;
+	minicert->subject = req->subject;
+	minicert->subjectPublicKeyInfo = req->subjectPublicKeyInfo;
+	minicert->extensions = NULL;
+	memset(&eminicert, 0, sizeof(eminicert));
+	if (SEC_ASN1EncodeItem(arena, &eminicert, minicert,
+			       CERT_CertificateTemplate) != &eminicert) {
+		cm_log(1, "Error encoding mini TBS certificate.\n");
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
+		PORT_FreeArena(arena, PR_TRUE);
+		error = NSS_ShutdownContext(keys->ctx);
+		PORT_FreeArena(keys->arena, PR_TRUE);
+		if (error != SECSuccess) {
+			cm_log(1, "Error shutting down NSS.\n");
+		}
+		fclose(status);
+		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+	}
+	/* Sign the mini certificate using the private key. */
+	memset(&sminicert, 0, sizeof(sminicert));
+	sminicert.data = eminicert;
+	if (SECOID_SetAlgorithmID(arena, &sminicert.signatureAlgorithm,
+				  sigoid->offset, NULL) != SECSuccess) {
+		cm_log(1, "Error setting up algorithm ID for signing the "
+		       "mini certificate.\n");
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
+		PORT_FreeArena(arena, PR_TRUE);
+		error = NSS_ShutdownContext(keys->ctx);
+		PORT_FreeArena(keys->arena, PR_TRUE);
+		if (error != SECSuccess) {
+			cm_log(1, "Error shutting down NSS.\n");
+		}
+		fclose(status);
+		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+	}
+	/* Sign the mini certificate using the private key. */
+	if (SEC_SignData(&sminicert.signature, sminicert.data.data,
+			 sminicert.data.len, privkey,
+			 sigoid->offset) != SECSuccess) {
+		cm_log(1, "Error signing mini certificate with "
+		       "the client's key using \"%s\": %s.\n",
+		       sigoid->desc, PR_ErrorToName(PORT_GetError()));
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
+		PORT_FreeArena(arena, PR_TRUE);
+		error = NSS_ShutdownContext(keys->ctx);
+		PORT_FreeArena(keys->arena, PR_TRUE);
+		if (error != SECSuccess) {
+			cm_log(1, "Error shutting down NSS.\n");
+		}
+		fclose(status);
+		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+	}
+	sminicert.signature.len *= 8;
+	/* Encode the signed mini certificate. */
+	if (SEC_ASN1EncodeItem(arena, &esminicert, &sminicert,
+			       CERT_SignedDataTemplate) !=
+	    &esminicert) {
+		cm_log(1, "Error encoding signed mini certificate.\n");
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -582,6 +937,7 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	/* Encode the request into base-64 and pass it to our caller. */
 	b64 = NSSBase64_EncodeItem(arena, NULL, -1, &esreq);
 	b642 = NSSBase64_EncodeItem(arena, NULL, -1, &espkac);
+	b643 = NSSBase64_EncodeItem(arena, NULL, -1, &esminicert);
 	if ((b64 != NULL) && (b642 != NULL)) {
 		fprintf(status, "-----BEGIN NEW CERTIFICATE REQUEST-----\n");
 		p = b64;
@@ -597,8 +953,26 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			fprintf(status, "%.*s", (int) (q - p), p);
 			p = q + strspn(q, "\r\n");
 		}
-		SECKEY_DestroyPublicKey(keys->pubkey);
-		SECKEY_DestroyPrivateKey(keys->privkey);
+		fprintf(status, "\n%s\n", spkidec);
+		p = b643;
+		while (*p != '\0') {
+			q = p + strcspn(p, "\r\n");
+			fprintf(status, "%.*s", (int) (q - p), p);
+			p = q + strspn(q, "\r\n");
+		}
+		fprintf(status, "\n");
+		if (keys->pubkey != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey);
+		}
+		if (keys->privkey != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey);
+		}
+		if (keys->pubkey_next != NULL) {
+			SECKEY_DestroyPublicKey(keys->pubkey_next);
+		}
+		if (keys->privkey_next != NULL) {
+			SECKEY_DestroyPrivateKey(keys->privkey_next);
+		}
 		PORT_FreeArena(arena, PR_TRUE);
 		error = NSS_ShutdownContext(keys->ctx);
 		PORT_FreeArena(keys->arena, PR_TRUE);
@@ -609,8 +983,19 @@ cm_csrgen_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		_exit(0);
 	}
 	/* Clean up. */
-	SECKEY_DestroyPublicKey(keys->pubkey);
-	SECKEY_DestroyPrivateKey(keys->privkey);
+	CERT_DestroyValidity(validity);
+	if (keys->pubkey != NULL) {
+		SECKEY_DestroyPublicKey(keys->pubkey);
+	}
+	if (keys->privkey != NULL) {
+		SECKEY_DestroyPrivateKey(keys->privkey);
+	}
+	if (keys->pubkey_next != NULL) {
+		SECKEY_DestroyPublicKey(keys->pubkey_next);
+	}
+	if (keys->privkey_next != NULL) {
+		SECKEY_DestroyPrivateKey(keys->privkey_next);
+	}
 	PORT_FreeArena(arena, PR_TRUE);
 	error = NSS_ShutdownContext(keys->ctx);
 	PORT_FreeArena(keys->arena, PR_TRUE);
@@ -659,11 +1044,34 @@ cm_csrgen_n_save_csr(struct cm_csrgen_state *state)
 		if (p != NULL) {
 			p += strcspn(p, "\r\n");
 			q = p + strspn(p, "\r\n");
-			state->entry->cm_spkac = talloc_strdup(state->entry, q);
+			p = q + strcspn(q, "\r\n");
+			state->entry->cm_spkac = talloc_strndup(state->entry, q, p - q);
 			if (state->entry->cm_spkac == NULL) {
 				return ENOMEM;
 			}
 			*q = '\0';
+			q = p + strspn(p, "\r\n");
+			p = q + strcspn(q, "\r\n");
+			if (p > q) {
+				state->entry->cm_scep_tx = talloc_strndup(state->entry, q, p - q);
+				if (state->entry->cm_scep_tx == NULL) {
+					return ENOMEM;
+				}
+			}
+			q = p + strspn(p, "\r\n");
+			p = q + strcspn(q, "\r\n");
+			if (p > q) {
+				state->entry->cm_minicert = talloc_strndup(state->entry, q, p - q);
+				if (state->entry->cm_minicert == NULL) {
+					return ENOMEM;
+				}
+			}
+			state->entry->cm_scep_nonce = NULL;
+			state->entry->cm_scep_last_nonce = NULL;
+			state->entry->cm_scep_req = NULL;
+			state->entry->cm_scep_req_next = NULL;
+			state->entry->cm_scep_gic = NULL;
+			state->entry->cm_scep_gic_next = NULL;
 		}
 	}
 	return 0;

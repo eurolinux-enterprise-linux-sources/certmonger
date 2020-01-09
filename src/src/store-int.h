@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,7 +41,12 @@ struct cm_store_entry {
 #endif
 		} cm_key_algorithm, cm_key_gen_algorithm;
 		int cm_key_size, cm_key_gen_size;
-	} cm_key_type;
+	} cm_key_type, cm_key_next_type;
+	char *cm_key_next_marker;
+	unsigned int cm_key_preserve: 1;
+	time_t cm_key_generated_date, cm_key_next_generated_date;
+	unsigned int cm_key_issued_count;
+	unsigned int cm_key_requested_count, cm_key_next_requested_count;
 	/* Location of key pair [use-once default] NSS,/etc/pki/nssdb */
 	enum cm_key_storage_type {
 		cm_key_storage_none = 0,
@@ -53,10 +58,10 @@ struct cm_store_entry {
 	char *cm_key_nickname;
 	char *cm_key_pin;
 	char *cm_key_pin_file;
-	/* Cached plain public key (used for subject and authority key IDs) */
-	char *cm_key_pubkey;
+	/* Cached plain public key (used for computing subject and authority key IDs) */
+	char *cm_key_pubkey, *cm_key_next_pubkey;
 	/* Cached public key info (used in signing requests when using NSS) */
-	char *cm_key_pubkey_info;
+	char *cm_key_pubkey_info, *cm_key_next_pubkey_info;
 	/* Location of certificate [use-once default]
 	 * NSS,/etc/pki/nssdb,Server-Cert-default */
 	enum cm_cert_storage_type {
@@ -88,6 +93,7 @@ struct cm_store_entry {
 	char **cm_cert_ocsp_location;
 	char *cm_cert_ns_comment;
 	char *cm_cert_profile;
+	char *cm_cert_ns_certtype;
 	unsigned int cm_cert_no_ocsp_check: 1;
 	time_t cm_last_need_notify_check;
 	time_t cm_last_need_enroll_check;
@@ -131,14 +137,28 @@ struct cm_store_entry {
 	char **cm_template_ocsp_location;
 	char *cm_template_ns_comment;
 	char *cm_template_profile;
+	char *cm_template_ns_certtype;
 	unsigned int cm_template_no_ocsp_check: 1;
 	/* A challenge password, which may be included (in cleartext form!) in
 	 * a CSR. */
-	char *cm_challenge_password;
+	char *cm_template_challenge_password;
+	char *cm_template_challenge_password_file;
 	/* The CSR, base64-encoded. */
 	char *cm_csr;
 	/* The SPKAC, base64-encoded. */
 	char *cm_spkac;
+	/* An SCEP transaction number corresponding to this CSR and signing request. */
+	char *cm_scep_tx;
+	/* An SCEP nonce. */
+	char *cm_scep_nonce, *cm_scep_last_nonce;
+	/* An SCEP PKCSReq message, signed with our current key, and possibly
+	 * the next key. */
+	char *cm_scep_req, *cm_scep_req_next;
+	/* An SCEP GetInitialCert message, signed with our current key, and
+	 * possibly the next key. */
+	char *cm_scep_gic, *cm_scep_gic_next;
+	/* A minimal self-signed certificate. */
+	char *cm_minicert;
 	/* Our idea of the state of the cert. */
 	enum cm_state {
 		CM_NEED_KEY_PAIR, CM_GENERATING_KEY_PAIR,
@@ -148,24 +168,33 @@ struct cm_store_entry {
 		CM_NEED_KEYINFO_READ_PIN, CM_NEED_KEYINFO_READ_TOKEN,
 		CM_HAVE_KEYINFO,
 		CM_NEED_CSR, CM_GENERATING_CSR, CM_NEED_CSR_GEN_PIN,
-		CM_NEED_CSR_GEN_TOKEN,
-		CM_HAVE_CSR, CM_NEED_TO_SUBMIT, CM_SUBMITTING,
+		CM_NEED_CSR_GEN_TOKEN, CM_HAVE_CSR,
+		CM_NEED_SCEP_DATA, CM_GENERATING_SCEP_DATA,
+		CM_NEED_SCEP_GEN_PIN, CM_NEED_SCEP_GEN_TOKEN,
+		CM_NEED_SCEP_ENCRYPTION_CERT, CM_NEED_SCEP_RSA_CLIENT_KEY,
+		CM_HAVE_SCEP_DATA,
+		CM_NEED_TO_SUBMIT, CM_SUBMITTING,
 		CM_NEED_CA, CM_CA_UNREACHABLE, CM_CA_UNCONFIGURED,
 		CM_CA_REJECTED, CM_CA_WORKING,
 		CM_NEED_TO_SAVE_CERT, CM_PRE_SAVE_CERT,
 		CM_START_SAVING_CERT, CM_SAVING_CERT,
 		CM_NEED_CERTSAVE_PERMS,
+		CM_NEED_CERTSAVE_TOKEN, CM_NEED_CERTSAVE_PIN,
 		CM_NEED_TO_SAVE_CA_CERTS,
 		CM_START_SAVING_CA_CERTS, CM_SAVING_CA_CERTS,
+		CM_NEED_CA_CERT_SAVE_PERMS,
 		CM_NEED_TO_SAVE_ONLY_CA_CERTS,
 		CM_START_SAVING_ONLY_CA_CERTS, CM_SAVING_ONLY_CA_CERTS,
-		CM_NEED_CA_CERT_SAVE_PERMS,
+		CM_NEED_ONLY_CA_CERT_SAVE_PERMS,
 		CM_NEED_TO_READ_CERT, CM_READING_CERT,
 		CM_SAVED_CERT, CM_POST_SAVED_CERT,
 		CM_MONITORING,
 		CM_NEED_TO_NOTIFY_VALIDITY, CM_NOTIFYING_VALIDITY,
 		CM_NEED_TO_NOTIFY_REJECTION, CM_NOTIFYING_REJECTION,
-		CM_NEED_TO_NOTIFY_ISSUED_FAILED, CM_NOTIFYING_ISSUED_FAILED,
+		CM_NEED_TO_NOTIFY_ISSUED_SAVE_FAILED,
+		CM_NOTIFYING_ISSUED_SAVE_FAILED,
+		CM_NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED,
+		CM_NOTIFYING_ISSUED_CA_SAVE_FAILED,
 		CM_NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED,
 		CM_NOTIFYING_ONLY_CA_SAVE_FAILED,
 		CM_NEED_TO_NOTIFY_ISSUED_SAVED, CM_NOTIFYING_ISSUED_SAVED,
@@ -235,6 +264,8 @@ struct cm_store_ca {
 		cm_ca_phase_default_profile,
 		cm_ca_phase_enroll_reqs,
 		cm_ca_phase_renew_reqs,
+		cm_ca_phase_capabilities,
+		cm_ca_phase_encryption_certs,
 		cm_ca_phase_invalid,
 	} cm_ca_phase;
 	/* Data refresh state. */
@@ -305,6 +336,22 @@ struct cm_store_ca {
 	char **cm_ca_root_cert_store_nssdbs;
 	char **cm_ca_other_root_cert_store_nssdbs;
 	char **cm_ca_other_cert_store_nssdbs;
+	/* CA capabilities.  Currently only ever SCEP capabilities. */
+	char **cm_ca_capabilities;
+	/* An SCEP CA identifier, for use in gathering an RA (and possibly a
+	 * CA) certificate. */
+	char *cm_ca_scep_ca_identifier;
+	/* The CA's SCEP RA certificate, used for encrypting requests to it.
+	 * Currently only used for SCEP. */
+	char *cm_ca_encryption_cert;
+	/* The CA's SCEP CA certificate, if it's different from the RA's
+	 * certificate.  Currently only used for SCEP. */
+	char *cm_ca_encryption_issuer_cert;
+	/* The CA's SCEP certificate pool, used for other SCEP-related
+	 * certificates.  A concatenated list of PEM-format certificates, since
+	 * we don't need anything more complicated than that in order to verify
+	 * the chain on signed data coming from the RA. */
+	char *cm_ca_encryption_cert_pool;
 };
 
 const char *cm_store_state_as_string(enum cm_state state);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -29,6 +29,7 @@
 #include <nssb64.h>
 #include <cert.h>
 #include <certdb.h>
+#include <keyhi.h>
 #include <pk11pub.h>
 #include <prerror.h>
 #include <secerr.h>
@@ -44,13 +45,42 @@
 #include "subproc.h"
 #include "util-n.h"
 
+#define PRIVKEY_LIST_EMPTY(l) PRIVKEY_LIST_END(PRIVKEY_LIST_HEAD(l), l)
+
 struct cm_certsave_state {
 	struct cm_certsave_state_pvt pvt;
 	struct cm_subproc_state *subproc;
+	struct cm_store_entry *entry;
 };
 struct cm_certsave_n_settings {
 	unsigned int readwrite:1;
 };
+
+static SECKEYPrivateKey **
+add_privkey_to_list(SECKEYPrivateKey **list, SECKEYPrivateKey *key)
+{
+	SECKEYPrivateKey **newlist;
+	int i;
+
+	if (key != NULL) {
+		for (i = 0; (list != NULL) && (list[i] != NULL); i++) {
+			if (list[i] == key) {
+				SECKEY_DestroyPrivateKey(key);
+				break;
+			}
+		}
+		if ((list == NULL) || (list[i] == NULL)) {
+			newlist = malloc(sizeof(newlist[0]) * (i + 2));
+			if (newlist != NULL) {
+				memcpy(newlist, list, sizeof(newlist[0]) * i);
+				newlist[i] = key;
+				newlist[i + 1] = NULL;
+				list = newlist;
+			}
+		}
+	}
+	return list;
+}
 
 static int
 cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
@@ -61,7 +91,7 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	PLArenaPool *arena;
 	SECStatus error;
 	SECItem *item, subject;
-	char *p, *q;
+	char *p, *q, *pin;
 	const char *es;
 	NSSInitContext *ctx;
 	CERTCertDBHandle *certdb;
@@ -70,7 +100,11 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	CERTCertTrust trust;
 	CERTSignedData csdata;
 	CERTCertListNode *node;
+	SECKEYPrivateKey **privkeys = NULL, *privkey;
+	SECKEYPrivateKeyList *privkeylist;
+	SECKEYPrivateKeyListNode *knode;
 	struct cm_certsave_n_settings *settings;
+	struct cm_pin_cb_data cb_data;
 
 	if (entry->cm_cert_storage_location == NULL) {
 		cm_log(1, "Error saving certificate: no location "
@@ -135,10 +169,10 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		}
 		switch (ec) {
 		case PR_NO_ACCESS_RIGHTS_ERROR: /* EACCES or EPERM */
-			status = CM_SUB_STATUS_ERROR_PERMS;
+			status = CM_CERTSAVE_STATUS_PERMS;
 			break;
 		default:
-			status = CM_SUB_STATUS_ERROR_INITIALIZING;
+			status = CM_CERTSAVE_STATUS_INITIALIZING;
 			break;
 		}
 	} else {
@@ -154,6 +188,99 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 				cm_log(1, "Error shutting down NSS.\n");
 			}
 			_exit(CM_CERTSAVE_STATUS_INTERNAL_ERROR);
+		}
+		/* Be ready to count our uses of a PIN. */
+		memset(&cb_data, 0, sizeof(cb_data));
+		cb_data.entry = entry;
+		cb_data.n_attempts = 0;
+		pin = NULL;
+		if (cm_pin_read_for_key(entry, &pin) != 0) {
+			cm_log(1, "Error reading PIN for key store, "
+			       "failing to save certificate.\n");
+			PORT_FreeArena(arena, PR_TRUE);
+			error = NSS_ShutdownContext(ctx);
+			if (error != SECSuccess) {
+				cm_log(1, "Error shutting down NSS.\n");
+			}
+			_exit(CM_CERTSAVE_STATUS_AUTH);
+		}
+		/* Set a PIN if we're supposed to be using one and aren't using
+		 * one yet in this database. */
+		if (PK11_NeedUserInit(PK11_GetInternalKeySlot())) {
+			PK11_InitPin(PK11_GetInternalKeySlot(), NULL,
+				     pin ? pin : "");
+			ec = PORT_GetError();
+			if (ec != 0) {
+				es = PR_ErrorToName(ec);
+			} else {
+				es = NULL;
+			}
+			if (PK11_NeedUserInit(PK11_GetInternalKeySlot())) {
+				if (es != NULL) {
+					cm_log(1, "Key storage slot still "
+					       "needs user PIN to be set: "
+					       "%s.\n", es);
+				} else {
+					cm_log(1, "Key storage slot still "
+					       "needs user PIN to be set.\n");
+				}
+				PORT_FreeArena(arena, PR_TRUE);
+				error = NSS_ShutdownContext(ctx);
+				if (error != SECSuccess) {
+					cm_log(1, "Error shutting down NSS.\n");
+				}
+				switch (ec) {
+				case PR_NO_ACCESS_RIGHTS_ERROR: /* EACCES or EPERM */
+					_exit(CM_CERTSAVE_STATUS_PERMS);
+					break;
+				default:
+					_exit(CM_CERTSAVE_STATUS_AUTH);
+					break;
+				}
+			}
+			/* We're authenticated now, so count this as a use of
+			 * the PIN. */
+			if ((pin != NULL) && (strlen(pin) > 0)) {
+				cb_data.n_attempts++;
+			}
+		}
+		/* Log in, if case we need to muck around with the key
+		 * database. */
+		PK11_SetPasswordFunc(&cm_pin_read_for_key_nss_cb);
+		error = PK11_Authenticate(PK11_GetInternalKeySlot(), PR_TRUE,
+					  &cb_data);
+		ec = PORT_GetError();
+		if (error != SECSuccess) {
+			if (ec != 0) {
+				es = PR_ErrorToName(ec);
+			} else {
+				es = NULL;
+			}
+			if (es != NULL) {
+				cm_log(1, "Error authenticating to key store: %s.\n",
+				       es);
+			} else {
+				cm_log(1, "Error authenticating to key store.\n");
+			}
+			PORT_FreeArena(arena, PR_TRUE);
+			error = NSS_ShutdownContext(ctx);
+			if (error != SECSuccess) {
+				cm_log(1, "Error shutting down NSS.\n");
+			}
+			_exit(CM_CERTSAVE_STATUS_AUTH);
+		}
+		if ((pin != NULL) &&
+		    (strlen(pin) > 0) &&
+		    (cb_data.n_attempts == 0)) {
+			cm_log(1, "PIN was not needed to auth to key "
+			       "store, though one was provided. "
+			       "Treating this as an error.\n");
+			PORT_FreeArena(arena, PR_TRUE);
+			error = NSS_ShutdownContext(ctx);
+			if (error != SECSuccess) {
+				cm_log(1, "Error shutting down NSS.\n");
+			}
+			_exit(CM_CERTSAVE_STATUS_AUTH);
 		}
 		certdb = CERT_GetDefaultCertDB();
 		if (certdb != NULL) {
@@ -226,7 +353,8 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 								      NULL);
 				if (certlist != NULL) {
 					/* Look for certs with different
-					 * subject names. */
+					 * subject names but the same nickname,
+					 * because they've got to go. */
 					for (node = CERT_LIST_HEAD(certlist);
 					     (node != NULL) &&
 					     !CERT_LIST_EMPTY(certlist) &&
@@ -249,6 +377,13 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 							       node->cert->subjectName ?
 							       node->cert->subjectName :
 							       "");
+							/* Get a handle for
+							 * this certificate's
+							 * private key, in case
+							 * we need to remove
+							 * it. */
+							privkey = PK11_FindKeyByAnyCert(node->cert, NULL);
+							privkeys = add_privkey_to_list(privkeys, privkey);
 							SEC_DeletePermCertificate(node->cert);
 						}
 					}
@@ -264,7 +399,9 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 							      PR_FALSE,
 							      PR_FALSE);
 			if (certlist != NULL) {
-				/* Look for certs with different nicknames. */
+				/* Look for certs with different nicknames but
+				 * the same subject name, because those have
+				 * got to go. */
 				i = 0;
 				for (node = CERT_LIST_HEAD(certlist);
 				     (node != NULL) &&
@@ -286,6 +423,12 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 						       node->cert->subjectName ?
 						       node->cert->subjectName :
 						       "");
+						/* Get a handle for this
+						 * certificate's private key,
+						 * in case we need to remove
+						 * it. */
+						privkey = PK11_FindKeyByAnyCert(node->cert, NULL);
+						privkeys = add_privkey_to_list(privkeys, privkey);
 						SEC_DeletePermCertificate(node->cert);
 					} else {
 						/* Same nickname, and we
@@ -391,6 +534,13 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 							       "different "
 							       "contents, "
 							       "removing it.\n");
+							/* Get a handle for
+							 * this certificate's
+							 * private key, in case
+							 * we need to remove
+							 * it. */
+							privkey = PK11_FindKeyByAnyCert(node->cert, NULL);
+							privkeys = add_privkey_to_list(privkeys, privkey);
 							SEC_DeletePermCertificate(node->cert);
 						}
 					}
@@ -421,8 +571,109 @@ cm_certsave_n_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 					break;
 				}
 			}
-			if (returned != NULL) {
+			/* If we managed to import the certificate, mark its
+			 * key for having its nickname removed. */
+			if ((returned != NULL) && (returned[0] != NULL)) {
+				privkey = PK11_FindKeyByAnyCert(returned[0], NULL);
+				privkeys = add_privkey_to_list(privkeys, privkey);
 				CERT_DestroyCertArray(returned, 1);
+			}
+			/* In case we're rekeying, but failed, mark the
+			 * candidate key for name-clearing or removal, too. */
+			if ((entry->cm_key_next_marker != NULL) &&
+			    (strlen(entry->cm_key_next_marker) > 0)) {
+				p = util_build_next_nickname(entry->cm_key_nickname,
+							     entry->cm_key_next_marker);
+				privkeylist = PK11_ListPrivKeysInSlot(PK11_GetInternalKeySlot(), p, NULL);
+				if (privkeylist != NULL) {
+					for (knode = PRIVKEY_LIST_HEAD(privkeylist);
+					     !PRIVKEY_LIST_EMPTY(privkeylist) &&
+					     !PRIVKEY_LIST_END(knode, privkeylist);
+					     knode = PRIVKEY_LIST_NEXT(knode)) {
+						q = PK11_GetPrivateKeyNickname(knode->key);
+						if ((q != NULL) &&
+						    (strcmp(p, q) == 0)) {
+							privkey = SECKEY_CopyPrivateKey(knode->key);
+							privkeys = add_privkey_to_list(privkeys, privkey);
+							break;
+						}
+					}
+					SECKEY_DestroyPrivateKeyList(privkeylist);
+				}
+			}
+			if (privkeys != NULL) {
+				/* Check if any certificates are still using
+				 * the keys that correspond to certificates
+				 * that we removed. */
+				for (i = 0; privkeys[i] != NULL; i++) {
+					privkey = privkeys[i];
+					oldcert = PK11_GetCertFromPrivateKey(privkey);
+					if (!entry->cm_key_preserve && (oldcert == NULL)) {
+						/* We're not preserving
+						 * orphaned keys, so remove
+						 * this one.  No need to mess
+						 * with its nickname first. */
+						PK11_DeleteTokenPrivateKey(privkey, PR_FALSE);
+						if (error == SECSuccess) {
+							cm_log(3, "Removed old key.\n");
+						} else {
+							ec = PORT_GetError();
+							if (ec != 0) {
+								es = PR_ErrorToName(ec);
+							} else {
+								es = NULL;
+							}
+							if (es != NULL) {
+								cm_log(0, "Failed "
+								       "to remove "
+								       "old key: "
+								       "%s.\n", es);
+							} else {
+								cm_log(0, "Failed "
+								       "to remove "
+								       "old key.\n");
+							}
+						}
+					} else {
+						/* Remove the explicit
+						 * nickname, so that the key
+						 * will have to be found using
+						 * the certificate's nickname,
+						 * and certutil will display
+						 * the matching certificate's
+						 * nickname when it's asked to
+						 * list the keys in the
+						 * database. */
+						error = PK11_SetPrivateKeyNickname(privkey, "");
+						if (error == SECSuccess) {
+							cm_log(3, "Removed "
+							       "name from old "
+							       "key.\n");
+						} else {
+							ec = PORT_GetError();
+							if (ec != 0) {
+								es = PR_ErrorToName(ec);
+							} else {
+								es = NULL;
+							}
+							if (es != NULL) {
+								cm_log(0, "Failed "
+								       "to unname "
+								       "old key: "
+								       "%s.\n", es);
+							} else {
+								cm_log(0, "Failed "
+								       "to unname "
+								       "old key.\n");
+							}
+						}
+					}
+					SECKEY_DestroyPrivateKey(privkey);
+					if (oldcert != NULL) {
+						CERT_DestroyCertificate(oldcert);
+					}
+				}
+				free(privkeys);
 			}
 		} else {
 			cm_log(1, "Error getting handle to default NSS DB.\n");
@@ -461,6 +712,19 @@ cm_certsave_n_saved(struct cm_certsave_state *state)
 	if (!WIFEXITED(status) || (WEXITSTATUS(status) != CM_CERTSAVE_STATUS_SAVED)) {
 		return -1;
 	}
+	if ((state->entry->cm_key_next_marker != NULL) &&
+	    (strlen(state->entry->cm_key_next_marker) > 0)) {
+		state->entry->cm_key_requested_count =
+			state->entry->cm_key_next_requested_count;
+		state->entry->cm_key_next_requested_count = 0;
+		state->entry->cm_key_generated_date =
+			state->entry->cm_key_next_generated_date;
+		state->entry->cm_key_next_generated_date = 0;
+		state->entry->cm_key_issued_count = 1;
+	} else {
+		state->entry->cm_key_issued_count++;
+	}
+	state->entry->cm_key_next_marker = NULL;
 	return 0;
 }
 
@@ -504,6 +768,33 @@ cm_certsave_n_permissions_error(struct cm_certsave_state *state)
 	return 0;
 }
 
+/* Check if we failed because the right token wasn't present. */
+static int
+cm_certsave_n_token_error(struct cm_certsave_state *state)
+{
+	int status;
+	status = cm_subproc_get_exitstatus(state->subproc);
+	if (!WIFEXITED(status) ||
+	    (WEXITSTATUS(status) != CM_CERTSAVE_STATUS_NO_TOKEN)) {
+		return -1;
+	}
+	return 0;
+}
+
+/* Check if we failed because we didn't have the right PIN or password to
+ * access the storage location. */
+static int
+cm_certsave_n_pin_error(struct cm_certsave_state *state)
+{
+	int status;
+	status = cm_subproc_get_exitstatus(state->subproc);
+	if (!WIFEXITED(status) ||
+	    (WEXITSTATUS(status) != CM_CERTSAVE_STATUS_AUTH)) {
+		return -1;
+	}
+	return 0;
+}
+
 /* Clean up after saving the certificate. */
 static void
 cm_certsave_n_done(struct cm_certsave_state *state)
@@ -536,7 +827,10 @@ cm_certsave_n_start(struct cm_store_entry *entry)
 		state->pvt.conflict_subject = cm_certsave_n_conflict_subject;
 		state->pvt.conflict_nickname = cm_certsave_n_conflict_nickname;
 		state->pvt.permissions_error = cm_certsave_n_permissions_error;
+		state->pvt.token_error = cm_certsave_n_token_error;
+		state->pvt.pin_error = cm_certsave_n_pin_error;
 		state->pvt.done= cm_certsave_n_done;
+		state->entry = entry;
 		state->subproc = cm_subproc_start(cm_certsave_n_main, state,
 						  NULL, entry, &settings);
 		if (state->subproc == NULL) {

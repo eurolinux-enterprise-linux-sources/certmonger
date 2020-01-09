@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010,2014 Red Hat, Inc.
+ * Copyright (C) 2010,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -31,6 +31,9 @@ cm_prefs_nss_sig_alg(SECKEYPrivateKey *pkey)
 	switch (pkey->keyType) {
 	case nullKey:
 		switch (cm_prefs_preferred_digest()) {
+		case cm_prefs_md5:
+			return SEC_OID_MD5;
+			break;
 		case cm_prefs_sha1:
 			return SEC_OID_SHA1;
 			break;
@@ -48,6 +51,9 @@ cm_prefs_nss_sig_alg(SECKEYPrivateKey *pkey)
 		break;
 	case rsaKey:
 		switch (cm_prefs_preferred_digest()) {
+		case cm_prefs_md5:
+			return SEC_OID_PKCS1_MD5_WITH_RSA_ENCRYPTION;
+			break;
 		case cm_prefs_sha1:
 			return SEC_OID_PKCS1_SHA1_WITH_RSA_ENCRYPTION;
 			break;
@@ -68,6 +74,7 @@ cm_prefs_nss_sig_alg(SECKEYPrivateKey *pkey)
 		break;
 	case dsaKey:
 		switch (cm_prefs_preferred_digest()) {
+		case cm_prefs_md5:
 		case cm_prefs_sha1:
 			return SEC_OID_ANSIX9_DSA_SIGNATURE_WITH_SHA1_DIGEST;
 			break;
@@ -82,6 +89,7 @@ cm_prefs_nss_sig_alg(SECKEYPrivateKey *pkey)
 		break;
 	case ecKey:
 		switch (cm_prefs_preferred_digest()) {
+		case cm_prefs_md5:
 		case cm_prefs_sha1:
 			return SEC_OID_ANSIX962_ECDSA_SHA224_SIGNATURE;
 			break;
@@ -101,4 +109,50 @@ cm_prefs_nss_sig_alg(SECKEYPrivateKey *pkey)
 		return SEC_OID_UNKNOWN;
 		break;
 	}
+}
+
+unsigned int
+cm_prefs_nss_dig_alg(void)
+{
+	switch (cm_prefs_preferred_digest()) {
+	case cm_prefs_md5:
+		return SEC_OID_MD5;
+		break;
+	case cm_prefs_sha1:
+		return SEC_OID_SHA1;
+		break;
+	case cm_prefs_sha256:
+		return SEC_OID_SHA256;
+		break;
+	case cm_prefs_sha384:
+		return SEC_OID_SHA384;
+		break;
+	case cm_prefs_sha512:
+		return SEC_OID_SHA512;
+		break;
+	}
+	return SEC_OID_SHA256;
+}
+
+unsigned int
+cm_prefs_nss_dig_alg_len(void)
+{
+	switch (cm_prefs_nss_dig_alg()) {
+	case SEC_OID_MD5:
+		return 128 / 8;
+		break;
+	case SEC_OID_SHA1:
+		return 160 / 8;
+		break;
+	case SEC_OID_SHA256:
+		return 256 / 8;
+		break;
+	case SEC_OID_SHA384:
+		return 384 / 8;
+		break;
+	case SEC_OID_SHA512:
+		return 512 / 8;
+		break;
+	}
+	return 0;
 }

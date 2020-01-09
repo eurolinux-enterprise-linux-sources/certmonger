@@ -27,9 +27,12 @@
 #include "util-o.h"
 
 const EVP_MD *
-cm_prefs_ossl_hash(void)
+cm_prefs_ossl_hash_by_pref(enum cm_prefs_digest digest)
 {
-	switch (cm_prefs_preferred_digest()) {
+	switch (digest) {
+	case cm_prefs_md5:
+		return EVP_md5();
+		break;
 	case cm_prefs_sha1:
 		return EVP_sha1();
 		break;
@@ -46,10 +49,22 @@ cm_prefs_ossl_hash(void)
 	return EVP_sha256();
 }
 
-const EVP_CIPHER *
-cm_prefs_ossl_cipher(void)
+const EVP_MD *
+cm_prefs_ossl_hash(void)
 {
-	switch (cm_prefs_preferred_cipher()) {
+	return cm_prefs_ossl_hash_by_pref(cm_prefs_preferred_digest());
+}
+
+const EVP_CIPHER *
+cm_prefs_ossl_cipher_by_pref(enum cm_prefs_cipher cipher)
+{
+	switch (cipher) {
+	case cm_prefs_des:
+		return EVP_des_cbc();
+		break;
+	case cm_prefs_des3:
+		return EVP_des_ede3_cbc();
+		break;
 	case cm_prefs_aes128:
 		return EVP_aes_128_cbc();
 		break;
@@ -58,4 +73,10 @@ cm_prefs_ossl_cipher(void)
 		break;
 	}
 	return EVP_aes_128_cbc();
+}
+
+const EVP_CIPHER *
+cm_prefs_ossl_cipher(void)
+{
+	return cm_prefs_ossl_cipher_by_pref(cm_prefs_preferred_cipher());
 }

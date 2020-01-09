@@ -25,7 +25,7 @@
 %endif
 
 Name:		certmonger
-Version:	0.75.13
+Version:	0.77.5
 Release:	1%{?dist}
 Summary:	Certificate status monitor and PKI enrollment client
 
@@ -50,6 +50,9 @@ BuildRequires:	libcurl-devel
 BuildRequires:	curl-devel
 %endif
 BuildRequires:	libxml2-devel, xmlrpc-c-devel
+%if 0%{?rhel} < 6
+BuildRequires:	bind-libbind-devel
+%endif
 # Required for 'make check':
 #  for diff and cmp
 BuildRequires:	diffutils
@@ -68,6 +71,8 @@ BuildRequires:	/usr/bin/dos2unix
 BuildRequires:	/usr/bin/unix2dos
 #  for which
 BuildRequires:	/usr/bin/which
+#  for dbus tests
+BuildRequires:	dbus-python
 
 # we need a running system bus
 Requires:	dbus
@@ -234,6 +239,117 @@ exit 0
 %endif
 
 %changelog
+* Thu May 28 2015 Nalin Dahyabhai <nalin@redhat.com> 0.77.5-1
+- pass $CERTMONGER_REQ_IP_ADDRESS to enrollment helpers if the signing request
+  includes IP address subjectAltName values
+- correctly verify signatures on SCEP server replies when the signer is neither
+  the top-level CA nor the RA (feedback in #1161768)
+- correctly verify signatures on SCEP server replies when there is more than
+  one certificate in the chain between the RA and the top-level CA (feedback in
+  #1161768)
+
+* Fri May 15 2015 Nalin Dahyabhai <nalin@redhat.com> 0.77.4-1
+- don't display PINs in "getcert list" output (ticket #42, #1222595)
+- clean up launching of a private instance in "getcert"
+- expand on the don't-delete-private-key fix from 0.77.3 by letting NSS's
+  own safety checks have an effect
+- backport record-keeping of key generation dates and counts of how many
+  times we've gotten certificates using a given key pair
+
+* Thu May  7 2015 Nalin Dahyabhai <nalin@redhat.com> 0.77.3-1
+- fix a data loss bug when saving renewed certificates to NSS databases - the
+  private key could be removed in error since 0.77
+- fixes for bugs found by static analysis
+- fix self-tests when built with OpenSSL 1.0.2
+
+* Tue Apr 14 2015 Nalin Dahyabhai <nalin@redhat.com> 0.77.2-1
+- expose the certificate's not-valid-before and not-valid-after dates as a
+  property over D-Bus (ticket #41)
+- give the local signer its own configuration option to set the lifetime
+  of its signing certificate, falling back to the lifetime configured for
+  the self-signer as a default to match the previous behavior
+- fix a potential read segfault parsing the output of an enrollment helper,
+  introduced in 0.77 (thanks to Steve Neuharth)
+- read the ns-certtype extension value in certificates
+- request an enrollment certtype extension to CSRs if we have a profile name
+  that we want to use (ticket #17, possibly part of IPA ticket #57)
+
+* Fri Feb 27 2015 Nalin Dahyabhai <nalin@redhat.com> 0.77.1-1
+- update to 0.77
+  - add initial, still rough, SCEP support (#1140241,#1161768)
+    - add an scep-submit helper to handle part of it
+  - getcert: add add-ca/add-scep-ca/modify-ca/remove-ca commands
+  - getcert: add -l, -L flags to request/resubmit/start-tracking commands
+    to provide a way to set a ChallengePassword in signing requests
+  - lay some groundwork for rekeying support
+  - bundled dogtag enrollment helpers now output debugging info to stderr (#)
+  - ipa-getcert: fix a crash when using DNS discovery to locate servers (#39)
+  - getcert: fix displaying of pre-request pre-/post-save commands (#1178190,
+    #1181022, patch by David Kupka)
+  - use Zanata for translations
+  - getcert list: list the certificate's profile name, if it contains one
+
+* Tue Nov 18 2014 Nalin Dahyabhai <nalin@redhat.com> 0.76.8-1
+- dogtag-submit: accept additional options to pass to the server when
+  approving requests using agent creds (#1165155, patch by Jan Cholasta)
+- getcert: print help output when 'status' isn't given any args (#1163541)
+
+* Tue Nov 11 2014 Nalin Dahyabhai <nalin@redhat.com> 0.76.7-1
+- correctly read CA not-valid-after dates on 32-bit machines (also reported by
+  Natxo Asenjo), so that we don't spin on polling them (#1163023)
+
+* Mon Nov 10 2014 Nalin Dahyabhai <nalin@redhat.com> 0.76.6-1
+- don't discard the priority value in DNS SRV records
+
+* Mon Nov 10 2014 Nalin Dahyabhai <nalin@redhat.com> 0.76.5-1
+- avoid premature exit on CA data analysis failures (should fix an issue
+  reported by Natxo Asenjo)
+
+* Mon Nov 10 2014 Nalin Dahyabhai <nalin@redhat.com> 0.76.4-1
+- fix a failure in self-tests
+
+* Mon Nov 10 2014 Nalin Dahyabhai <nalin@redhat.com> 0.76.3-1
+- fixes for bugs found by static analysis
+- handle IDN correctly when doing service location using SRV records
+- documentation updates
+
+* Wed Nov  5 2014 Nalin Dahyabhai <nalin@redhat.com>
+- rework the state machine so that we save an issued certificate's associated
+  CA certificates, then re-read the certificate, then run the post hook and
+  issue notifications, in that order, instead of saving CA certificates after
+  running the post hook, which was always a surprising order (#1131700)
+- add a generic dogtag-submit helper that doesn't include any IPA defaults,
+  to make it easier to know the difference between paramenters it requires
+  and parameters which are optional (#12)
+
+* Tue Nov  4 2014 Nalin Dahyabhai <nalin@redhat.com> 0.76.2-1
+- ipa-submit: when we fail to locate/contact LDAP or XML-RPC servers,
+  use discovery to find them (#1136900)
+
+* Fri Oct 31 2014 Nalin Dahyabhai <nalin@redhat.com> 0.76.1-1
+- allow for 'certmonger -P abstract:...' to work, too
+
+* Fri Oct 31 2014 Nalin Dahyabhai <nalin@redhat.com> 0.76-1
+- require a single certificate to be specified to 'getcert status' (#1148001,
+  #1163541, #1163539)
+- shorten the default help message which getcert prints when it's not given
+  a specific command (#1131704)
+- add private listener (-l, -L, -P) mode to certmonger, to allow it to listen
+  for connections directly from clients running under the same UID
+- add a command mode (-c) to certmonger, in which once it's started, it
+  launches a specified command, and after that command exits, the daemon exits
+- when getcert is invoked with no bus running, if it's running as root, run
+  certmonger in private listener mode with the same invocation of getcert as
+  the command to start and wait for (#1134497)
+
+* Thu Aug 28 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.14-1
+- make pathname canonicalization slightly smarter, to handle ".." in
+  locations (#1131758)
+- updates to self-tests (#1144082)
+
+* Thu Aug 21 2014 Kevin Fenzi <kevin@scrye.com> - 0.75.13-2
+- Rebuild for rpm bug 1131960
+
 * Mon Aug 18 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.13-1
 - add a missing test case file (whoops)
 
@@ -241,6 +357,9 @@ exit 0
 - correct encoding/decoding of variant-typed data which we receive and send
   as part of the org.freedesktop.DBus.Properties interface over the bus, and
   add some tests for them (based on patch from David Kupka, ticket #36)
+
+* Fri Aug 15 2014 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 0.75.10-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_21_22_Mass_Rebuild
 
 * Tue Aug 12 2014 Nalin Dahyabhai <nalin@redhat.com> 0.75.11-1
 - when getcert is passed a -a flag, to indicate that CA root certificates
@@ -395,7 +514,7 @@ exit 0
 
 * Mon Feb 10 2014 Nalin Dahyabhai <nalin@redhat.com>
 - move the tmpfiles.d file from /etc/tmpfiles.d to %%{_tmpfilesdir},
-  where it belongs
+  where it belongs (#1180978)
 
 * Mon Feb 10 2014 Nalin Dahyabhai <nalin@redhat.com>
 - updates for 0.73
@@ -408,7 +527,7 @@ exit 0
   - also pass the SPKAC value to enrollment helpers in the environment as
     a base64 value in "CERTMONGER_SPKAC"
   - also pass the request's SubjectPublicKeyInfo value to enrollment helpers
-    in the environment as a base64 value in "CERTMONGER_SPKI"
+    in the environment as a base64 value in "CERTMONGER_SPKI" (part of #16)
   - when generating signing requests using NSS, be more accommodating of
     requested subject names that don't parse properly
 

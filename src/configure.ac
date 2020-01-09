@@ -1,4 +1,4 @@
-AC_INIT(certmonger,0.75.13)
+AC_INIT(certmonger,0.77.5)
 AM_INIT_AUTOMAKE([foreign subdir-objects])
 AC_CONFIG_MACRO_DIR(m4)
 AM_MAINTAINER_MODE([enable])
@@ -14,12 +14,22 @@ if test x$GCC = xyes ; then
 fi
 AC_CONFIG_HEADER(src/config.h)
 
+mybindir="$bindir"
+mybindir=`eval echo $mybindir | sed "s,NONE,$prefix,g"`
+mybindir=`eval echo $mybindir | sed "s,NONE,$exec_prefix,g"`
+mybindir=`eval echo $mybindir | sed "s,NONE,$ac_default_prefix,g"`
+mybindir=`eval echo $mybindir | sed "s,NONE,,g"`
+AC_SUBST(mybindir)
+AC_DEFINE_UNQUOTED(CM_GETCERT_DIR,"${mybindir}",
+		   [Define to the directory holding various getcert commands after installation.])
 mysbindir="$sbindir"
 mysbindir=`eval echo $mysbindir | sed "s,NONE,$prefix,g"`
 mysbindir=`eval echo $mysbindir | sed "s,NONE,$exec_prefix,g"`
 mysbindir=`eval echo $mysbindir | sed "s,NONE,$ac_default_prefix,g"`
 mysbindir=`eval echo $mysbindir | sed "s,NONE,,g"`
 AC_SUBST(mysbindir)
+AC_DEFINE_UNQUOTED(CM_CERTMONGER_DAEMON_PATH,"${mysbindir}/certmonger",
+		   [Define to the path of the certmonger daemon after installation.])
 
 UPCASE_PACKAGE_NAME=`echo "${PACKAGE_NAME}" | tr '[a-z]' '[A-Z]'`
 mysysconfdir="$sysconfdir"
@@ -46,6 +56,15 @@ mylocalstatedir="$localstatedir/lib/${PACKAGE_NAME}")
 mylocalstatedir=`eval echo $mylocalstatedir | sed "s,NONE,$prefix,g"`
 mylocalstatedir=`eval echo $mylocalstatedir | sed "s,NONE,$ac_default_prefix,g"`
 mylocalstatedir=`eval echo $mylocalstatedir | sed "s,NONE,,g"`
+
+CM_STORE_SYSTEM_LOCK_FILE="$mylocalstatedir/lock"
+CM_STORE_SYSTEM_LOCK_FILE_ENV="${UPCASE_PACKAGE_NAME}_SYSTEM_LOCK_FILE"
+AC_SUBST(CM_STORE_SYSTEM_LOCK_FILE)
+AC_SUBST(CM_STORE_SYSTEM_LOCK_FILE_ENV)
+AC_DEFINE_UNQUOTED(CM_STORE_SYSTEM_LOCK_FILE,"${CM_STORE_SYSTEM_LOCK_FILE}",
+		   [Define to the default path for the system daemon lock file.])
+AC_DEFINE_UNQUOTED(CM_STORE_SYSTEM_LOCK_FILE_ENV,"${CM_STORE_SYSTEM_LOCK_FILE_ENV}",
+		   [Define to the name of the environment variable which can specify the location of the system daemon lock file.])
 
 CM_STORE_REQUESTS_DIRECTORY="$mylocalstatedir/requests"
 CM_STORE_REQUESTS_DIRECTORY_ENV="${UPCASE_PACKAGE_NAME}_REQUESTS_DIR"
@@ -112,6 +131,10 @@ CM_NOTIFICATION_ENV="${UPCASE_PACKAGE_NAME}_NOTIFICATION"
 AC_DEFINE_UNQUOTED(CM_NOTIFICATION_ENV,"${CM_NOTIFICATION_ENV}",[Define to the variable name to be used to hold a notification message.])
 AC_SUBST(CM_NOTIFICATION_ENV)
 
+CERTMONGER_PVT_ADDRESS_ENV=CERTMONGER_PVT_ADDRESS
+AC_DEFINE_UNQUOTED(CERTMONGER_PVT_ADDRESS_ENV,"${CERTMONGER_PVT_ADDRESS_ENV}",[Define to the variable name used to pass the location of the private D-Bus connection to subprocesses.])
+AC_SUBST(CERTMONGER_PVT_ADDRESS_ENV)
+
 mylocaledir="$localedir"
 mylocaledir=`eval echo $mylocaledir | sed "s,NONE,$prefix,g"`
 mylocaledir=`eval echo $mylocaledir | sed "s,NONE,$ac_default_prefix,g"`
@@ -160,6 +183,70 @@ if ! ${configure_dist_target_only:-false} ; then
 	LIBS="$DBUS_LIBS $LIBS"
 	AC_CHECK_FUNCS(dbus_watch_get_unix_fd dbus_watch_get_fd)
 	LIBS="$savedLIBS"
+
+	savedLIBS="$LIBS"
+	RESOLV_LIBS=
+	AC_CHECK_LIB(resolv,main,RESOLV_LIBS=-lresolv)
+	LIBS="$RESOLV_LIBS"
+	AC_CHECK_HEADERS(resolv.h arpa/nameser.h)
+	have_ns_initparse=false
+	AC_LINK_IFELSE(AC_LANG_PROGRAM([
+		#ifdef HAVE_RESOLV_H
+		#include <resolv.h>
+		#endif
+		#ifdef HAVE_ARPA_NAMESER_H
+		#include <arpa/nameser.h>
+		#endif
+		],[
+		ns_msg msg;
+		ns_initparse(NULL, 0, &msg);
+		]),
+		have_ns_initparse=true,
+		LIBS="-lbind $LIBS"
+		AC_LINK_IFELSE(AC_LANG_PROGRAM([
+			#ifdef HAVE_RESOLV_H
+			#include <resolv.h>
+			#endif
+			#ifdef HAVE_ARPA_NAMESER_H
+			#include <arpa/nameser.h>
+			#endif
+			],[
+			ns_msg msg;
+			ns_initparse(NULL, 0, &msg);
+			]),
+			RESOLV_LIBS="-lbind $RESOLV_LIBS"
+			have_ns_initparse=true,
+			AC_MSG_WARN([cannot find ns_initparse() in libresolv or libbind])
+			have_ns_initparse=false
+		)
+	)
+	AC_ARG_ENABLE(srv-location,
+		      AS_HELP_STRING([--disable-srv-location],[disable SRV location for servers]),
+		      SRV=$enableval,
+		      SRV=auto)
+	case "x$SRV" in
+	xyes)
+		if ! $have_ns_initparse ; then
+			AC_MSG_ERROR([cannot build with SRV location])
+		fi
+		;;
+	xno)
+		have_ns_initparse=false
+		;;
+	xauto)
+		;;
+	esac
+	AC_MSG_CHECKING(for SRV location)
+	if $have_ns_initparse ; then
+		AC_DEFINE(HAVE_NS_INITPARSE,1,[Define if you have ns_initparse() and want to use SRV location])
+		AC_MSG_RESULT([yes, using $RESOLV_LIBS])
+	else
+		AC_MSG_RESULT(no)
+		RESOLV_LIBS=
+	fi
+	AC_SUBST(RESOLV_LIBS)
+	LIBS="$savedLIBS"
+
 	PKG_CHECK_MODULES(CERTMONGER,dbus-1 talloc tevent nss)
 	PKG_CHECK_MODULES(GETCERT,dbus-1 talloc)
 
@@ -230,12 +317,6 @@ if ! ${configure_dist_target_only:-false} ; then
 	CFLAGS="$savedCFLAGS"
 	CPPFLAGS="$savedCPPFLAGS"
 	LDFLAGS="$savedLDFLAGS"
-
-	AC_ARG_WITH(openssl,
-		    AS_HELP_STRING(--without-openssl,
-				   [build without support for storing keys and certificates in files]),
-		    withopenssl=$withval,
-		    withopenssl=yes)
 
 	AM_CONDITIONAL(HAVE_OPENSSL,test x$withopenssl != xno)
 	if test x$withopenssl != xno ; then
@@ -373,7 +454,7 @@ if ! ${configure_dist_target_only:-false} ; then
 	AC_SUBST(GMP_CFLAGS)
 	AC_SUBST(GMP_LIBS)
 	AM_CONDITIONAL(USE_GMP,test $withgmp != no)
-	if test $withgmp = no && test $withopenssl = no ; then
+	if test $withgmp = no && test x$withopenssl = xno ; then
 		AC_MSG_ERROR([Need at least one of OpenSSL or GMP for big number operations.])
 	fi
 
@@ -387,7 +468,7 @@ if ! ${configure_dist_target_only:-false} ; then
 	AC_SUBST(SYSTEMDSYSTEMUNITDIR)
 	if test x$SYSTEMD = xyes ; then
 		SYSTEMDSYSTEMUNITDIR=`pkg-config --variable=systemdsystemunitdir systemd 2> /dev/null`
-		AC_MSG_RESULT(will install systemd unit files)
+		AC_MSG_RESULT(will install systemd unit files to $SYSTEMDSYSTEMUNITDIR)
 	fi
 
 	TMPFILES=no
@@ -408,7 +489,9 @@ if ! ${configure_dist_target_only:-false} ; then
 		      SYSVINIT=no)
 	AC_SUBST(SYSVINIT)
 	AM_CONDITIONAL(SYSVINIT,test x$SYSVINIT != xno)
-	AC_MSG_RESULT(will install sysvinit init script to $SYSVINIT)
+	if test x$SYSVINIT != xno ; then
+		AC_MSG_RESULT(will install sysvinit init script to $SYSVINIT)
+	fi
 
 	AC_ARG_ENABLE(pie,
 	AS_HELP_STRING(--enable-pie,[Build position-independent executables.]),
@@ -502,6 +585,7 @@ if ! ${configure_dist_target_only:-false} ; then
 		CFLAGS="$NSS_CFLAGS $CFLAGS"
 		LIBS="$NSS_LIBS $LIBS"
 		AC_CHECK_FUNCS(SECKEY_CreateECPrivateKey)
+		AC_CHECK_FUNCS(PK11_PrivDecrypt)
 		CFLAGS="$CFLAGSsave"
 		LIBS="$LIBSsave"
 		can_ec=true
@@ -579,6 +663,7 @@ if ! ${configure_dist_target_only:-false} ; then
 	AC_DEFINE(CM_DELAY_CA_POLL,(7 * 24 * 60 * 60),[Define to the time to wait between attempts to see if the CA issued a certificate.])
 	AC_DEFINE(CM_DELAY_CADATA_POLL,(6 * 60 * 60),[Define to the time to wait between attempts to fetch the CA certificate, if it was unreachable.])
 	AC_DEFINE(CM_DELAY_CA_POLL_MINIMUM,(5 * 60),[Define to the absolute minimum time to wait between attempts to see if the CA issued a certificate.])
+	AC_DEFINE(CM_DELAY_CA_POLL_MAXIMUM,(365 * 24 * 60 * 60),[Define to the absolute maximum time to wait between attempts to see if the CA issued a certificate.])
 	AC_DEFINE(CM_DELAY_MONITOR_POLL,(24 * 60 * 60),[Define to the time to wait between attempts to re-read a certificate and check for expiration.])
 	AC_DEFINE(CM_DELAY_MONITOR_POLL_MINIMUM,(30 * 60),[Define to the absolute minimum time to wait between attempts to re-read a certificate and check for expiration.])
 	AC_DEFINE(CM_DELAY_NETLINK,(60),[Define to the time to wait after a netlink routing notification to retry submissions.])
@@ -610,6 +695,8 @@ if ! ${configure_dist_target_only:-false} ; then
 	AC_DEFINE_UNQUOTED(CM_LOCAL_HELPER_PATH,"$mylibexecdir/local-submit",[Define to the path of the local submission helper.])
 	AM_CONDITIONAL(WITH_LOCAL,true)
 
+	AC_DEFINE_UNQUOTED(CM_SCEP_HELPER_PATH,"$mylibexecdir/scep-submit",[Define to the path of the SCEP submission helper.])
+
 	CM_DEFAULT_IDLE_TIMEOUT=300
 	AC_SUBST(CM_DEFAULT_IDLE_TIMEOUT)
 	AC_DEFINE_UNQUOTED(CM_DEFAULT_IDLE_TIMEOUT,$CM_DEFAULT_IDLE_TIMEOUT,[Define to the default idle-timeout when bus-activated.])
@@ -627,7 +714,7 @@ if ! ${configure_dist_target_only:-false} ; then
 	AC_SUBST(LDAP_LIBS)
 
 	AC_ARG_WITH(idn,
-	AS_HELP_STRING([--without-idn],[do not handle international dnsName subjectAltNames]),
+	AS_HELP_STRING([--without-idn],[do not handle international dnsName subjectAltNames or international domain names during service location]),
 	if test x$with_idn = xno ; then
 		idn=false
 	else
@@ -636,7 +723,7 @@ if ! ${configure_dist_target_only:-false} ; then
 	idn=true)
 	if $idn ; then
 		PKG_CHECK_MODULES(IDN,libidn)
-		AC_DEFINE(CM_USE_IDN,1,[Define if dnsName subjectAltNames should be encoded properly.])
+		AC_DEFINE(CM_USE_IDN,1,[Define if dnsName subjectAltNames should be encoded properly, and if international domain names should be handled during service location.])
 	fi
 
 	AC_ARG_WITH(uuid,
@@ -693,4 +780,4 @@ else
 fi
 
 AC_CONFIG_COMMANDS(src_introspect_sh,[chmod +x src/introspect.sh])
-AC_OUTPUT(Makefile src/Makefile dbus/Makefile systemd/Makefile sysvinit/Makefile sysvinit/certmonger tests/Makefile tests/tools/Makefile dbus/certmonger.conf dbus/certmonger.service src/introspect.sh src/certmonger.8 src/getcert.1 src/getcert-request.1 src/getcert-list.1 src/getcert-list-cas.1 src/getcert-start-tracking.1 src/getcert-stop-tracking.1 src/selfsign-getcert.1 src/ipa-getcert.1 src/getcert-resubmit.1 src/certmonger-certmaster-submit.8 src/certmonger-ipa-submit.8 src/certmonger-dogtag-ipa-renew-agent-submit.8 src/certmaster-getcert.1 src/certmonger.conf.5 po/Makefile.in src/certmonger.conf systemd/certmonger.service systemd/certmonger.path systemd/certmonger.conf systemd/org.fedorahosted.certmonger.service src/getcert-refresh.1 src/getcert-refresh-ca.1 src/local-getcert.1 src/certmonger-local-submit.8 src/getcert-status.1)
+AC_OUTPUT(Makefile src/Makefile dbus/Makefile systemd/Makefile sysvinit/Makefile sysvinit/certmonger tests/Makefile tests/tools/Makefile dbus/certmonger.conf dbus/certmonger.service src/introspect.sh src/certmonger.8 src/getcert.1 src/getcert-request.1 src/getcert-list.1 src/getcert-list-cas.1 src/getcert-start-tracking.1 src/getcert-stop-tracking.1 src/selfsign-getcert.1 src/ipa-getcert.1 src/getcert-resubmit.1 src/certmonger-certmaster-submit.8 src/certmonger-ipa-submit.8 src/certmonger-dogtag-ipa-renew-agent-submit.8 src/certmaster-getcert.1 src/certmonger.conf.5 po/Makefile.in src/certmonger.conf systemd/certmonger.service systemd/certmonger.path systemd/certmonger.conf systemd/org.fedorahosted.certmonger.service src/getcert-refresh.1 src/getcert-refresh-ca.1 src/local-getcert.1 src/certmonger-local-submit.8 src/getcert-status.1 src/certmonger-dogtag-submit.8 src/certmonger-scep-submit.8 src/getcert-add-ca.1 src/getcert-add-scep-ca.1 src/getcert-modify-ca.1 src/getcert-remove-ca.1)

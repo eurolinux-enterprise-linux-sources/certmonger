@@ -58,9 +58,9 @@ main(int argc, char **argv)
 	long l;
 	pid_t pid;
 	FILE *pfp;
-	const char *pidfile = NULL, *tmpdir, *gate_command = NULL;
-	char *env_tmpdir, *hint;
-	dbus_bool_t dofork;
+	const char *pidfile = NULL, *tmpdir, *gate_command = NULL, *path = NULL;
+	char *env_tmpdir, *hint, *address;
+	dbus_bool_t dofork, server, server_only;
 	enum force_fips_mode forcefips;
 	int bustime;
 	DBusError error;
@@ -69,6 +69,8 @@ main(int argc, char **argv)
 	dofork = cm_env_default_fork();
 	bustime = cm_env_default_bus_timeout();
 	forcefips = do_not_force_fips;
+	server = FALSE;
+	server_only = FALSE;
 
 #ifdef ENABLE_NLS
 	bindtextdomain(PACKAGE, MYLOCALEDIR);
@@ -87,13 +89,23 @@ main(int argc, char **argv)
 		exit(1);
 	};
 
-	while ((c = getopt(argc, argv, "sSp:fb:Bd:nFc:")) != -1) {
+	while ((c = getopt(argc, argv, "sSp:fb:Bd:nFlLP:c:")) != -1) {
 		switch (c) {
 		case 's':
 			bus = cm_tdbus_session;
 			break;
 		case 'S':
 			bus = cm_tdbus_system;
+			break;
+		case 'l':
+			server = TRUE;
+			break;
+		case 'L':
+			server = TRUE;
+			server_only = TRUE;
+			break;
+		case 'P':
+			path = optarg;
 			break;
 		case 'c':
 			bustime = 0;
@@ -125,15 +137,18 @@ main(int argc, char **argv)
 			printf(_("Usage: %s [-s|-S] [-n|-f] [-d LEVEL] "
 				 "[-p FILE] [-F]\n"),
 			       cm_env_whoami());
-			printf("%s%s%s%s%s%s%s%s%s%s",
+			printf("%s%s%s%s%s%s%s%s%s%s%s%s%s",
 			       _("\t-s         use session bus\n"),
 			       _("\t-S         use system bus\n"),
+			       _("\t-l         start a dedicated listening socket\n"),
+			       _("\t-L         only use a dedicated listening socket\n"),
+			       _("\t-P PATH    specify the dedicated listening socket\n"),
 			       _("\t-n         don't become a daemon\n"),
 			       _("\t-f         do become a daemon\n"),
 			       _("\t-b TIMEOUT bus-activated, idle timeout\n"),
 			       _("\t-B         don't use an idle timeout\n"),
 			       _("\t-d LEVEL   set debugging level (implies -n)\n"),
-			       _("\t-c COMMAND run COMMAND and exit when it does\n"),
+			       _("\t-c COMMAND start COMMAND and exit when it does\n"),
 			       _("\t-p FILE    write service PID to file\n"),
 			       _("\t-F         force NSS into FIPS mode\n"));
 			exit(1);
@@ -172,11 +187,14 @@ main(int argc, char **argv)
 	umask(S_IRWXG | S_IRWXO);
 
 	switch (bus) {
+	case cm_tdbus_private:
 	case cm_tdbus_system:
+		cm_log(2, "Changing to root directory.\n");
 		if (chdir("/") != 0) {
 			cm_log(0, "Error in chdir(\"/\"): %s.\n",
 			       strerror(errno));
 		}
+		cm_log(2, "Obtaining system lock.\n");
 		break;
 	case cm_tdbus_session:
 		cm_log(2, "Changing to config directory.\n");
@@ -185,32 +203,32 @@ main(int argc, char **argv)
 			       cm_env_config_dir(), strerror(errno));
 		}
 		cm_log(2, "Obtaining session lock.\n");
-		lfd = open(cm_env_lock_file(), O_RDWR | O_CREAT,
-			   S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
-		if (lfd == -1) {
-			fprintf(stderr, "Error opening lockfile \"%s\": %s\n",
-				cm_env_lock_file(), strerror(errno));
-			exit(1);
-		}
-		if (lockf(lfd, F_LOCK, 0) != 0) {
-			fprintf(stderr, "Error locking lockfile \"%s\": %s\n",
+		break;
+	}
+	lfd = open(cm_env_lock_file(), O_RDWR | O_CREAT,
+		   S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (lfd == -1) {
+		fprintf(stderr, "Error opening lockfile \"%s\": %s\n",
+			cm_env_lock_file(), strerror(errno));
+		exit(1);
+	}
+	if (lockf(lfd, F_LOCK, 0) != 0) {
+		fprintf(stderr, "Error locking lockfile \"%s\": %s\n",
+			cm_env_lock_file(), strerror(errno));
+		close(lfd);
+		exit(1);
+	}
+	l = fcntl(lfd, F_GETFD);
+	if (l != -1) {
+		l = fcntl(lfd, F_SETFD, l | FD_CLOEXEC);
+		if (l == -1) {
+			fprintf(stderr,
+				"Error setting close-on-exec flag on "
+				"\"%s\": %s\n",
 				cm_env_lock_file(), strerror(errno));
 			close(lfd);
 			exit(1);
 		}
-		l = fcntl(lfd, F_GETFD);
-		if (l != -1) {
-			l = fcntl(lfd, F_SETFD, l | FD_CLOEXEC);
-			if (l == -1) {
-				fprintf(stderr,
-					"Error setting close-on-exec flag on "
-					"\"%s\": %s\n",
-					cm_env_lock_file(), strerror(errno));
-				close(lfd);
-				exit(1);
-			}
-		}
-		break;
 	}
 
 	ctx = NULL;
@@ -221,14 +239,29 @@ main(int argc, char **argv)
 		exit(1);
 	}
 
-	if (cm_tdbus_setup(ec, bus, ctx, &error) != 0) {
-		fprintf(stderr, "Error connecting to D-Bus.\n");
-		hint = cm_tdbusm_hint(ec, error.name, error.message);
-		if (hint != NULL) {
-			fprintf(stderr, "%s", hint);
+	if (!server_only) {
+		if (cm_tdbus_setup_public(ec, bus, ctx, &error) != 0) {
+			fprintf(stderr, "Error connecting to D-Bus.\n");
+			hint = cm_tdbusm_hint(ec, error.name, error.message);
+			if (hint != NULL) {
+				fprintf(stderr, "%s", hint);
+			}
+			talloc_free(ec);
+			exit(1);
 		}
-		talloc_free(ec);
-		exit(1);
+	}
+	if (server) {
+		if (cm_tdbus_setup_private(ec, ctx, path, &address,
+					   &error) != 0) {
+			fprintf(stderr, "Error setting up D-Bus listener.\n");
+			hint = cm_tdbusm_hint(ec, error.name, error.message);
+			if (hint != NULL) {
+				fprintf(stderr, "%s", hint);
+			}
+			talloc_free(ec);
+			exit(1);
+		}
+		cm_set_server_address(ctx, address);
 	}
 
 	if (pidfile != NULL) {

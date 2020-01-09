@@ -42,6 +42,9 @@ static struct cm_tdbusm_dict *cm_tdbusm_get_d_value(DBusMessageIter *item,
 						    struct cm_tdbusm_dict *dict);
 static int cm_tdbusm_append_d(DBusMessage *msg, DBusMessageIter *args,
 			      const struct cm_tdbusm_dict **d);
+static int cm_tdbusm_append_d_value(DBusMessage *msg, DBusMessageIter *args,
+				    enum cm_tdbusm_dict_value_type value_type,
+				    const union cm_tdbusm_variant *value);
 
 static int
 cm_tdbusm_array_length(const char **array)
@@ -172,6 +175,44 @@ cm_tdbusm_get_p(DBusMessage *msg, void *parent, char **p)
 		}
 		return -1;
 	}
+}
+
+int
+cm_tdbusm_get_vs(DBusMessage *msg, void *parent, char **s)
+{
+	DBusError err;
+	DBusMessageIter iter, sub_iter;
+
+	*s = NULL;
+	dbus_error_init(&err);
+
+	if (dbus_message_iter_init(msg, &iter) == FALSE) {
+		if (dbus_error_is_set(&err)) {
+			cm_log(3, "DBus error: %s", err.message);
+			dbus_error_free(&err);
+		} else {
+			cm_log(3, "Unknown DBus error.");
+		}
+		return -1;
+	}
+
+	if (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_VARIANT) {
+		dbus_message_iter_recurse(&iter, &sub_iter);
+		if (dbus_message_iter_get_arg_type(&sub_iter) == DBUS_TYPE_STRING) {
+			dbus_message_iter_get_basic(&sub_iter, s);
+			*s = *s ? talloc_strdup(parent, *s) : NULL;
+			return 0;
+		}
+	}
+
+	if (dbus_error_is_set(&err)) {
+		cm_log(3, "Failed to extract data from DBus message: %s", err.message);
+		dbus_error_free(&err);
+	} else {
+		cm_log(3, "Failed to extract data from DBus message.");
+	}
+	*s = NULL;
+	return -1;
 }
 
 int
@@ -1582,6 +1623,26 @@ cm_tdbusm_set_sss(DBusMessage *msg, const char *s1, const char *s2,
 	} else {
 		return -1;
 	}
+}
+
+int
+cm_tdbusm_set_ssvs(DBusMessage *msg, const char *s1, const char *s2,
+		   const char *s3)
+{
+	DBusMessageIter args;
+	union cm_tdbusm_variant v;
+	char *p;
+
+	memset(&args, 0, sizeof(args));
+	dbus_message_iter_init_append(msg, &args);
+	dbus_message_iter_append_basic(&args, DBUS_TYPE_STRING, &s1);
+	dbus_message_iter_append_basic(&args, DBUS_TYPE_STRING, &s2);
+	p = strdup(s3);
+	memset(&v, 0, sizeof(v));
+	v.s = p;
+	cm_tdbusm_append_d_value(msg, &args, cm_tdbusm_dict_s, &v);
+	free(p);
+	return 0;
 }
 
 int

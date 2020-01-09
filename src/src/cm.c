@@ -28,10 +28,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <dbus/dbus.h>
+
 #include <talloc.h>
 #include <tevent.h>
-
-#include <dbus/dbus.h>
 
 #include "cm.h"
 #include "log.h"
@@ -40,6 +40,7 @@
 #include "store.h"
 #include "store-int.h"
 #include "subproc.h"
+#include "tdbus.h"
 #include "tdbush.h"
 #include "tm.h"
 
@@ -61,6 +62,7 @@ struct cm_context {
 	void *netlink_tfd, *netlink_delayed_event;
 	int idle_timeout;
 	void *idle_event, *conn_ptr;
+	char *server_address;
 	struct {
 		void *tfd;
 		char *command;
@@ -262,6 +264,10 @@ cm_reset_timeout(struct cm_context *context)
 						       then,
 						       cm_timeout_h,
 						       context);
+	} else if (context->idle_timeout > 0) {
+		cm_log(1, "There are active certificates and requests, "
+		       "ignoring idle timeout.\n");
+		context->idle_timeout = 0;
 	}
 }
 
@@ -740,13 +746,20 @@ cm_gate_run(int fd, struct cm_store_ca *ca, struct cm_store_entry *e,
 	const char *error = NULL;
 	unsigned char u;
 
-	cm_subproc_mark_most_cloexec(fd);
+	cm_subproc_mark_most_cloexec(fd, STDOUT_FILENO, STDERR_FILENO);
 	argv = cm_subproc_parse_args(NULL, ctx->gate.command, &error);
 	if (argv == NULL) {
 		cm_log(1, "Error parsing '%s'.\n", ctx->gate.command);
 		return -1;
 	}
-	cm_log(1, "Running gate command \"%s\".\n", argv[0]);
+	cm_log(1, "Running gate command \"%s\" (\"%s\").\n", argv[0],
+	       ctx->gate.command);
+	if (ctx->server_address != NULL) {
+		setenv(CERTMONGER_PVT_ADDRESS_ENV, ctx->server_address, 1);
+	}
+	signal(SIGHUP, SIG_DFL);
+	signal(SIGINT, SIG_DFL);
+	signal(SIGTERM, SIG_DFL);
 	execvp(argv[0], argv);
 	u = errno;
 	if (write(fd, &u, 1) != 1) {
@@ -926,6 +939,24 @@ cm_restart_entry(struct cm_context *context, const char *nickname)
 {
 	return cm_stop_entry(context, nickname) &&
 	       cm_start_entry(context, nickname);
+}
+
+dbus_bool_t
+cm_restart_entries_by_ca(struct cm_context *context, const char *nickname)
+{
+	struct cm_store_entry *entry;
+	dbus_bool_t status = FALSE, this;
+	int i, n = 0;
+
+	for (i = 0; i < context->n_entries; i++) {
+		entry = context->entries[i];
+		if ((entry->cm_ca_nickname != NULL) &&
+		    (strcmp(entry->cm_ca_nickname, nickname) == 0)) {
+			this = cm_restart_entry(context, entry->cm_nickname);
+			status = n++ ? this && status : this;
+		}
+	}
+	return status;
 }
 
 struct cm_store_entry *
@@ -1184,4 +1215,16 @@ void
 cm_set_conn_ptr(struct cm_context *context, void *ptr)
 {
 	context->conn_ptr = ptr;
+}
+
+const char *
+cm_get_server_address(struct cm_context *context)
+{
+	return context->server_address;
+}
+
+void
+cm_set_server_address(struct cm_context *context, const char *address)
+{
+	context->server_address = talloc_strdup(context, address);
 }

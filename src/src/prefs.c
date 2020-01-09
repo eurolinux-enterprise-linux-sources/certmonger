@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010,2011,2012,2014 Red Hat, Inc.
+ * Copyright (C) 2010,2011,2012,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -107,6 +107,14 @@ cm_prefs_preferred_cipher(void)
 			free(cipher);
 			return cm_prefs_aes256;
 		}
+		if (strcasecmp(cipher, "des") == 0) {
+			free(cipher);
+			return cm_prefs_des;
+		}
+		if (strcasecmp(cipher, "des3") == 0) {
+			free(cipher);
+			return cm_prefs_des3;
+		}
 		free(cipher);
 	}
 	return cm_prefs_aes128;
@@ -118,6 +126,11 @@ cm_prefs_preferred_digest(void)
 	char *digest;
 	digest = cm_prefs_config(NULL, "digest");
 	if (digest != NULL) {
+		if ((strcasecmp(digest, "md5") == 0) ||
+		    (strcasecmp(digest, "md-5") == 0)) {
+			free(digest);
+			return cm_prefs_md5;
+		}
 		if ((strcasecmp(digest, "sha1") == 0) ||
 		    (strcasecmp(digest, "sha-1") == 0)) {
 			free(digest);
@@ -267,13 +280,30 @@ cm_prefs_default_ca(void)
 }
 
 const char *
-cm_prefs_validity_period(void)
+cm_prefs_selfsign_validity_period(void)
 {
 	static const char *period;
 	if (period == NULL) {
 		period = cm_prefs_config("selfsign", "validity_period");
 		if (period == NULL) {
 			period = CM_DEFAULT_CERT_LIFETIME;
+		}
+	}
+	return period;
+}
+
+const char *
+cm_prefs_local_validity_period(void)
+{
+	static const char *period;
+
+	if (period == NULL) {
+		period = cm_prefs_config("local", "validity_period");
+		if (period == NULL) {
+			period = cm_prefs_config("selfsign", "validity_period");
+			if (period == NULL) {
+				period = CM_DEFAULT_CERT_LIFETIME;
+			}
 		}
 	}
 	return period;

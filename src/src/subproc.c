@@ -72,7 +72,7 @@ cm_subproc_start(int (*cb)(int fd,
 	struct cm_subproc_state *state;
 	int fds[2];
 	long flags;
-	char *configdir, *tmpdir, *tmp, *homedir, *bus, *local;
+	char *configdir, *tmpdir, *tmp, *homedir, *bus, *local, *pvt;
 
 	state = talloc_ptrtype(parent, state);
 	if (state != NULL) {
@@ -105,6 +105,8 @@ cm_subproc_start(int (*cb)(int fd,
 				bus = bus ? strdup(bus) : NULL;
 				local = cm_env_local_ca_dir();
 				local = local ? strdup(local) : NULL;
+				pvt = getenv(CERTMONGER_PVT_ADDRESS_ENV);
+				pvt = pvt ? strdup(pvt) : NULL;
 				clear_environment();
 				setenv("HOME", homedir, 1);
 				setenv("PATH", _PATH_STDPATH, 1);
@@ -121,12 +123,16 @@ cm_subproc_start(int (*cb)(int fd,
 					setenv("DBUS_SESSION_BUS_ADDRESS", bus,
 					       1);
 				}
+				if (pvt != NULL) {
+					setenv(CERTMONGER_PVT_ADDRESS_ENV, pvt,
+					       1);
+				}
 				if (local != NULL) {
 					setenv(CM_STORE_LOCAL_CA_DIRECTORY_ENV,
 					       local, 1);
 				}
 
-				exit((*cb)(fds[1], ca, entry, data));
+				_exit((*cb)(fds[1], ca, entry, data));
 				break;
 			default:
 				state->fd = fds[0];
@@ -379,11 +385,13 @@ cm_subproc_parse_args(void *parent, const char *cmdline, const char **error)
 /* Redirect stdio to /dev/null, and mark everything else as close-on-exec,
  * except for perhaps one of them that is passed in by number. */
 void
-cm_subproc_mark_most_cloexec(int fd)
+cm_subproc_mark_most_cloexec(int fd, int fd2, int fd3)
 {
 	int i;
 	long l;
-	if (fd != STDIN_FILENO) {
+	if ((fd != STDIN_FILENO) &&
+	    (fd2 != STDIN_FILENO) &&
+	    (fd3 != STDIN_FILENO)) {
 		i = open("/dev/null", O_RDONLY);
 		if (i != -1) {
 			if (i != STDIN_FILENO) {
@@ -394,7 +402,9 @@ cm_subproc_mark_most_cloexec(int fd)
 			close(STDIN_FILENO);
 		}
 	}
-	if (fd != STDOUT_FILENO) {
+	if ((fd != STDOUT_FILENO) &&
+	    (fd2 != STDOUT_FILENO) &&
+	    (fd3 != STDOUT_FILENO)) {
 		i = open("/dev/null", O_WRONLY);
 		if (i != -1) {
 			if (i != STDOUT_FILENO) {
@@ -405,7 +415,9 @@ cm_subproc_mark_most_cloexec(int fd)
 			close(STDOUT_FILENO);
 		}
 	}
-	if (fd != STDERR_FILENO) {
+	if ((fd != STDERR_FILENO) &&
+	    (fd2 != STDERR_FILENO) &&
+	    (fd3 != STDERR_FILENO)) {
 		i = open("/dev/null", O_WRONLY);
 		if (i != -1) {
 			if (i != STDERR_FILENO) {
@@ -417,7 +429,9 @@ cm_subproc_mark_most_cloexec(int fd)
 		}
 	}
 	for (i = getdtablesize() - 1; i >= 3; i--) {
-		if (i == fd) {
+		if ((i == fd) ||
+		    (i == fd2) ||
+		    (i == fd3)) {
 			continue;
 		}
 		l = fcntl(i, F_GETFD);

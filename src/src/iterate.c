@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -40,6 +40,7 @@
 #include "log.h"
 #include "notify.h"
 #include "prefs.h"
+#include "scepgen.h"
 #include "store.h"
 #include "store-int.h"
 #include "submit.h"
@@ -49,6 +50,7 @@ struct cm_entry_state {
 	struct cm_keygen_state *cm_keygen_state;
 	struct cm_keyiread_state *cm_keyiread_state;
 	struct cm_csrgen_state *cm_csrgen_state;
+	struct cm_scepgen_state *cm_scepgen_state;
 	struct cm_submit_state *cm_submit_state;
 	struct cm_certsave_state *cm_certsave_state;
 	struct cm_hook_state *cm_hook_state;
@@ -59,8 +61,10 @@ struct cm_entry_state {
 
 struct cm_ca_state {
 	enum cm_ca_phase cm_phase;
-	struct cm_ca_analyze_state *cm_ca_analyze_state;
-	time_t cm_refresh_delay;
+	struct cm_ca_analyze_state *cm_ca_cert_analyze_state;
+	struct cm_ca_analyze_state *cm_ca_ecert_analyze_state;
+	time_t cm_cert_refresh_delay;
+	time_t cm_ecert_refresh_delay;
 	struct cm_cadata_state *cm_task_state;
 	struct cm_hook_state *cm_hook_state;
 	struct cm_casave_state *cm_casave_state;
@@ -115,6 +119,25 @@ cm_entry_reset_state(struct cm_store_entry *entry)
 		break;
 	case CM_HAVE_CSR:
 		break;
+	case CM_NEED_SCEP_DATA:
+		break;
+	case CM_NEED_SCEP_GEN_TOKEN:
+		entry->cm_state = CM_NEED_SCEP_DATA;
+		break;
+	case CM_NEED_SCEP_GEN_PIN:
+		entry->cm_state = CM_NEED_SCEP_DATA;
+		break;
+	case CM_NEED_SCEP_ENCRYPTION_CERT:
+		entry->cm_state = CM_NEED_SCEP_DATA;
+		break;
+	case CM_NEED_SCEP_RSA_CLIENT_KEY:
+		entry->cm_state = CM_NEED_SCEP_DATA;
+		break;
+	case CM_GENERATING_SCEP_DATA:
+		entry->cm_state = CM_NEED_SCEP_DATA;
+		break;
+	case CM_HAVE_SCEP_DATA:
+		break;
 	case CM_NEED_TO_SUBMIT:
 		entry->cm_state = CM_HAVE_CSR;
 		break;
@@ -135,6 +158,12 @@ cm_entry_reset_state(struct cm_store_entry *entry)
 	case CM_NEED_CERTSAVE_PERMS:
 		entry->cm_state = CM_NEED_TO_SAVE_CERT;
 		break;
+	case CM_NEED_CERTSAVE_TOKEN:
+		entry->cm_state = CM_NEED_TO_SAVE_CERT;
+		break;
+	case CM_NEED_CERTSAVE_PIN:
+		entry->cm_state = CM_NEED_TO_SAVE_CERT;
+		break;
 	case CM_NEED_TO_SAVE_CA_CERTS:
 		break;
 	case CM_START_SAVING_CA_CERTS:
@@ -146,6 +175,12 @@ cm_entry_reset_state(struct cm_store_entry *entry)
 	case CM_NEED_CA_CERT_SAVE_PERMS:
 		entry->cm_state = CM_NEED_TO_SAVE_CA_CERTS;
 		break;
+	case CM_NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED:
+		entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED;
+		break;
+	case CM_NOTIFYING_ISSUED_CA_SAVE_FAILED:
+		entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED;
+		break;
 	case CM_NEED_TO_READ_CERT:
 		break;
 	case CM_READING_CERT:
@@ -154,7 +189,7 @@ cm_entry_reset_state(struct cm_store_entry *entry)
 	case CM_SAVED_CERT:
 		break;
 	case CM_POST_SAVED_CERT:
-		entry->cm_state = CM_SAVED_CERT;
+		entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_SAVED;
 		break;
 	case CM_CA_REJECTED:
 		break;
@@ -185,10 +220,10 @@ cm_entry_reset_state(struct cm_store_entry *entry)
 	case CM_NOTIFYING_REJECTION:
 		entry->cm_state = CM_NEED_TO_NOTIFY_REJECTION;
 		break;
-	case CM_NEED_TO_NOTIFY_ISSUED_FAILED:
+	case CM_NEED_TO_NOTIFY_ISSUED_SAVE_FAILED:
 		break;
-	case CM_NOTIFYING_ISSUED_FAILED:
-		entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_FAILED;
+	case CM_NOTIFYING_ISSUED_SAVE_FAILED:
+		entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_SAVE_FAILED;
 		break;
 	case CM_NEED_TO_NOTIFY_ISSUED_SAVED:
 		break;
@@ -202,6 +237,9 @@ cm_entry_reset_state(struct cm_store_entry *entry)
 		entry->cm_state = CM_NEED_TO_SAVE_ONLY_CA_CERTS;
 		break;
 	case CM_SAVING_ONLY_CA_CERTS:
+		entry->cm_state = CM_NEED_TO_SAVE_ONLY_CA_CERTS;
+		break;
+	case CM_NEED_ONLY_CA_CERT_SAVE_PERMS:
 		entry->cm_state = CM_NEED_TO_SAVE_ONLY_CA_CERTS;
 		break;
 	case CM_NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED:
@@ -273,6 +311,9 @@ cm_decide_ca_delay(time_t remaining)
 		delay = remaining / 2;
 		if (delay < CM_DELAY_CA_POLL_MINIMUM) {
 			delay = CM_DELAY_CA_POLL_MINIMUM;
+		}
+		if (delay > CM_DELAY_CA_POLL_MAXIMUM) {
+			delay = CM_DELAY_CA_POLL_MAXIMUM;
 		}
 	}
 	return delay;
@@ -444,13 +485,14 @@ cm_check_expiration_is_noteworthy(struct cm_store_entry *entry,
 	unsigned int i, n_ttls;
 	time_t now, ttl, previous_ttl;
 	const time_t *ttls;
+
 	now = cm_time(NULL);
 	/* Do we have validity information? */
 	if (entry->cm_cert_not_after == 0) {
 		return -1;
 	}
 	/* Is it at least (some arbitrary minimum) old? */
-	if (entry->cm_cert_not_before > (now - 60 * 60 )) {
+	if (entry->cm_cert_not_before > (now - CM_DELAY_MONITOR_POLL_MINIMUM)) {
 		return -1;
 	}
 	/* How much time is left? */
@@ -802,6 +844,12 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 					cm_store_ca_save(ca);
 				}
 			}
+			/* In case we're talking to a server over SCEP, make a
+			 * note of the nonce, so that we won't re-send an
+			 * identical request. */
+			if (entry->cm_scep_nonce != NULL) {
+				entry->cm_scep_last_nonce = talloc_strdup(entry, entry->cm_scep_nonce);
+			}
 		} else {
 			if (ca == NULL) {
 				/* No known CA is associated with this entry. */
@@ -813,6 +861,101 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 				*when = cm_time_soonish;
 			}
 		}
+		break;
+
+	case CM_NEED_SCEP_DATA:
+		state->cm_scepgen_state = cm_scepgen_start(ca, entry);
+		if (state->cm_scepgen_state != NULL) {
+			/* Note that we're in the process of generating SCEP
+			 * data. */
+			entry->cm_state = CM_GENERATING_SCEP_DATA;
+			/* Wait for status update, or poll. */
+			*readfd = cm_scepgen_get_fd(state->cm_scepgen_state);
+			if (*readfd == -1) {
+				*when = cm_time_soon;
+			} else {
+				*when = cm_time_no_time;
+			}
+		} else {
+			/* Failed to start generating data; take a breather and
+			 * try again. */
+			*when = cm_time_soonish;
+		}
+		break;
+
+	case CM_GENERATING_SCEP_DATA:
+		if (cm_scepgen_ready(state->cm_scepgen_state) == 0) {
+			if (cm_scepgen_save_scep(state->cm_scepgen_state) == 0) {
+				/* Saved SCEP data; move on. */
+				cm_scepgen_done(state->cm_scepgen_state);
+				state->cm_scepgen_state = NULL;
+				entry->cm_state = CM_HAVE_SCEP_DATA;
+				*when = cm_time_now;
+			} else
+			if (cm_scepgen_need_token(state->cm_scepgen_state) == 0) {
+				/* Need a token; wait for it. */
+				cm_scepgen_done(state->cm_scepgen_state);
+				state->cm_scepgen_state = NULL;
+				entry->cm_state = CM_NEED_SCEP_GEN_TOKEN;
+				*when = cm_time_now;
+			} else
+			if (cm_scepgen_need_pin(state->cm_scepgen_state) == 0) {
+				/* Need a PIN; wait for it. */
+				cm_scepgen_done(state->cm_scepgen_state);
+				state->cm_scepgen_state = NULL;
+				entry->cm_state = CM_NEED_SCEP_GEN_PIN;
+				*when = cm_time_now;
+			} else
+			if (cm_scepgen_need_encryption_certs(state->cm_scepgen_state) == 0) {
+				/* Need the RA's encryption cert; wait for it. */
+				cm_scepgen_done(state->cm_scepgen_state);
+				state->cm_scepgen_state = NULL;
+				entry->cm_state = CM_NEED_SCEP_ENCRYPTION_CERT;
+				*when = cm_time_now;
+			} else
+			if (cm_scepgen_need_different_key_type(state->cm_scepgen_state) == 0) {
+				/* Need an RSA key. */
+				cm_scepgen_done(state->cm_scepgen_state);
+				state->cm_scepgen_state = NULL;
+				entry->cm_state = CM_NEED_SCEP_RSA_CLIENT_KEY;
+				*when = cm_time_now;
+			} else {
+				/* Failed to save SCEP data; try again. */
+				cm_scepgen_done(state->cm_scepgen_state);
+				state->cm_scepgen_state = NULL;
+				entry->cm_state = CM_NEED_SCEP_DATA;
+				*when = cm_time_soonish;
+			}
+		} else {
+			/* Wait for status update, or poll. */
+			*readfd = cm_scepgen_get_fd(state->cm_scepgen_state);
+			if (*readfd == -1) {
+				*when = cm_time_soon;
+			} else {
+				*when = cm_time_no_time;
+			}
+		}
+		break;
+
+	case CM_NEED_SCEP_GEN_TOKEN:
+		*when = cm_time_no_time;
+		break;
+
+	case CM_NEED_SCEP_GEN_PIN:
+		*when = cm_time_no_time;
+		break;
+
+	case CM_NEED_SCEP_ENCRYPTION_CERT:
+		*when = cm_time_no_time;
+		break;
+
+	case CM_NEED_SCEP_RSA_CLIENT_KEY:
+		*when = cm_time_no_time;
+		break;
+
+	case CM_HAVE_SCEP_DATA:
+		entry->cm_state = CM_NEED_TO_SUBMIT;
+		*when = cm_time_now;
 		break;
 
 	case CM_SUBMITTING:
@@ -894,6 +1037,16 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 						*delay = cm_decide_ca_delay(remaining);
 					}
 				}
+			} else
+			if (cm_submit_need_scep_messages(state->cm_submit_state) == 0) {
+				/* We need to generate SCEP data. */
+				cm_submit_done(state->cm_submit_state);
+				state->cm_submit_state = NULL;
+				cm_log(3, "%s('%s') goes to a CA over SCEP, "
+				       "need to generate SCEP data.\n",
+				       entry->cm_busname, entry->cm_nickname);
+				entry->cm_state = CM_NEED_SCEP_DATA;
+				*when = cm_time_now;
 			} else {
 				/* Don't know what's going on. HELP! */
 				cm_log(1,
@@ -988,11 +1141,10 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 	case CM_SAVING_CERT:
 		if (cm_certsave_ready(state->cm_certsave_state) == 0) {
 			if (cm_certsave_saved(state->cm_certsave_state) == 0) {
-				/* Saved certificate; note that we have to
-				 * reload the information that was in it. */
+				/* Saved certificate. */
 				cm_certsave_done(state->cm_certsave_state);
 				state->cm_certsave_state = NULL;
-				entry->cm_state = CM_NEED_TO_READ_CERT;
+				entry->cm_state = CM_SAVED_CERT;
 				*when = cm_time_now;
 			} else
 			if (cm_certsave_permissions_error(state->cm_certsave_state) == 0) {
@@ -1001,12 +1153,26 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 				state->cm_certsave_state = NULL;
 				entry->cm_state = CM_NEED_CERTSAVE_PERMS;
 				*when = cm_time_now;
+			} else
+			if (cm_certsave_token_error(state->cm_certsave_state) == 0) {
+				/* Whoops, we need help. */
+				cm_certsave_done(state->cm_certsave_state);
+				state->cm_certsave_state = NULL;
+				entry->cm_state = CM_NEED_CERTSAVE_TOKEN;
+				*when = cm_time_now;
+			} else
+			if (cm_certsave_pin_error(state->cm_certsave_state) == 0) {
+				/* Whoops, we need help. */
+				cm_certsave_done(state->cm_certsave_state);
+				state->cm_certsave_state = NULL;
+				entry->cm_state = CM_NEED_CERTSAVE_PIN;
+				*when = cm_time_now;
 			} else {
 				/* Failed to save cert; make a note and try
 				 * again in a bit. */
 				cm_certsave_done(state->cm_certsave_state);
 				state->cm_certsave_state = NULL;
-				entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_FAILED;
+				entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_SAVE_FAILED;
 				*when = cm_time_soonish;
 			}
 		} else {
@@ -1021,6 +1187,16 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 		break;
 
 	case CM_NEED_CERTSAVE_PERMS:
+		/* Revisit this later. */
+		*when = cm_time_no_time;
+		break;
+
+	case CM_NEED_CERTSAVE_TOKEN:
+		/* Revisit this later. */
+		*when = cm_time_no_time;
+		break;
+
+	case CM_NEED_CERTSAVE_PIN:
 		/* Revisit this later. */
 		*when = cm_time_no_time;
 		break;
@@ -1060,10 +1236,31 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 			/* Finished reloading certificate. */
 			cm_certread_done(state->cm_certread_state);
 			state->cm_certread_state = NULL;
-			entry->cm_state = CM_SAVED_CERT;
-			*when = cm_time_now;
 			if (emit_entry_saved_cert != NULL) {
 				(*emit_entry_saved_cert)(context, entry);
+			}
+			/* Start the post-save hoook, if there is one. */
+			state->cm_hook_state = cm_hook_start_postsave(entry,
+								      context,
+								      get_ca_by_index,
+								      get_n_cas,
+								      get_entry_by_index,
+								      get_n_entries);
+			if (state->cm_hook_state != NULL) {
+				/* Note that we're doing the post-save. */
+				entry->cm_state = CM_POST_SAVED_CERT;
+				/* Wait for status update, or poll. */
+				*readfd = cm_hook_get_fd(state->cm_hook_state);
+				if (*readfd == -1) {
+					*when = cm_time_soon;
+				} else {
+					*when = cm_time_no_time;
+				}
+			} else {
+				/* Failed to start the post-save, or nothing to do;
+				 * skip it. */
+				entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_SAVED;
+				*when = cm_time_now;
 			}
 		} else {
 			/* Wait for status update, or poll. */
@@ -1076,47 +1273,11 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 		}
 		break;
 
-	case CM_SAVED_CERT:
-		/* We should already have the lock here.  In cases where we're
-		 * resuming things at startup, try to acquire it if we don't
-		 * have it. */
-		if (!cm_writing_has_lock(entry, cm_ca_phase_invalid) && !cm_writing_lock_by_entry(entry)) {
-			/* Just hang out in this state while we're messing
-			 * around with the outside world for another entry. */
-			cm_log(3, "%s('%s') waiting for saving lock\n",
-			       entry->cm_busname, entry->cm_nickname);
-			*when = cm_time_soon;
-			break;
-		}
-		state->cm_hook_state = cm_hook_start_postsave(entry,
-							      context,
-							      get_ca_by_index,
-							      get_n_cas,
-							      get_entry_by_index,
-							      get_n_entries);
-		if (state->cm_hook_state != NULL) {
-			/* Note that we're doing the post-save. */
-			entry->cm_state = CM_POST_SAVED_CERT;
-			/* Wait for status update, or poll. */
-			*readfd = cm_hook_get_fd(state->cm_hook_state);
-			if (*readfd == -1) {
-				*when = cm_time_soon;
-			} else {
-				*when = cm_time_no_time;
-			}
-		} else {
-			/* Failed to start the post-save, or nothing to do;
-			 * skip it. */
-			entry->cm_state = CM_NEED_TO_SAVE_CA_CERTS;
-			*when = cm_time_now;
-		}
-		break;
-
 	case CM_POST_SAVED_CERT:
 		if (cm_hook_ready(state->cm_hook_state) == 0) {
 			cm_hook_done(state->cm_hook_state);
 			state->cm_hook_state = NULL;
-			entry->cm_state = CM_NEED_TO_SAVE_CA_CERTS;
+			entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_SAVED;
 			*when = cm_time_now;
 		} else {
 			/* Wait for status update, or poll. */
@@ -1127,6 +1288,11 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 				*when = cm_time_no_time;
 			}
 		}
+		break;
+
+	case CM_SAVED_CERT:
+		entry->cm_state = CM_NEED_TO_SAVE_CA_CERTS;
+		*when = cm_time_now;
 		break;
 
 	case CM_CA_REJECTED:
@@ -1264,7 +1430,7 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 		}
 		break;
 
-	case CM_NEED_TO_NOTIFY_ISSUED_FAILED:
+	case CM_NEED_TO_NOTIFY_ISSUED_SAVE_FAILED:
 		/* We should already have the lock here.  In cases where we're
 		 * resuming things at startup, try to acquire it if we don't
 		 * have it. */
@@ -1288,7 +1454,7 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 		state->cm_notify_state = cm_notify_start(entry,
 							 cm_notify_event_issued_not_saved);
 		if (state->cm_notify_state != NULL) {
-			entry->cm_state = CM_NOTIFYING_ISSUED_FAILED;
+			entry->cm_state = CM_NOTIFYING_ISSUED_SAVE_FAILED;
 			/* Wait for status update, or poll. */
 			*readfd = cm_notify_get_fd(state->cm_notify_state);
 			if (*readfd == -1) {
@@ -1302,11 +1468,11 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 		}
 		break;
 
-	case CM_NOTIFYING_ISSUED_FAILED:
+	case CM_NOTIFYING_ISSUED_SAVE_FAILED:
 		if (cm_notify_ready(state->cm_notify_state) == 0) {
 			cm_notify_done(state->cm_notify_state);
 			state->cm_notify_state = NULL;
-			entry->cm_state = CM_NEED_TO_SAVE_CERT;
+			entry->cm_state = CM_START_SAVING_CERT;
 			*when = cm_time_soonish;
 		} else {
 			/* Wait for status update, or poll. */
@@ -1320,6 +1486,17 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 		break;
 
 	case CM_NEED_TO_SAVE_CA_CERTS:
+		/* We should already have the lock here.  In cases where we're
+		 * resuming things at startup, try to acquire it if we don't
+		 * have it. */
+		if (!cm_writing_has_lock(entry, cm_ca_phase_invalid) && !cm_writing_lock_by_entry(entry)) {
+			/* Just hang out in this state while we're messing
+			 * around with the outside world for another entry. */
+			cm_log(3, "%s('%s') waiting for saving lock\n",
+			       entry->cm_busname, entry->cm_nickname);
+			*when = cm_time_soon;
+			break;
+		}
 		entry->cm_state = CM_START_SAVING_CA_CERTS;
 		*when = cm_time_now;
 		break;
@@ -1348,10 +1525,11 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 	case CM_SAVING_CA_CERTS:
 		if (cm_casave_ready(state->cm_casave_state) == 0) {
 			if (cm_casave_saved(state->cm_casave_state) == 0) {
-				/* Saved certificates. */
+				/* Saved CA certificates, no go re-read the
+				 * issued certificate. */
 				cm_casave_done(state->cm_casave_state);
 				state->cm_casave_state = NULL;
-				entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_SAVED;
+				entry->cm_state = CM_NEED_TO_READ_CERT;
 				*when = cm_time_now;
 			} else
 			if (cm_casave_permissions_error(state->cm_casave_state) == 0) {
@@ -1361,10 +1539,10 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 				entry->cm_state = CM_NEED_CA_CERT_SAVE_PERMS;
 				*when = cm_time_now;
 			} else {
-				/* Failed to save certs. */
+				/* Failed to save CA certs. */
 				cm_casave_done(state->cm_casave_state);
 				state->cm_casave_state = NULL;
-				entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_FAILED;
+				entry->cm_state = CM_NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED;
 				*when = cm_time_soonish;
 			}
 		} else {
@@ -1438,6 +1616,61 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 		}
 		break;
 
+	case CM_NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED:
+		/* We should already have the lock here.  In cases where we're
+		 * resuming things at startup, try to acquire it if we don't
+		 * have it. */
+		if (!cm_writing_has_lock(entry, cm_ca_phase_invalid) && !cm_writing_lock_by_entry(entry)) {
+			/* Just hang out in this state while we're messing
+			 * around with the outside world for another entry. */
+			cm_log(3, "%s('%s') waiting for saving lock\n",
+			       entry->cm_busname, entry->cm_nickname);
+			*when = cm_time_soon;
+			break;
+		}
+		if (!cm_writing_unlock_by_entry(entry)) {
+			/* If for some reason we fail to release the lock that
+			 * we have, try to release it again soon. */
+			*when = cm_time_soon;
+			cm_log(1, "%s('%s') failed to release saving "
+			       "lock, probably a bug\n",
+			       entry->cm_busname, entry->cm_nickname);
+			break;
+		}
+		state->cm_notify_state = cm_notify_start(entry,
+							 cm_notify_event_issued_ca_not_saved);
+		if (state->cm_notify_state != NULL) {
+			entry->cm_state = CM_NOTIFYING_ISSUED_CA_SAVE_FAILED;
+			/* Wait for status update, or poll. */
+			*readfd = cm_notify_get_fd(state->cm_notify_state);
+			if (*readfd == -1) {
+				*when = cm_time_soon;
+			} else {
+				*when = cm_time_no_time;
+			}
+		} else {
+			/* Failed to start notifying; try again. */
+			*when = cm_time_soonish;
+		}
+		break;
+
+	case CM_NOTIFYING_ISSUED_CA_SAVE_FAILED:
+		if (cm_notify_ready(state->cm_notify_state) == 0) {
+			cm_notify_done(state->cm_notify_state);
+			state->cm_notify_state = NULL;
+			entry->cm_state = CM_NEED_TO_SAVE_CA_CERTS;
+			*when = cm_time_soonish;
+		} else {
+			/* Wait for status update, or poll. */
+			*readfd = cm_notify_get_fd(state->cm_notify_state);
+			if (*readfd == -1) {
+				*when = cm_time_soon;
+			} else {
+				*when = cm_time_no_time;
+			}
+		}
+		break;
+
 	case CM_NEED_TO_SAVE_ONLY_CA_CERTS:
 		if (!cm_writing_has_lock(entry, cm_ca_phase_invalid) && !cm_writing_lock_by_entry(entry)) {
 			/* Just hang out in this state while we're messing
@@ -1475,6 +1708,15 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 	case CM_SAVING_ONLY_CA_CERTS:
 		if (cm_casave_ready(state->cm_casave_state) == 0) {
 			if (cm_casave_saved(state->cm_casave_state) == 0) {
+				if (!cm_writing_unlock_by_entry(entry)) {
+					/* If for some reason we fail to release the lock that
+					 * we have, try to release it again soon. */
+					*when = cm_time_soon;
+					cm_log(1, "%s('%s') failed to release saving "
+					       "lock, probably a bug\n",
+					       entry->cm_busname, entry->cm_nickname);
+					break;
+				}
 				/* Saved certificates. */
 				cm_casave_done(state->cm_casave_state);
 				state->cm_casave_state = NULL;
@@ -1482,10 +1724,19 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 				*when = cm_time_now;
 			} else
 			if (cm_casave_permissions_error(state->cm_casave_state) == 0) {
+				if (!cm_writing_unlock_by_entry(entry)) {
+					/* If for some reason we fail to release the lock that
+					 * we have, try to release it again soon. */
+					*when = cm_time_soon;
+					cm_log(1, "%s('%s') failed to release saving "
+					       "lock, probably a bug\n",
+					       entry->cm_busname, entry->cm_nickname);
+					break;
+				}
 				/* Whoops, we need help. */
 				cm_casave_done(state->cm_casave_state);
 				state->cm_casave_state = NULL;
-				entry->cm_state = CM_NEED_CA_CERT_SAVE_PERMS;
+				entry->cm_state = CM_NEED_ONLY_CA_CERT_SAVE_PERMS;
 				*when = cm_time_now;
 			} else {
 				/* Failed to save certs. */
@@ -1503,6 +1754,11 @@ cm_iterate_entry(struct cm_store_entry *entry, struct cm_store_ca *ca,
 				*when = cm_time_no_time;
 			}
 		}
+		break;
+
+	case CM_NEED_ONLY_CA_CERT_SAVE_PERMS:
+		/* Revisit this later. */
+		*when = cm_time_no_time;
 		break;
 
 	case CM_NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED:
@@ -1902,6 +2158,10 @@ cm_iterate_entry_done(struct cm_store_entry *entry, void *cm_iterate_state)
 			cm_csrgen_done(state->cm_csrgen_state);
 			state->cm_csrgen_state = NULL;
 		}
+		if (state->cm_scepgen_state != NULL) {
+			cm_scepgen_done(state->cm_scepgen_state);
+			state->cm_scepgen_state = NULL;
+		}
 		if (state->cm_keyiread_state != NULL) {
 			cm_keyiread_done(state->cm_keyiread_state);
 			state->cm_keyiread_state = NULL;
@@ -1975,10 +2235,11 @@ cm_iterate_ca(struct cm_store_ca *ca,
 	      int *delay,
 	      int *readfd)
 {
-	struct cm_store_ca old_ca = *ca;
+	struct cm_store_ca *old_ca;
 	struct cm_ca_state *state = cm_iterate_state;
 
 	*readfd = -1;
+	old_ca = cm_store_ca_dup(ca, ca);
 
 	switch (ca->cm_ca_state[state->cm_phase]) {
 	case CM_CA_NEED_TO_REFRESH:
@@ -2001,6 +2262,12 @@ cm_iterate_ca(struct cm_store_ca *ca,
 			break;
 		case cm_ca_phase_renew_reqs:
 			state->cm_task_state = cm_cadata_start_renew_reqs(ca);
+			break;
+		case cm_ca_phase_capabilities:
+			state->cm_task_state = cm_cadata_start_capabilities(ca);
+			break;
+		case cm_ca_phase_encryption_certs:
+			state->cm_task_state = cm_cadata_start_encryption_certs(ca);
 			break;
 		case cm_ca_phase_invalid:
 			abort();
@@ -2036,6 +2303,18 @@ cm_iterate_ca(struct cm_store_ca *ca,
 				case cm_ca_phase_default_profile:
 				case cm_ca_phase_enroll_reqs:
 				case cm_ca_phase_renew_reqs:
+				case cm_ca_phase_capabilities:
+					if (emit_ca_changes != NULL) {
+						cm_restart_entries_by_ca(context,
+									 ca->cm_nickname);
+					}
+					ca->cm_ca_state[state->cm_phase] = CM_CA_NEED_TO_ANALYZE;
+					break;
+				case cm_ca_phase_encryption_certs:
+					if (emit_ca_changes != NULL) {
+						cm_restart_entries_by_ca(context,
+									 ca->cm_nickname);
+					}
 					ca->cm_ca_state[state->cm_phase] = CM_CA_NEED_TO_ANALYZE;
 					break;
 				case cm_ca_phase_invalid:
@@ -2057,6 +2336,16 @@ cm_iterate_ca(struct cm_store_ca *ca,
 				       cm_store_ca_phase_as_string(state->cm_phase));
 				ca->cm_ca_state[state->cm_phase] = CM_CA_NEED_TO_REFRESH;
 			} else
+			if (cm_cadata_rejected(state->cm_task_state) == 0) {
+				cm_cadata_done(state->cm_task_state);
+				state->cm_task_state = NULL;
+				cm_log(3, "%s('%s').%s server doesn't support that\n",
+				       ca->cm_busname, ca->cm_nickname,
+				       cm_store_ca_phase_as_string(state->cm_phase));
+				ca->cm_ca_state[state->cm_phase] = CM_CA_IDLE;
+				*when = cm_time_delay;
+				*delay = CM_DELAY_CA_POLL_MAXIMUM;
+			} else
 			if (cm_cadata_unreachable(state->cm_task_state) == 0) {
 				cm_cadata_done(state->cm_task_state);
 				state->cm_task_state = NULL;
@@ -2069,12 +2358,50 @@ cm_iterate_ca(struct cm_store_ca *ca,
 			} else
 			if (cm_cadata_unsupported(state->cm_task_state) == 0) {
 				cm_cadata_done(state->cm_task_state);
+				switch (state->cm_phase) {
+				case cm_ca_phase_certs:
+					ca->cm_ca_root_certs = NULL;
+					ca->cm_ca_other_root_certs = NULL;
+					ca->cm_ca_other_certs = NULL;
+					break;
+				case cm_ca_phase_identify:
+					break;
+				case cm_ca_phase_profiles:
+					break;
+				case cm_ca_phase_default_profile:
+					break;
+				case cm_ca_phase_enroll_reqs:
+					break;
+				case cm_ca_phase_renew_reqs:
+					break;
+				case cm_ca_phase_capabilities:
+					ca->cm_ca_capabilities = NULL;
+					break;
+				case cm_ca_phase_encryption_certs:
+					ca->cm_ca_encryption_cert = NULL;
+					ca->cm_ca_encryption_issuer_cert = NULL;
+					ca->cm_ca_encryption_cert_pool = NULL;
+					break;
+				case cm_ca_phase_invalid:
+					abort();
+					break;
+				}
 				state->cm_task_state = NULL;
 				cm_log(3, "%s('%s').%s retrieval unsupported\n",
 				       ca->cm_busname, ca->cm_nickname,
 				       cm_store_ca_phase_as_string(state->cm_phase));
 				ca->cm_ca_state[state->cm_phase] = CM_CA_DISABLED;
 				*when = cm_time_now;
+			} else
+			if (cm_cadata_unconfigured(state->cm_task_state) == 0) {
+				cm_cadata_done(state->cm_task_state);
+				state->cm_task_state = NULL;
+				cm_log(3, "%s('%s').%s missing configuration\n",
+				       ca->cm_busname, ca->cm_nickname,
+				       cm_store_ca_phase_as_string(state->cm_phase));
+				ca->cm_ca_state[state->cm_phase] = CM_CA_DATA_UNREACHABLE;
+				*when = cm_time_delay;
+				*delay = cm_decide_cadata_delay();
 			} else {
 				cm_cadata_done(state->cm_task_state);
 				state->cm_task_state = NULL;
@@ -2248,14 +2575,14 @@ cm_iterate_ca(struct cm_store_ca *ca,
 	case CM_CA_NEED_TO_ANALYZE:
 		switch (state->cm_phase) {
 		case cm_ca_phase_certs:
-			state->cm_ca_analyze_state = cm_ca_analyze_start_certs(ca);
-			if (state->cm_ca_analyze_state == NULL) {
+			state->cm_ca_cert_analyze_state = cm_ca_analyze_start_certs(ca);
+			if (state->cm_ca_cert_analyze_state == NULL) {
 				ca->cm_ca_state[state->cm_phase] = CM_CA_DISABLED;
 				*when = cm_time_now;
 			} else {
-				*readfd = cm_ca_analyze_get_fd(state->cm_ca_analyze_state);
+				*readfd = cm_ca_analyze_get_fd(state->cm_ca_cert_analyze_state);
 				if (*readfd == -1) {
-					cm_ca_analyze_done(state->cm_ca_analyze_state);
+					cm_ca_analyze_done(state->cm_ca_cert_analyze_state);
 					ca->cm_ca_state[state->cm_phase] = CM_CA_DISABLED;
 				} else {
 					ca->cm_ca_state[state->cm_phase] = CM_CA_ANALYZING;
@@ -2268,8 +2595,25 @@ cm_iterate_ca(struct cm_store_ca *ca,
 		case cm_ca_phase_default_profile:
 		case cm_ca_phase_enroll_reqs:
 		case cm_ca_phase_renew_reqs:
+		case cm_ca_phase_capabilities:
 			ca->cm_ca_state[state->cm_phase] = CM_CA_IDLE;
 			*when = cm_time_now;
+			break;
+		case cm_ca_phase_encryption_certs:
+			state->cm_ca_ecert_analyze_state = cm_ca_analyze_start_encryption_certs(ca);
+			if (state->cm_ca_ecert_analyze_state == NULL) {
+				ca->cm_ca_state[state->cm_phase] = CM_CA_DISABLED;
+				*when = cm_time_now;
+			} else {
+				*readfd = cm_ca_analyze_get_fd(state->cm_ca_ecert_analyze_state);
+				if (*readfd == -1) {
+					cm_ca_analyze_done(state->cm_ca_ecert_analyze_state);
+					ca->cm_ca_state[state->cm_phase] = CM_CA_DISABLED;
+				} else {
+					ca->cm_ca_state[state->cm_phase] = CM_CA_ANALYZING;
+					*when = cm_time_no_time;
+				}
+			}
 			break;
 		case cm_ca_phase_invalid:
 			abort();
@@ -2277,29 +2621,74 @@ cm_iterate_ca(struct cm_store_ca *ca,
 		}
 		break;
 	case CM_CA_ANALYZING:
-		if (cm_ca_analyze_ready(state->cm_ca_analyze_state) == 0) {
-			state->cm_refresh_delay = cm_ca_analyze_get_delay(state->cm_ca_analyze_state);
-			cm_ca_analyze_done(state->cm_ca_analyze_state);
-			state->cm_ca_analyze_state = NULL;
-			if (state->cm_refresh_delay != 0) {
-				ca->cm_ca_state[state->cm_phase] = CM_CA_NEED_TO_REFRESH;
-				*delay = state->cm_refresh_delay;
-				if (*delay < CM_DELAY_CA_POLL_MINIMUM) {
-					*delay = CM_DELAY_CA_POLL_MINIMUM;
+		switch (state->cm_phase) {
+		case cm_ca_phase_certs:
+			if (cm_ca_analyze_ready(state->cm_ca_cert_analyze_state) == 0) {
+				state->cm_cert_refresh_delay = cm_ca_analyze_get_delay(state->cm_ca_cert_analyze_state);
+				cm_ca_analyze_done(state->cm_ca_cert_analyze_state);
+				state->cm_ca_cert_analyze_state = NULL;
+				if (state->cm_cert_refresh_delay != 0) {
+					ca->cm_ca_state[state->cm_phase] = CM_CA_NEED_TO_REFRESH;
+					*delay = state->cm_cert_refresh_delay;
+					if (*delay < CM_DELAY_CA_POLL_MINIMUM) {
+						*delay = CM_DELAY_CA_POLL_MINIMUM;
+					}
+					if (*delay > CM_DELAY_CA_POLL_MAXIMUM) {
+						*delay = CM_DELAY_CA_POLL_MAXIMUM;
+					}
+					*when = cm_time_delay;
+				} else {
+					ca->cm_ca_state[state->cm_phase] = CM_CA_IDLE;
+					*when = cm_time_now;
 				}
-				*when = cm_time_delay;
 			} else {
-				ca->cm_ca_state[state->cm_phase] = CM_CA_IDLE;
-				*when = cm_time_now;
+				/* Wait for status update, or poll. */
+				*readfd = cm_ca_analyze_get_fd(state->cm_ca_cert_analyze_state);
+				if (*readfd == -1) {
+					*when = cm_time_soon;
+				} else {
+					*when = cm_time_no_time;
+				}
 			}
-		} else {
-			/* Wait for status update, or poll. */
-			*readfd = cm_ca_analyze_get_fd(state->cm_ca_analyze_state);
-			if (*readfd == -1) {
-				*when = cm_time_soon;
+			break;
+		case cm_ca_phase_encryption_certs:
+			if (cm_ca_analyze_ready(state->cm_ca_ecert_analyze_state) == 0) {
+				state->cm_ecert_refresh_delay = cm_ca_analyze_get_delay(state->cm_ca_ecert_analyze_state);
+				cm_ca_analyze_done(state->cm_ca_ecert_analyze_state);
+				state->cm_ca_ecert_analyze_state = NULL;
+				if (state->cm_ecert_refresh_delay != 0) {
+					ca->cm_ca_state[state->cm_phase] = CM_CA_NEED_TO_REFRESH;
+					*delay = state->cm_ecert_refresh_delay;
+					if (*delay < CM_DELAY_CA_POLL_MINIMUM) {
+						*delay = CM_DELAY_CA_POLL_MINIMUM;
+					}
+					if (*delay > CM_DELAY_CA_POLL_MAXIMUM) {
+						*delay = CM_DELAY_CA_POLL_MAXIMUM;
+					}
+					*when = cm_time_delay;
+				} else {
+					ca->cm_ca_state[state->cm_phase] = CM_CA_IDLE;
+					*when = cm_time_now;
+				}
 			} else {
-				*when = cm_time_no_time;
+				/* Wait for status update, or poll. */
+				*readfd = cm_ca_analyze_get_fd(state->cm_ca_ecert_analyze_state);
+				if (*readfd == -1) {
+					*when = cm_time_soon;
+				} else {
+					*when = cm_time_no_time;
+				}
 			}
+			break;
+		case cm_ca_phase_identify:
+		case cm_ca_phase_profiles:
+		case cm_ca_phase_default_profile:
+		case cm_ca_phase_enroll_reqs:
+		case cm_ca_phase_renew_reqs:
+		case cm_ca_phase_capabilities:
+		case cm_ca_phase_invalid:
+			abort();
+			break;
 		}
 		break;
 	case CM_CA_DATA_UNREACHABLE:
@@ -2311,13 +2700,17 @@ cm_iterate_ca(struct cm_store_ca *ca,
 		*when = cm_time_no_time;
 		break;
 	}
-	if (ca->cm_ca_state[state->cm_phase] != old_ca.cm_ca_state[state->cm_phase]) {
+	if (ca->cm_ca_state[state->cm_phase] != old_ca->cm_ca_state[state->cm_phase]) {
 		cm_log(3, "%s('%s').%s moved to state '%s'\n",
 		       ca->cm_busname, ca->cm_nickname,
 		       cm_store_ca_phase_as_string(state->cm_phase),
 		       cm_store_ca_state_as_string(ca->cm_ca_state[state->cm_phase]));
 		cm_store_ca_save(ca);
 	}
+	if (emit_ca_changes != NULL) {
+		(*emit_ca_changes)(context, old_ca, ca);
+	}
+	talloc_free(old_ca);
 	return 0;
 }
 
@@ -2338,9 +2731,13 @@ cm_iterate_ca_done(struct cm_store_ca *ca, void *cm_iterate_state)
 	       phase = state->cm_phase,
 	       phases = cm_store_ca_phase_as_string(phase),
 	       states = cm_store_ca_state_as_string(ca->cm_ca_state[phase]);
-		if (state->cm_ca_analyze_state != NULL) {
-			cm_ca_analyze_done(state->cm_ca_analyze_state);
-			state->cm_ca_analyze_state = NULL;
+		if (state->cm_ca_cert_analyze_state != NULL) {
+			cm_ca_analyze_done(state->cm_ca_cert_analyze_state);
+			state->cm_ca_cert_analyze_state = NULL;
+		}
+		if (state->cm_ca_ecert_analyze_state != NULL) {
+			cm_ca_analyze_done(state->cm_ca_ecert_analyze_state);
+			state->cm_ca_ecert_analyze_state = NULL;
 		}
 		if (state->cm_task_state != NULL) {
 			cm_cadata_done(state->cm_task_state);

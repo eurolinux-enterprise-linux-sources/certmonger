@@ -1,6 +1,6 @@
 SUBDIRS = tools
 EXTRA_DIST = \
-	run-tests.sh functions certmonger.conf \
+	run-tests.sh functions certmonger.conf tools/cachain.sh \
 	001-keyiread/run.sh \
 	001-keyiread/expected.out \
 	001-keyiread-rsa/run.sh \
@@ -123,7 +123,18 @@ EXTRA_DIST = \
 	028-dbus/run.sh \
 	028-dbus/runsub.sh \
 	028-dbus/simpleprop.py \
-	028-dbus/walk.py
+	028-dbus/walk.py \
+	029-canonize/expected.out \
+	029-canonize/run.sh \
+	030-rekey/expected.out \
+	030-rekey/run.sh \
+	031-pkcs7/prequal.sh \
+	031-pkcs7/expected.out \
+	031-pkcs7/run.sh \
+	032-chain/expected.out \
+	032-chain/run.sh \
+	033-scep/expected.out \
+	033-scep/run.sh
 
 subdirs = \
 	001-keyiread \
@@ -156,7 +167,12 @@ subdirs = \
 	025-casave \
 	026-local \
 	027-hooks \
-	028-dbus
+	028-dbus \
+	029-canonize \
+	030-rekey \
+	031-pkcs7 \
+	032-chain \
+	033-scep
 
 if HAVE_DBM_NSSDB
 subdirs += \
@@ -195,7 +211,7 @@ subdirs += \
 endif
 
 check: all
-	for required in certutil pk12util openssl diff cmp mktemp dos2unix unix2dos dbus-launch ; do \
+	for required in certutil cmsutil pk12util openssl diff cmp mktemp dos2unix unix2dos dbus-launch ; do \
 		which $$required || exit 1; \
 	done
 	env	srcdir=$(srcdir) \

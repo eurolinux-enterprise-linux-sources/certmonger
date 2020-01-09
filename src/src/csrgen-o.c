@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,7 @@
 #include <nss.h>
 #include <pk11pub.h>
 
+#include <openssl/bn.h>
 #include <openssl/err.h>
 #include <openssl/pem.h>
 
@@ -41,10 +42,12 @@
 #include "keygen.h"
 #include "log.h"
 #include "pin.h"
+#include "prefs.h"
 #include "prefs-o.h"
 #include "store.h"
 #include "store-int.h"
 #include "subproc.h"
+#include "util-m.h"
 #include "util-o.h"
 
 struct cm_csrgen_state {
@@ -81,15 +84,22 @@ cm_csrgen_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	FILE *keyfp, *status;
 	X509_REQ *req;
 	X509_NAME *subject;
+	X509 *minicert;
+	ASN1_INTEGER *serial, *version;
 	NETSCAPE_SPKI spki;
 	NETSCAPE_SPKAC spkac;
 	EVP_PKEY *pkey;
-	char buf[LINE_MAX], *p, *q, *s, *nickname, *pin, *password;
-	unsigned char *extensions, *upassword, *bmp, *name;
-	const char *default_cn = CM_DEFAULT_CERT_SUBJECT_CN;
+	BIGNUM *serialbn;
+	char buf[LINE_MAX], *p, *q, *s, *nickname, *pin, *password, *filename;
+	unsigned char *extensions, *upassword, *bmp, *name, *up, *uq, md[CM_DIGEST_MAX];
+	char *spkidec, *mcb64, *nows;
+	const char *default_cn = CM_DEFAULT_CERT_SUBJECT_CN, *spkihex = NULL;
 	const unsigned char *nametmp;
+	struct tm *now;
+	time_t nowt;
 	size_t extensions_len;
-	unsigned int bmpcount;
+	ssize_t len;
+	unsigned int bmpcount, mdlen;
 	long error;
 	int i;
 
@@ -97,16 +107,31 @@ cm_csrgen_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	if (status == NULL) {
 		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
 	}
-	keyfp = fopen(entry->cm_key_storage_location, "r");
+	if ((entry->cm_key_next_marker != NULL) &&
+	    (strlen(entry->cm_key_next_marker) > 0)) {
+		filename = util_build_next_filename(entry->cm_key_storage_location, entry->cm_key_next_marker);
+		if (filename == NULL) {
+			cm_log(1, "Error opening key file \"%s\" "
+			       "for reading: %s.\n",
+			       filename, strerror(errno));
+			_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+		}
+	} else {
+		filename = entry->cm_key_storage_location;
+	}
+	keyfp = fopen(filename, "r");
 	if (keyfp == NULL) {
 		if (errno != ENOENT) {
 			cm_log(1, "Error opening key file \"%s\" "
 			       "for reading: %s.\n",
-			       entry->cm_key_storage_location,
-			       strerror(errno));
+			       filename, strerror(errno));
 		}
 		_exit(CM_SUB_STATUS_INTERNAL_ERROR);
 	}
+	if (filename != entry->cm_key_storage_location) {
+		free(filename);
+	}
+	filename = NULL;
 	util_o_init();
 	ERR_load_crypto_strings();
 	pkey = EVP_PKEY_new();
@@ -239,7 +264,17 @@ cm_csrgen_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 							  bmpcount);
 				free(bmp);
 			}
-			password = entry->cm_challenge_password;
+			error = cm_csrgen_read_challenge_password(entry,
+								  &password);
+			if (error != 0) {
+				cm_log(1, "Error reading challenge password: %s.\n",
+				       strerror(error));
+				while ((error = ERR_get_error()) != 0) {
+					ERR_error_string_n(error, buf, sizeof(buf));
+					cm_log(1, "%s\n", buf);
+				}
+				_exit(CM_SUB_STATUS_ERROR_AUTH); /* XXX */
+			}
 			upassword = (unsigned char *) password;
 			if (password != NULL) {
 				X509_REQ_add1_attr_by_NID(req,
@@ -250,12 +285,12 @@ cm_csrgen_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			}
 			X509_REQ_sign(req, pkey, cm_prefs_ossl_hash());
 			PEM_write_X509_REQ_NEW(status, req);
+			/* Generate the SPKAC. */
 			memset(&spkac, 0, sizeof(spkac));
 			spkac.challenge = M_ASN1_IA5STRING_new();
-			if (entry->cm_challenge_password != NULL) {
+			if (password != NULL) {
 				ASN1_STRING_set(spkac.challenge,
-						entry->cm_challenge_password,
-						strlen(entry->cm_challenge_password));
+						password, strlen(password));
 			} else {
 				ASN1_STRING_set(spkac.challenge,
 						"", 0);
@@ -268,8 +303,87 @@ cm_csrgen_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 			NETSCAPE_SPKI_sign(&spki, pkey, cm_prefs_ossl_hash());
 			s = NETSCAPE_SPKI_b64_encode(&spki);
 			if (s != NULL) {
-				fprintf(status, "%s\n", s);
+				fprintf(status, "%s", s);
 			}
+			/* Generate the SCEP transaction identifier. */
+			spkidec = NULL;
+			len = i2d_PUBKEY(pkey, NULL);
+			if (len > 0) {
+				up = malloc(len);
+				if (up != NULL) {
+					uq = up;
+					if (i2d_PUBKEY(pkey, &uq) == len) {
+						if (EVP_Digest(up, uq - up, md, &mdlen, cm_prefs_ossl_hash(), NULL)) {
+							spkihex = cm_store_hex_from_bin(NULL, md, mdlen);
+							if (spkihex != NULL) {
+								spkidec = util_dec_from_hex(spkihex);
+							}
+						}
+					}
+					free(up);
+				}
+			}
+			fprintf(status, "\n%s\n", spkidec ? spkidec : "");
+			/* Generate a "mini" certificate. */
+			minicert = X509_new();
+			if (minicert == NULL) {
+				cm_log(1, "Out of memory creating mini certificate.\n");
+				_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+			}
+			nowt = time(NULL);
+			now = gmtime(&nowt);
+			nows = talloc_asprintf(entry, "%04d%02d%02d000000Z",
+					       now->tm_year + 1900, now->tm_mon + 1, now->tm_mday);
+			minicert->cert_info->validity->notBefore = M_ASN1_GENERALIZEDTIME_new();
+			ASN1_GENERALIZEDTIME_set_string(minicert->cert_info->validity->notBefore, nows);
+			nows = talloc_asprintf(entry, "%04d%02d%02d000000Z",
+					       now->tm_year + 1900 + 100, now->tm_mon + 1, now->tm_mday);
+			minicert->cert_info->validity->notAfter = M_ASN1_GENERALIZEDTIME_new();
+			ASN1_GENERALIZEDTIME_set_string(minicert->cert_info->validity->notAfter, nows);
+			X509_NAME_set(&minicert->cert_info->issuer, subject);
+			X509_NAME_set(&minicert->cert_info->subject, subject);
+			/* This used to just be X509_set_version(), but
+			 * starting in 1.0.2, OpenSSL began setting it to NULL
+			 * for v1, which breaks tests which expect identical
+			 * output from both NSS and OpenSSL. */
+			version = M_ASN1_INTEGER_new();
+			if (version == NULL) {
+				cm_log(1, "Out of memory creating mini certificate.\n");
+				_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+			}
+			ASN1_INTEGER_set(version, 0);
+			minicert->cert_info->version = version;
+			serial = M_ASN1_INTEGER_new();
+			if (serial == NULL) {
+				cm_log(1, "Out of memory creating mini certificate.\n");
+				_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+			}
+			serialbn = NULL;
+			if ((spkidec != NULL) && (BN_dec2bn(&serialbn, spkidec) != 0)) {
+				if (BN_to_ASN1_INTEGER(serialbn, serial) != serial) {
+					cm_log(1, "Error setting serial number.\n");
+					_exit(CM_SUB_STATUS_INTERNAL_ERROR);
+				}
+			} else {
+				ASN1_INTEGER_set(serial, 1);
+			}
+			X509_set_serialNumber(minicert, serial);
+			X509_set_pubkey(minicert, pkey);
+			X509_sign(minicert, pkey, cm_prefs_ossl_hash());
+			len = i2d_X509(minicert, NULL);
+			mcb64 = NULL;
+			if (len > 0) {
+				up = malloc(len);
+				if (up != NULL) {
+					uq = up;
+					if (i2d_X509(minicert, &uq) == len) {
+						mcb64 = cm_store_base64_from_bin(entry,
+										 up,
+										 uq - up);
+					}
+				}
+			}
+			fprintf(status, "%s\n", mcb64 ? mcb64 : "");
 		} else {
 			cm_log(1, "Error creating template certificate.\n");
 			while ((error = ERR_get_error()) != 0) {
@@ -283,9 +397,10 @@ cm_csrgen_o_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		ERR_error_string_n(error, buf, sizeof(buf));
 		cm_log(1, "%s\n", buf);
 	}
+	free(spkidec);
 	fclose(status);
 	fclose(keyfp);
-	return 0;
+	_exit(0);
 }
 
 /* Check if a CSR is ready. */
@@ -326,11 +441,35 @@ cm_csrgen_o_save_csr(struct cm_csrgen_state *state)
 		if (p != NULL) {
 			p += strcspn(p, "\r\n");
 			q = p + strspn(p, "\r\n");
-			state->entry->cm_spkac = talloc_strdup(state->entry, q);
+			p = q + strcspn(q, "\r\n");
+			state->entry->cm_spkac = talloc_strndup(state->entry, q, p - q);
 			if (state->entry->cm_spkac == NULL) {
 				return ENOMEM;
 			}
 			*q = '\0';
+			q = p + strspn(p, "\r\n");
+			p = q + strcspn(q, "\r\n");
+			if (p > q) {
+				state->entry->cm_scep_tx = talloc_strndup(state->entry, q, p - q);
+				if (state->entry->cm_scep_tx == NULL) {
+					return ENOMEM;
+				}
+			}
+			*q = '\0';
+			q = p + strspn(p, "\r\n");
+			p = q + strcspn(q, "\r\n");
+			if (p > q) {
+				state->entry->cm_minicert = talloc_strndup(state->entry, q, p - q);
+				if (state->entry->cm_minicert == NULL) {
+					return ENOMEM;
+				}
+			}
+			state->entry->cm_scep_nonce = NULL;
+			state->entry->cm_scep_last_nonce = NULL;
+			state->entry->cm_scep_req = NULL;
+			state->entry->cm_scep_req_next = NULL;
+			state->entry->cm_scep_gic = NULL;
+			state->entry->cm_scep_gic_next = NULL;
 		}
 	}
 	return 0;

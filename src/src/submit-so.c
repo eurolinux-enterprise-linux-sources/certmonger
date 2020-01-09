@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012,2014 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2014,2015 Red Hat, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -66,6 +66,7 @@ cm_submit_so_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	time_t lifedelta;
 	long life;
 	time_t now;
+	char *filename;
 
 	util_o_init();
 	ERR_load_crypto_strings();
@@ -76,9 +77,23 @@ cm_submit_so_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 	} else {
 		now = cm_time(NULL);
 	}
-	keyfp = fopen(entry->cm_key_storage_location, "r");
-	if (cm_submit_u_delta_from_string(cm_prefs_validity_period(), now,
-					  &lifedelta) == 0) {
+	if ((entry->cm_key_next_marker != NULL) &&
+	    (strlen(entry->cm_key_next_marker) > 0)) {
+		filename = util_build_next_filename(entry->cm_key_storage_location, entry->cm_key_next_marker);
+		if (filename == NULL) {
+			cm_log(1, "Error reading private key from "
+			       "\"%s\": %s.\n",
+			       filename, strerror(errno));
+			keyfp = NULL;
+		} else {
+			keyfp = fopen(filename, "r");
+		}
+	} else {
+		filename = entry->cm_key_storage_location;
+		keyfp = fopen(filename, "r");
+	}
+	if (cm_submit_u_delta_from_string(cm_prefs_selfsign_validity_period(),
+					  now, &lifedelta) == 0) {
 		life = lifedelta;
 	} else {
 		if (cm_submit_u_delta_from_string(CM_DEFAULT_CERT_LIFETIME, now,
@@ -101,8 +116,7 @@ cm_submit_so_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 				} else {
 					cm_log(1, "Error reading private key from "
 					       "'%s': %s.\n",
-					       entry->cm_key_storage_location,
-					       strerror(errno));
+					       filename, strerror(errno));
 				}
 			} else {
 				cm_log(1, "Error reading PIN.\n");
@@ -114,7 +128,7 @@ cm_submit_so_main(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry,
 		fclose(keyfp);
 	} else {
 		cm_log(1, "Error opening key file '%s' for reading: %s.\n",
-		       entry->cm_key_storage_location, strerror(errno));
+		       filename, strerror(errno));
 	}
 	if (status == 0) {
 		pem = fdopen(fd, "w");
@@ -187,6 +201,13 @@ cm_submit_so_rejected(struct cm_submit_state *state)
 	return 0;
 }
 
+/* Check if we need SCEP messages. */
+static int
+cm_submit_so_need_scep_messages(struct cm_submit_state *state)
+{
+	return -1; /* nope */
+}
+
 /* Check if the CA was unreachable. */
 static int
 cm_submit_so_unreachable(struct cm_submit_state *state)
@@ -236,6 +257,7 @@ cm_submit_so_start(struct cm_store_ca *ca, struct cm_store_entry *entry)
 		state->ready = cm_submit_so_ready;
 		state->issued = cm_submit_so_issued;
 		state->rejected = cm_submit_so_rejected;
+		state->need_scep_messages = cm_submit_so_need_scep_messages;
 		state->unreachable = cm_submit_so_unreachable;
 		state->unconfigured = cm_submit_so_unconfigured;
 		state->unsupported = cm_submit_so_unsupported;
@@ -246,6 +268,12 @@ cm_submit_so_start(struct cm_store_ca *ca, struct cm_store_entry *entry)
 		if (state->subproc == NULL) {
 			talloc_free(state);
 			state = NULL;
+		}
+		if ((entry->cm_key_next_marker != NULL) &&
+		    (strlen(entry->cm_key_next_marker) > 0)) {
+			entry->cm_key_next_requested_count++;
+		} else {
+			entry->cm_key_requested_count++;
 		}
 	}
 	return state;

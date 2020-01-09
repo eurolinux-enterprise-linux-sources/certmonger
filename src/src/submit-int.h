@@ -20,7 +20,10 @@
 
 struct cm_store_entry;
 struct cm_submit_state {
+	/* The parent usually needs a pointer to the entry for updating. */
 	struct cm_store_entry *entry;
+	/* The parent uses this to manage the subprocess that's doing the heavy
+	 * lifting. */
 	struct cm_subproc_state *subproc;
 	/* Check if the CSR was submitted to the CA yet, or we determined that
 	 * doing so was not possible at this time. */
@@ -31,6 +34,8 @@ struct cm_submit_state {
 	int (*issued)(struct cm_submit_state *state);
 	/* Check if the certificate request was rejected. */
 	int (*rejected)(struct cm_submit_state *state);
+	/* Check if we need SCEP-specific data to be provided. */
+	int (*need_scep_messages)(struct cm_submit_state *state);
 	/* Check if the CA was unreachable for some reason. */
 	int (*unreachable)(struct cm_submit_state *state);
 	/* Check if the CA was unconfigured in some way. */
@@ -41,6 +46,9 @@ struct cm_submit_state {
 	void (*done)(struct cm_submit_state *state);
 	/* Recommended delay before the next connection to the CA. */
 	int delay;
+	/* Reserved for implementation use.  Currently only used by the
+	 * "external" submission implementations. */
+	void *reserved;
 };
 
 struct cm_submit_state *cm_submit_e_start(struct cm_store_ca *ca,
@@ -52,5 +60,20 @@ struct cm_submit_state *cm_submit_so_start(struct cm_store_ca *ca,
 
 #define CM_BASIC_CONSTRAINT_NOT_CA "3000"
 char *cm_submit_maybe_joinv(void *parent, const char *sep, char **s);
+
+struct cm_submit_decrypt_envelope_args {
+	struct cm_store_ca *ca;
+	struct cm_store_entry *entry;
+};
+void cm_submit_o_decrypt_envelope(const unsigned char *envelope,
+				  size_t length,
+				  void *decrypt_userdata,
+				  unsigned char **payload,
+				  size_t *payload_length);
+void cm_submit_n_decrypt_envelope(const unsigned char *envelope,
+				  size_t length,
+				  void *decrypt_userdata,
+				  unsigned char **payload,
+				  size_t *payload_length);
 
 #endif

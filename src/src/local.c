@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Red Hat, Inc.
+ * Copyright (C) 2014,2015 Red Hat, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -30,6 +30,8 @@
 #include <dbus/dbus.h>
 
 #include <krb5.h>
+
+#include <secoid.h>
 
 #include <openssl/asn1.h>
 #include <openssl/err.h>
@@ -233,12 +235,11 @@ get_signer_info(void *parent, char *localdir, X509 ***roots,
 		cm_log(1, "Trouble parsing signer data.\n");
 		save = TRUE;
 	}
-	now = time(NULL);
 
 	/* Read the desired lifetime. */
 	now = time(NULL);
-	if (cm_submit_u_delta_from_string(cm_prefs_validity_period(), now,
-					  &lifedelta) == 0) {
+	if (cm_submit_u_delta_from_string(cm_prefs_local_validity_period(),
+					  now, &lifedelta) == 0) {
 		life = lifedelta;
 	} else {
 		if (cm_submit_u_delta_from_string(CM_DEFAULT_CERT_LIFETIME, now,
@@ -388,12 +389,14 @@ get_signer_info(void *parent, char *localdir, X509 ***roots,
 		fclose(fp);
 
 	}
-	*roots = talloc_array_ptrtype(parent, *roots, sk_X509_num(cas) + 1);
-	if (*roots != NULL) {
-		for (i = 0; i < sk_X509_num(cas); i++) {
-			(*roots)[i] = sk_X509_value(cas, i);
+	if (cas != NULL) {
+		*roots = talloc_array_ptrtype(parent, *roots, sk_X509_num(cas) + 1);
+		if (*roots != NULL) {
+			for (i = 0; i < sk_X509_num(cas); i++) {
+				(*roots)[i] = sk_X509_value(cas, i);
+			}
+			(*roots)[i] = NULL;
 		}
-		(*roots)[i] = NULL;
 	}
 	return CM_SUBMIT_STATUS_ISSUED;
 }

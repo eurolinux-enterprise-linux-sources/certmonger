@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <talloc.h>
 
@@ -56,6 +57,13 @@ static const struct {
 	{"NEED_CSR_GEN_PIN", CM_NEED_CSR_GEN_PIN},
 	{"NEED_CSR_GEN_TOKEN", CM_NEED_CSR_GEN_TOKEN},
 	{"HAVE_CSR", CM_HAVE_CSR},
+	{"NEED_SCEP_DATA", CM_NEED_SCEP_DATA},
+	{"GENERATING_SCEP_DATA", CM_GENERATING_SCEP_DATA},
+	{"NEED_SCEP_GEN_PIN", CM_NEED_SCEP_GEN_PIN},
+	{"NEED_SCEP_GEN_TOKEN", CM_NEED_SCEP_GEN_TOKEN},
+	{"NEED_SCEP_ENCRYPTION_CERT", CM_NEED_SCEP_ENCRYPTION_CERT},
+	{"NEED_SCEP_RSA_CLIENT_KEY", CM_NEED_SCEP_RSA_CLIENT_KEY},
+	{"HAVE_SCEP_DATA", CM_HAVE_SCEP_DATA},
 	{"NEED_TO_SUBMIT", CM_NEED_TO_SUBMIT},
 	{"SUBMITTING", CM_SUBMITTING},
 	{"NEED_CA", CM_NEED_CA},
@@ -68,6 +76,8 @@ static const struct {
 	{"START_SAVING_CERT", CM_START_SAVING_CERT},
 	{"SAVING_CERT", CM_SAVING_CERT},
 	{"NEED_CERTSAVE_PERMS", CM_NEED_CERTSAVE_PERMS},
+	{"NEED_CERTSAVE_TOKEN", CM_NEED_CERTSAVE_TOKEN},
+	{"NEED_CERTSAVE_PIN", CM_NEED_CERTSAVE_PIN},
 	{"NEED_TO_READ_CERT", CM_NEED_TO_READ_CERT},
 	{"READING_CERT", CM_READING_CERT},
 	{"SAVED_CERT", CM_SAVED_CERT},
@@ -77,8 +87,10 @@ static const struct {
 	{"NOTIFYING_VALIDITY", CM_NOTIFYING_VALIDITY},
 	{"NEED_TO_NOTIFY_REJECTION", CM_NEED_TO_NOTIFY_REJECTION},
 	{"NOTIFYING_REJECTION", CM_NOTIFYING_REJECTION},
-	{"NEED_TO_NOTIFY_ISSUED_FAILED", CM_NEED_TO_NOTIFY_ISSUED_FAILED},
-	{"NOTIFYING_ISSUED_FAILED", CM_NOTIFYING_ISSUED_FAILED},
+	{"NEED_TO_NOTIFY_ISSUED_SAVE_FAILED", CM_NEED_TO_NOTIFY_ISSUED_SAVE_FAILED},
+	{"NOTIFYING_ISSUED_SAVE_FAILED", CM_NOTIFYING_ISSUED_SAVE_FAILED},
+	{"NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED", CM_NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED},
+	{"NOTIFYING_ISSUED_CA_SAVE_FAILED", CM_NOTIFYING_ISSUED_CA_SAVE_FAILED},
 	{"NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED", CM_NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED},
 	{"NOTIFYING_ONLY_CA_SAVE_FAILED", CM_NOTIFYING_ONLY_CA_SAVE_FAILED},
 	{"NEED_TO_SAVE_CA_CERTS", CM_NEED_TO_SAVE_CA_CERTS},
@@ -99,13 +111,16 @@ static const struct {
 	{"START_SAVING_ONLY_CA_CERTS", CM_START_SAVING_ONLY_CA_CERTS},
 	{"SAVING_ONLY_CA_CERTS", CM_SAVING_ONLY_CA_CERTS},
 	{"NEED_CA_CERT_SAVE_PERMS", CM_NEED_CA_CERT_SAVE_PERMS},
+	{"NEED_ONLY_CA_CERT_SAVE_PERMS", CM_NEED_ONLY_CA_CERT_SAVE_PERMS},
 	{"INVALID", CM_INVALID},
-	/* old names */
+	/* old names for since-renamed states */
 	{"NEED_TO_NOTIFY", CM_NEED_TO_NOTIFY_VALIDITY},
 	{"NOTIFYING", CM_NOTIFYING_VALIDITY},
 	{"NEWLY_ADDED_START_READING_KEYI", CM_NEWLY_ADDED_START_READING_KEYINFO},
 	{"NEWLY_ADDED_READING_KEYI", CM_NEWLY_ADDED_READING_KEYINFO},
 	{"NEWLY_ADDED_NEED_KEYI_READ_PIN", CM_NEWLY_ADDED_NEED_KEYINFO_READ_PIN},
+	{"NEED_TO_NOTIFY_ISSUED_FAILED", CM_NEED_TO_NOTIFY_ISSUED_SAVE_FAILED},
+	{"NOTIFYING_ISSUED_FAILED", CM_NOTIFYING_ISSUED_SAVE_FAILED},
 };
 
 static const struct {
@@ -138,6 +153,8 @@ static const struct {
 	{"default_profile", cm_ca_phase_default_profile},
 	{"enrollment_reqs", cm_ca_phase_enroll_reqs},
 	{"renewal_reqs", cm_ca_phase_renew_reqs},
+	{"capabilities", cm_ca_phase_capabilities},
+	{"encryption_certs", cm_ca_phase_encryption_certs},
 	{"invalid", cm_ca_phase_invalid},
 };
 
@@ -188,7 +205,9 @@ cm_store_state_as_string(enum cm_state state)
 enum cm_ca_phase_state
 cm_store_ca_state_from_string(const char *name)
 {
+	unsigned long l;
 	unsigned i;
+	char *p;
 
 	for (i = 0;
 	     i < sizeof(cm_ca_state_names) / sizeof(cm_ca_state_names[0]);
@@ -197,13 +216,19 @@ cm_store_ca_state_from_string(const char *name)
 			return cm_ca_state_names[i].state;
 		}
 	}
+	l = strtoul(name, &p, 10);
+	if ((*name != '\0') && (p != NULL) && (*p == '\0')) {
+		return l;
+	}
 	return CM_CA_DISABLED;
 }
 
 enum cm_ca_phase
 cm_store_ca_phase_from_string(const char *name)
 {
+	unsigned long l;
 	unsigned int i;
+	char *p;
 
 	for (i = 0;
 	     i < sizeof(cm_ca_phase_names) / sizeof(cm_ca_phase_names[0]);
@@ -212,13 +237,19 @@ cm_store_ca_phase_from_string(const char *name)
 			return cm_ca_phase_names[i].phase;
 		}
 	}
+	l = strtoul(name, &p, 10);
+	if ((*name != '\0') && (p != NULL) && (*p == '\0')) {
+		return l;
+	}
 	return cm_ca_phase_invalid;
 }
 
 enum cm_state
 cm_store_state_from_string(const char *name)
 {
+	unsigned long l;
 	unsigned int i;
+	char *p;
 
 	for (i = 0;
 	     i < sizeof(cm_state_names) / sizeof(cm_state_names[0]);
@@ -226,6 +257,10 @@ cm_store_state_from_string(const char *name)
 		if (strcasecmp(cm_state_names[i].name, name) == 0) {
 			return cm_state_names[i].state;
 		}
+	}
+	l = strtoul(name, &p, 10);
+	if ((*name != '\0') && (p != NULL) && (*p == '\0')) {
+		return l;
 	}
 	return CM_INVALID;
 }
@@ -501,10 +536,29 @@ cm_store_hex_to_bin(const char *serial, unsigned char *buf, int length)
 }
 
 char *
-cm_store_canonicalize_directory(void *parent, const char *path)
+cm_store_canonicalize_path(void *parent, const char *path)
 {
-	char *tmp, *p;
+	char *tmp = NULL, *p, *q, buf[PATH_MAX], *prefix;
 	int i;
+
+	if (strncmp(path, "dbm:", 4) == 0) {
+		prefix = "dbm";
+		path += 4;
+	} else
+	if (strncmp(path, "sql:", 4) == 0) {
+		prefix = "sql";
+		path += 4;
+	} else
+	if (strncmp(path, "rdb:", 4) == 0) {
+		prefix = "rdb";
+		path += 4;
+	} else
+	if (strncmp(path, "extern:", 4) == 0) {
+		prefix = "extern";
+		path += 7;
+	} else {
+		prefix = NULL;
+	}
 	i = strlen(path);
 	if (i > 1) {
 		while ((i > 1) && (path[i - 1] == '/')) {
@@ -514,11 +568,43 @@ cm_store_canonicalize_directory(void *parent, const char *path)
 	} else {
 		tmp = talloc_strdup(parent, path);
 	}
-	while ((p = strstr(tmp, "/./")) != NULL) {
-		memmove(p, p + 2, strlen(p) - 1);
+	if ((tmp != NULL) && (tmp[0] != '/')) {
+		memset(buf, '\0', sizeof(buf));
+		if (getcwd(buf, sizeof(buf) - 1) != NULL) {
+			tmp = talloc_asprintf(parent, "%s//%s", buf, tmp);
+		}
 	}
-	while ((p = strstr(tmp, "//")) != NULL) {
-		memmove(p, p + 1, strlen(p));
+	if (tmp != NULL) {
+		for (p = tmp; *p != '\0'; p++) {
+			if ((strncmp(p, "/", 1) == 0) &&
+			    ((p[1] == '/') || (p[1] == '\0'))) {
+				memmove(p, p + 1, strlen(p + 1) + 1);
+			}
+		}
+		for (p = tmp; *p != '\0'; p++) {
+			if ((strncmp(p, "/.", 2) == 0) &&
+			    ((p[2] == '/') || (p[2] == '\0'))) {
+				q = p - 1;
+				memmove(p, p + 2, strlen(p + 2) + 1);
+			}
+		}
+		for (p = tmp; *p != '\0'; p++) {
+			if ((strncmp(p, "/..", 3) == 0) &&
+			    ((p[3] == '/') || (p[3] == '\0'))) {
+				q = p - 1;
+				while ((q >= tmp) && (*q != '/')) {
+					q--;
+				}
+				if (*q == '/') {
+					memmove(q, p + 3, strlen(p + 3) + 1);
+				} else {
+					break;
+				}
+			}
+		}
+		if (prefix != NULL) {
+			tmp = talloc_asprintf(parent, "%s:%s", prefix, tmp);
+		}
 	}
 	return tmp;
 }
@@ -651,7 +737,7 @@ cm_store_utf8_from_bmp_string(unsigned char *bmp, unsigned int len)
 }
 
 char *
-cm_store_base64_from_bin(void *parent, unsigned char *buf, int length)
+cm_store_base64_from_bin(void *parent, const unsigned char *buf, int length)
 {
 	char *p, *ret;
 	int max, i, j;

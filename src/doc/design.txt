@@ -20,6 +20,11 @@ Now with some arbitrarily-named states for our per-certificate state machine:
 	* Generating a CSR containing public key.
 	  States: NEED_CSR, GENERATING_CSR [*],
 		  NEED_CSR_GEN_TOKEN, NEED_CSR_GEN_PIN, HAVE_CSR
+	* Generating SCEP data, if we need it.
+	  States: NEED_SCEP_DATA, GENERATING_SCEP_DATA [*],
+		  NEED_SCEP_GEN_TOKEN, NEED_SCEP_GEN_PIN,
+		  NEED_SCEP_ENCRYPTION_CERT, NEED_SCEP_RSA_CLIENT_KEY,
+		  HAVE_SCEP_DATA
 	* Submitting CSR to a CA.
 	  States: NEED_TO_SUBMIT, SUBMITTING [*]
 	* Don't know which CA to submit to.
@@ -36,6 +41,7 @@ Now with some arbitrarily-named states for our per-certificate state machine:
 	  information we think is interesting.
 	  States: NEED_TO_SAVE_CERT, PRE_SAVE_CERT[*],
 		  START_SAVING_CERT, SAVING_CERT [*], NEED_CERTSAVE_PERMS,
+		  NEED_CERTSAVE_TOKEN, NEED_CERTSAVE_PIN,
 		  NEED_TO_READ_CERT, READING_CERT [*],
 		  SAVED_CERT, POST_SAVED_CERT[*]
 	* Waiting for certificate to near expiration.
@@ -220,6 +226,73 @@ State logic:
 		state_transition = now
 		break
 
+	NEED_SCEP_DATA:
+		if starting-up
+			state_next = HAVE_KEYINFO
+			state_transition = now
+		else
+			if don't-have-a-full-template
+				fill-in-template-values-based-on-defaults
+			start-csr-generation-using-template-values
+			state_next = GENERATING_SCEP_DATA
+			state_transition = now
+		break
+
+	GENERATING_SCEP_DATA:
+		if starting-up
+			state_next = NEED_SCEP_DATA
+			state_transition = now
+		else
+			if scepgen-finished
+				if scep-data-was-stored
+					state_next = HAVE_SCEP_DATA
+					state_transition = now
+				elseif key-store-needs-token
+					state_next = NEED_SCEP_GEN_TOKEN
+					state_transition = now
+				elseif key-store-needs-pin
+					state_next = NEED_SCEP_GEN_PIN
+					state_transition = now
+				elseif requires-ra-encryption-cert
+					state_next = NEED_SCEP_ENCRYPTION_CERT
+					state_transition = now
+				else
+					state_next = NEED_SCEP_RSA_CLIENT_KEY
+					state_transition = now
+			else
+				state_next = GENERATING_SCEP_DATA
+				state_transition = when-notified
+		break
+
+	NEED_SCEP_GEN_TOKEN:
+		if starting-up
+			state_next = NEED_SCEP_DATA
+			state_transition = soon
+		break
+
+	NEED_SCEP_GEN_PIN:
+		if starting-up
+			state_next = NEED_SCEP_DATA
+			state_transition = now
+		break
+
+	NEED_SCEP_ENCRYPTION_CERT:
+		if starting-up
+			state_next = NEED_SCEP_DATA
+			state_transition = now
+		break
+
+	NEED_SCEP_RSA_CLIENT_KEY:
+		if starting-up
+			state_next = NEED_SCEP_DATA
+			state_transition = now
+		break
+
+	HAVE_SCEP_DATA:
+		state_next = NEED_TO_SUBMIT
+		state_transition = now
+		break
+
 	NEED_TO_SUBMIT:
 		if starting-up
 			state_next = HAVE_CSR
@@ -267,6 +340,9 @@ State logic:
 						store-ca-cookie
 						state_next = CA_UNCONFIGURED
 						state_transition = later
+				elseif need-scep-data
+					state_next = NEED_SCEP_DATA
+					state_transition = now
 				else
 					state_next = NEED_GUIDANCE
 					state_transition = now
@@ -307,14 +383,20 @@ State logic:
 			state_transition = now
 		else
 			if cert-save-completed
-				state_next = NEED_TO_READ_CERT
+				state_next = NEED_TO_SAVE_CA_CERTS
 				state_transition = now
 			else
 				if cert-save-needs-perms
 					state_next = NEED_CERTSAVE_PERMS
 					state_transition = now
+				elseif cert-save-needs-token
+					state_next = NEED_CERTSAVE_TOKEN
+					state_transition = now
+				elseif cert-save-needs-pin
+					state_next = NEED_CERTSAVE_PIN
+					state_transition = now
 				else
-					state_next = NEED_TO_NOTIFY_ISSUED_FAILED
+					state_next = NEED_TO_NOTIFY_ISSUED_SAVE_FAILED
 					state_transition = now
 		break
 
@@ -324,29 +406,15 @@ State logic:
 			state_transition = now
 		break
 
-	NEED_TO_READ_CERT:
-		start-reading-cert
-		state_next = READING_CERT
-		state_transition = now
-		break
-
-	READING_CERT:
+	NEED_CERTSAVE_TOKEN:
 		if starting-up
-			state_next = NEED_TO_READ_CERT
+			state_next = NEED_TO_SAVE_CERT
 			state_transition = now
-		else
-			if cert-read-completed
-				state_next = SAVED_CERT
-				state_transition = now
 		break
 
-	SAVED_CERT:
-		if post-save-command-configured
-			start-configured-post-save-command
-			state_next = POST_SAVED_CERT
-			state_transition = now
-		else
-			state_next = NEED_TO_SAVE_CA_CERTS
+	NEED_CERTSAVE_PIN:
+		if starting-up
+			state_next = NEED_TO_SAVE_CERT
 			state_transition = now
 		break
 
@@ -370,15 +438,56 @@ State logic:
 			state_transition = now
 		else
 			if saving-ca-certs-complete
-				state_next = NEED_TO_NOTIFY_ISSUED_SAVED
+				state_next = NEED_TO_READ_CERT
 				state_transition = now
 			else
 				if permissions-problem
 					state_next = NEED_CA_CERT_SAVE_PERMS
 					state_transition = now
 				else
+					state_next = NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED
+					state_transition = now
+
+	NEED_CA_CERT_SAVE_PERMS:
+		if starting-up
+			state_next = NEED_TO_SAVE_CA_CERTS
+			state_transition = now
+		break
+
+	NEED_TO_READ_CERT:
+		start-reading-cert
+		state_next = READING_CERT
+		state_transition = now
+		break
+
+	READING_CERT:
+		if starting-up
+			state_next = NEED_TO_READ_CERT
+			state_transition = now
+		else
+			if cert-read-completed
+				if post-save-command-configured
+					start-configured-post-save-command
+					state_next = POST_SAVED_CERT
+					state_transition = now
+				else
 					state_next = NEED_TO_NOTIFY_ISSUED_SAVED
 					state_transition = now
+		break
+
+	POST_SAVED_CERT:
+		if starting-up
+			state_next = NEED_TO_NOTIFY_ISSUED_SAVED
+			state_transition = now
+		else
+			if post-save-completed
+				state_next = NEED_TO_NOTIFY_ISSUED_SAVED
+				state_transition = now
+
+	SAVED_CERT:
+		state_next = NEED_TO_SAVE_CA_CERTS
+		state_transition = now
+		break
 
 	NEED_TO_SAVE_ONLY_CA_CERTS:
 		state_next = START_SAVING_ONLY_CA_CERTS
@@ -410,21 +519,6 @@ State logic:
 					state_next = NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED
 					state_transition = now
 
-	NEED_CA_CERT_SAVE_PERMS:
-		if starting-up
-			state_next = NEED_TO_SAVE_CA_CERTS
-			state_transition = now
-		break
-
-
-	POST_SAVED_CERT:
-		if starting-up
-			state_next = SAVED_CERT
-			state_transition = now
-		else
-			if post-save-completed
-				state_next = NEED_TO_SAVE_CA_CERTS
-				state_transition = now
 
 	NEED_TO_NOTIFY_REJECTION:
 		start-notifying
@@ -442,19 +536,35 @@ State logic:
 				state_transition = now
 		break
 
-	NEED_TO_NOTIFY_ISSUED_FAILED:
+	NEED_TO_NOTIFY_ISSUED_SAVE_FAILED:
 		start-notifying
-		state_next = NOTIFYING_ISSUED_FAILED
+		state_next = NOTIFYING_ISSUED_SAVE_FAILED
 		state_transition = now
 		break
 
-	NOTIFYING_ISSUED_FAILED:
+	NOTIFYING_ISSUED_SAVE_FAILED:
 		if starting-up
-			state_next = NEED_TO_NOTIFY_ISSUED_FAILED
+			state_next = NEED_TO_NOTIFY_ISSUED_SAVE_FAILED
 			state_transition = now
 		else
 			if notification-completed
-				state_next = NEED_TO_SAVE_CERT
+				state_next = START_SAVING_CERT
+				state_transition = soonish
+		break
+
+	NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED
+		start-notifying
+		state_next = NOTIFYING_ISSUED_CA_SAVE_FAILED
+		state_transition = now
+		break
+
+	NOTIFYING_ISSUED_CA_SAVE_FAILED
+		if starting-up
+			state_next = NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED
+			state_transition = now
+		else
+			if notification-completed
+				state_next = MONITORING
 				state_transition = soonish
 		break
 
@@ -467,7 +577,6 @@ State logic:
 	NOTIFYING_ONLY_CA_SAVE_FAILED
 		if starting-up
 			state_next = NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED
-		start-notifying
 			state_transition = now
 		else
 			if notification-completed
@@ -477,17 +586,17 @@ State logic:
 
 	NEED_TO_NOTIFY_ISSUED_SAVED:
 		start-notifying
-		state_next = NOTIFYING_ISSUED_SAVED:
+		state_next = NOTIFYING_ISSUED_SAVED
 		state_transition = now
 		break
 
 	NOTIFYING_ISSUED_SAVED:
 		if starting-up
-			state_next = NEED_TO_NOTIFY_ISSUED_SAVED:
+			state_next = NEED_TO_NOTIFY_ISSUED_SAVED
 			state_transition = now
 		else
 			if notification-completed
-				state_next = CA_MONITORING
+				state_next = MONITORING
 				state_transition = now
 		break
 
@@ -708,6 +817,7 @@ Data we need to track for each certificate/task/dbentry:
 	    * DNS
 	    * email
 	    * principal name
+	    * IP addresses
 	  * ku¹, eku¹
 	  ¹ Encoded as extensionRequest attributes.
 	* Certificate State (state_current)

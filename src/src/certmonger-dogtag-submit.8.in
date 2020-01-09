@@ -1,0 +1,154 @@
+.TH certmonger 8 "18 Nov 2014" "certmonger Manual"
+
+.SH NAME
+dogtag-submit
+
+.SH SYNOPSIS
+dogtag-submit -E EE-URL -A AGENT-URL
+[-d dbdir]
+[-n nickname]
+[-i cainfo]
+[-C capath]
+[-c certfile]
+[-k keyfile]
+[-p pinfile]
+[-P pin]
+[-s serial (hex)]
+[-D serial (decimal)]
+[-S state]
+[-T profile]
+[-O param=value]
+[-N | -R]
+[-v]
+[csrfile]
+
+.SH DESCRIPTION
+\fIdogtag-submit\fR is the helper which \fIcertmonger\fR can use to make
+certificate enrollment and renewal requests to Dogtag servers.  It is not
+normally run interactively, but it can be for troubleshooting purposes.
+
+The preferred option is to request a renewal of an already-issued certificate,
+using its serial number, which can be read from a PEM-formatted certificate
+provided in the \fICERTMONGER_CERTIFICATE\fR environment variable, or via the
+\fB-s\fR or \fB-D\fR option on the command line.  If no serial number is
+provided, then the client will attempt to obtain a new certificate by
+submitting a signing request to the CA.
+
+The signing request which is to be submitted should either be in a file whose
+name is given as an argument, or fed into \fIdogtag-submit\fR via stdin.
+
+\fBcertmonger\fR does not yet support retrieving trust information from Dogtag
+CAs.
+
+.SH OPTIONS
+.TP
+\fB\-E\fR EE-URL
+The top-level URL for the end-entity interface provided by the CA.  This is
+typically
+\fIhttp://\fBSERVER\fP:\fBEEPORT\fP/ca/ee/ca\fR.
+.TP
+\fB\-A\fR AGENT-URL
+The top-level URL for the agent interface provided by the CA.  This is
+typically
+\fIhttps://\fBSERVER\fP:\fBAGENTPORT\fP/ca/agent/ca\fR.
+.TP
+\fB\-d\fR dbdir \fB\-n\fR nickname \fB\-c\fR certfile \fB\-k\fR keyfile
+The location of the key and certificate which the client should use to
+authenticate to the CA's agent interface.  Exactly which values are
+meaningful depend on which cryptography library your copy of libcurl was
+linked with.
+.TP
+\fB\-p\fR pinfile
+The name of a file which contains a PIN/password which will be needed in
+order to make use of the agent credentials.
+.TP
+\fB\-i\fR cainfo \fB\-C\fR capath
+The location of a file containing a copy of the CA's certificate, against which
+the CA server's certificate will be verified, or a directory containing, among
+other things, such a file.
+.TP
+\fB-s\fR serial
+The serial number of an already-issued certificate for which the client should
+attempt to obtain a new certificate, in hexadecimal form, if one can not be
+read from the \fICERTMONGER_CERTIFICATE\fR environment variable.
+.TP
+\fB-D\fR serial
+The serial number of an already-issued certificate for which the client should
+attempt to obtain a new certificate, in decimal form, if one can not be
+read from the \fICERTMONGER_CERTIFICATE\fR environment variable.
+.TP
+\fB-S\fR state
+A cookie value provided by a previous instance of this helper, if the helper
+is being asked to continue a multi-step enrollment process.  If the
+\fICERTMONGER_COOKIE\fR environment variable is set, its value is used.
+.TP
+\fB-T\fR profile/template
+The name of the type of certificate which the client should request from the CA
+if it is not renewing a certificate (per the \fB-s\fR option above).  If the
+\fICERTMONGER_CA_PROFILE\fR environment variable is set, its value is used.
+Otherwise, the default value is \fBcaServerCert\fP.
+.TP
+\fB-O\fR param=value
+An additional parameter to pass to the server when approving the signing
+request using agent credentials.  By default, any server-supplied default
+settings are applied.  This option can be used either to override a
+server-supplied default setting, or to supply one which would otherwise have
+not been used.  Requires the \fB-A\fR option.
+.TP
+\fB-N\fR
+Even if an already-issued certificate is available in the
+\fICERTMONGER_CERTIFICATE\fR environment variable, or a serial number has been
+provided, don't attempt to renew a certificate using its serial number.
+Instead, attempt to obtain a new certificate using the signing request.
+.TP
+\fB-R\fR
+Negates the effect of the \fB-N\fR flag.
+.TP
+\fB-v\fR
+Increases the logging level.  Use twice for more logging.  This option is mainly
+useful for troubleshooting.
+
+.SH EXIT STATUS
+.TP
+0
+if the certificate was issued. The certificate will be printed.
+.TP
+1
+if the CA is still thinking.  A cookie (state) value will be printed.
+.TP
+2
+if the CA rejected the request.  An error message may be printed.
+.TP
+3
+if the CA was unreachable.  An error message may be printed.
+.TP
+4
+if critical configuration information is missing.  An error message may be printed.
+.TP
+5
+if the CA is still thinking.  A suggested poll delay (specified in seconds) and
+a cookie (state) value will be printed.
+
+.SH BUGS
+Please file tickets for any that you find at https://fedorahosted.org/certmonger/
+
+.SH SEE ALSO
+\fBcertmonger\fR(8)
+\fBgetcert\fR(1)
+\fBgetcert-add-ca\fR(1)
+\fBgetcert-add-scep-ca\fR(1)
+\fBgetcert-list-cas\fR(1)
+\fBgetcert-list\fR(1)
+\fBgetcert-modify-ca\fR(1)
+\fBgetcert-refresh-ca\fR(1)
+\fBgetcert-remove-ca\fR(1)
+\fBgetcert-resubmit\fR(1)
+\fBgetcert-start-tracking\fR(1)
+\fBgetcert-status\fR(1)
+\fBgetcert-stop-tracking\fR(1)
+\fBcertmonger-certmaster-submit\fR(8)
+\fBcertmonger-dogtag-ipa-renew-agent-submit\fR(8)
+\fBcertmonger-ipa-submit\fR(8)
+\fBcertmonger-local-submit\fR(8)
+\fBcertmonger-scep-submit\fR(8)
+\fBcertmonger_selinux\fR(8)

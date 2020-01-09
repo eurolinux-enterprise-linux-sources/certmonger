@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2010,2011,2012,2013,2014 Red Hat, Inc.
+ * Copyright (C) 2009,2010,2011,2012,2013,2014,2015 Red Hat, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,6 +17,7 @@
 
 #include "config.h"
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -33,6 +34,9 @@
 
 #include <dbus/dbus.h>
 
+#include <nss.h>
+#include <pk11pub.h>
+
 #include <krb5.h>
 
 #include "cm.h"
@@ -41,6 +45,7 @@
 #include "store.h"
 #include "store-int.h"
 #include "submit-e.h"
+#include "submit-u.h"
 #include "tdbus.h"
 #include "tdbusm.h"
 
@@ -61,8 +66,10 @@
 #endif
 
 static void help(const char *cmd, const char *category);
+static char *thumbprint(const char *s, SECOidTag tag, int bits);
 
 static struct {
+	const char *argv0;
 	DBusConnection *conn;
 	void *tctx;
 } globals = {
@@ -196,7 +203,7 @@ ensure_nss(void *parent, const char *path, char **nss_scheme)
 	}
 	ret = ensure_path_is_absolute(parent, path);
 	if (ret != NULL) {
-		ret = cm_store_canonicalize_directory(parent, ret);
+		ret = cm_store_canonicalize_path(parent, ret);
 	}
 	if (ret != NULL) {
 		if (ensure_path_is_directory(ret) != 0) {
@@ -216,7 +223,7 @@ ensure_pem(void *parent, const char *path)
 	char *ret;
 	ret = ensure_path_is_absolute(parent, path);
 	if (ret != NULL) {
-		ret = cm_store_canonicalize_directory(parent, ret);
+		ret = cm_store_canonicalize_path(parent, ret);
 	}
 	if (ret != NULL) {
 		if (ensure_parent_is_directory(parent, ret) != 0) {
@@ -230,6 +237,26 @@ ensure_pem(void *parent, const char *path)
 	}
 	if (ret == NULL) {
 		exit(1);
+	}
+	return ret;
+}
+
+/* Escape any shell special characters. */
+static char *
+shell_escape(void *parent, const char *s)
+{
+	const char *specials = "|&;()<>\"' \t", *p;
+	char *ret, *q;
+
+	ret = talloc_size(parent, strlen(s) * 2 + 1);
+	if (ret != NULL) {
+		for (p = s, q = ret; *p != '\0'; p++) {
+			if (strchr(specials, *p) != NULL) {
+				*q++ = '\\';
+			}
+			*q++ = *p;
+		}
+		*q++ = '\0';
 	}
 	return ret;
 }
@@ -255,12 +282,59 @@ add_string(void *parent, char ***dest, const char *value)
 	*dest = tmp;
 }
 
+/* Connect to the bus, or not. */
+static void
+prep_bus(enum cm_tdbus_type which, const char *mode,
+	 int verbose, int argc, char **argv)
+{
+	DBusError err;
+	char *nargv[7] = {
+		CM_CERTMONGER_DAEMON_PATH,
+		"-n",
+		"-L",
+		"-c",
+	};
+	char *cmd = NULL;
+	int i;
+
+	if ((which != cm_tdbus_system) || (globals.conn != NULL) ||
+	    (getuid() != 0)) {
+		return;
+	}
+	memset(&err, 0, sizeof(err));
+	globals.conn = dbus_bus_get(DBUS_BUS_SYSTEM, &err);
+	if (globals.conn != NULL) {
+		return;
+	}
+	if (!dbus_error_has_name(&err, DBUS_ERROR_NO_SERVER) &&
+	    !dbus_error_has_name(&err, DBUS_ERROR_FILE_NOT_FOUND)) {
+		return;
+	}
+	cmd = talloc_asprintf(NULL, "%s/%s", CM_GETCERT_DIR, globals.argv0);
+	for (i = 0; i < argc; i++) {
+		cmd = talloc_strdup_append(cmd, " ");
+		cmd = talloc_strdup_append(cmd, shell_escape(cmd, argv[i]));
+	}
+	nargv[4] = cmd;
+	if (verbose > 0) {
+		nargv[5] = talloc_asprintf(cmd, "-d%d", verbose);
+	}
+	if (verbose) {
+		printf(_("No system bus running.\n"));
+		printf(_("Running as UID 0.\n"));
+		printf(_("Launching temporary dedicated service daemon.\n"));
+	}
+	execv(nargv[0], nargv);
+}
+
 /* Connect to the bus and set up as much of the request as we can. */
 static DBusMessage *
 prep_req(enum cm_tdbus_type which,
 	 const char *path, const char *interface, const char *method)
 {
 	DBusMessage *msg;
+	const char *busaddr;
+
 	if (globals.conn == NULL) {
 		switch (which) {
 		case cm_tdbus_session:
@@ -269,9 +343,15 @@ prep_req(enum cm_tdbus_type which,
 		case cm_tdbus_system:
 			globals.conn = dbus_bus_get(DBUS_BUS_SYSTEM, NULL);
 			break;
+		case cm_tdbus_private:
+			busaddr = getenv(CERTMONGER_PVT_ADDRESS_ENV);
+			if (busaddr != NULL) {
+				globals.conn = dbus_connection_open_private(busaddr, NULL);
+			}
+			break;
 		}
 		if (globals.conn == NULL) {
-			printf(_("Error connecting to DBus.\n"));
+			printf(_("Error connecting to D-Bus.\n"));
 			printf(_("Please verify that the message bus (D-Bus) service is running.\n"));
 			exit(1);
 		}
@@ -474,7 +554,7 @@ query_prop_s(enum cm_tdbus_type which,
 	DBusMessage *rep;
 	char *s;
 	rep = query_prop(which, path, interface, prop, verbose);
-	if (cm_tdbusm_get_s(rep, parent, &s) != 0) {
+	if (cm_tdbusm_get_vs(rep, parent, &s) != 0) {
 		s = "";
 	}
 	dbus_message_unref(rep);
@@ -566,7 +646,8 @@ waitfor(void *parent, enum cm_tdbus_type bus, const char *path, int verbose)
 		old_state = talloc_strdup(parent, state);
 		/* FIXME: we should be waiting for signals that the state
 		 * property has changed and then asking if we're stuck, not
-		 * just polling using a timer.  But that would require a whole */
+		 * just polling using a timer.  But that would require a whole
+		 * event loop. */
 		usleep(100000);
 	}
 	return 0;
@@ -581,13 +662,13 @@ request(const char *argv0, int argc, char **argv)
 	char *nss_scheme, *dbdir = NULL, *token = NULL, *nickname = NULL;
 	char *keytype = NULL, *keyfile = NULL, *certfile = NULL, *capath;
 	char **anchor_dbs = NULL, **anchor_files = NULL;
-	char *pin = NULL, *pinfile = NULL;
+	char *pin = NULL, *pinfile = NULL, *cpass = NULL, *cpassfile = NULL;
 	int keysize = 0, auto_renew = 1, verbose = 0, ku = 0, kubit, c, i, j;
 	char *ca = DEFAULT_CA, *subject = NULL, **eku = NULL, *oid, *id = NULL;
 	char *profile = NULL, kustring[16];
 	char **principal = NULL, **dns = NULL, **email = NULL, **ipaddr = NULL;
-	struct cm_tdbusm_dict param[43];
-	const struct cm_tdbusm_dict *params[42];
+	struct cm_tdbusm_dict param[45];
+	const struct cm_tdbusm_dict *params[44];
 	DBusMessage *req, *rep;
 	int waitreq = 0;
 	dbus_bool_t b;
@@ -617,9 +698,14 @@ request(const char *argv0, int argc, char **argv)
 		krealm = NULL;
 	}
 
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
+
 	opterr = 0;
 	while ((c = getopt(argc, argv,
-			   ":d:n:t:k:f:I:g:rRN:u:U:K:D:E:sSp:P:vB:C:T:G:A:a:F:w"
+			   ":d:n:t:k:f:I:g:rRN:u:U:K:D:E:sSp:P:vB:C:T:G:A:a:F:wL:l:"
 			   GETOPT_CA)) != -1) {
 		switch (c) {
 		case 'd':
@@ -754,6 +840,12 @@ request(const char *argv0, int argc, char **argv)
 		case 'P':
 			pin = optarg;
 			break;
+		case 'l':
+			cpassfile = optarg;
+			break;
+		case 'L':
+			cpass = optarg;
+			break;
 		case 'B':
 			precommand = optarg;
 			break;
@@ -837,6 +929,7 @@ request(const char *argv0, int argc, char **argv)
 		help(argv0, "request");
 		return 1;
 	}
+	prep_bus(bus, "request", verbose, argc, argv);
 	i = 0;
 	/* If the caller supplied _no_ naming information, substitute our own
 	 * defaults. */
@@ -953,6 +1046,20 @@ request(const char *argv0, int argc, char **argv)
 		param[i].key = "KEY_PIN_FILE";
 		param[i].value_type = cm_tdbusm_dict_s;
 		param[i].value.s = pinfile;
+		params[i] = &param[i];
+		i++;
+	}
+	if (cpass != NULL) {
+		param[i].key = CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD;
+		param[i].value_type = cm_tdbusm_dict_s;
+		param[i].value.s = cpass;
+		params[i] = &param[i];
+		i++;
+	}
+	if (cpassfile != NULL) {
+		param[i].key = CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD_FILE;
+		param[i].value_type = cm_tdbusm_dict_s;
+		param[i].value.s = cpassfile;
 		params[i] = &param[i];
 		i++;
 	}
@@ -1247,6 +1354,7 @@ add_basic_request(enum cm_tdbus_type bus, char *id,
 		  char *dbdir, char *nickname, char *token,
 		  char *keyfile, char *certfile,
 		  char *pin, char *pinfile,
+		  char *cpass, char *cpassfile,
 		  char *ca, char *profile,
 		  char *precommand, char *postcommand,
 		  char **anchor_dbs, char **anchor_files,
@@ -1254,8 +1362,8 @@ add_basic_request(enum cm_tdbus_type bus, char *id,
 {
 	DBusMessage *req, *rep;
 	int i;
-	struct cm_tdbusm_dict param[22];
-	const struct cm_tdbusm_dict *params[23];
+	struct cm_tdbusm_dict param[25];
+	const struct cm_tdbusm_dict *params[26];
 	dbus_bool_t b;
 	const char *capath;
 	char *p;
@@ -1348,6 +1456,20 @@ add_basic_request(enum cm_tdbus_type bus, char *id,
 		param[i].key = "KEY_PIN_FILE";
 		param[i].value_type = cm_tdbusm_dict_s;
 		param[i].value.s = pinfile;
+		params[i] = &param[i];
+		i++;
+	}
+	if (cpass != NULL) {
+		param[i].key = CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD;
+		param[i].value_type = cm_tdbusm_dict_s;
+		param[i].value.s = cpass;
+		params[i] = &param[i];
+		i++;
+	}
+	if (cpassfile != NULL) {
+		param[i].key = CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD_FILE;
+		param[i].value_type = cm_tdbusm_dict_s;
+		param[i].value.s = cpassfile;
 		params[i] = &param[i];
 		i++;
 	}
@@ -1444,14 +1566,14 @@ set_tracking(const char *argv0, const char *category,
 	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
 	DBusMessage *req, *rep;
 	const char *request, *capath;
-	struct cm_tdbusm_dict param[19];
-	const struct cm_tdbusm_dict *params[20];
+	struct cm_tdbusm_dict param[21];
+	const struct cm_tdbusm_dict *params[22];
 	char *nss_scheme, *dbdir = NULL, *token = NULL, *nickname = NULL;
 	char **anchor_dbs = NULL, **anchor_files = NULL;
 	char *id = NULL, *new_id = NULL, *new_request;
 	char *keyfile = NULL, *certfile = NULL, *ca = DEFAULT_CA;
 	char *profile = NULL;
-	char *pin = NULL, *pinfile = NULL;
+	char *pin = NULL, *pinfile = NULL, *cpass = NULL, *cpassfile = NULL;
 	dbus_bool_t b;
 	char *p;
 	int c, auto_renew_start = 0, auto_renew_stop = 0, verbose = 0, i, j;
@@ -1476,9 +1598,14 @@ set_tracking(const char *argv0, const char *category,
 		krealm = NULL;
 	}
 
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
+
 	opterr = 0;
 	while ((c = getopt(argc, argv,
-			   ":d:n:t:k:f:g:p:P:rRi:I:u:U:K:D:E:sSvB:C:T:A:a:F:w"
+			   ":d:n:t:k:f:g:p:P:rRi:I:u:U:K:D:E:sSvB:C:T:A:a:F:wL:l:"
 			   GETOPT_CA)) != -1) {
 		switch (c) {
 		case 'd':
@@ -1600,6 +1727,12 @@ set_tracking(const char *argv0, const char *category,
 		case 'P':
 			pin = optarg;
 			break;
+		case 'l':
+			cpassfile = optarg;
+			break;
+		case 'L':
+			cpass = optarg;
+			break;
 		case 'B':
 			precommand = optarg;
 			break;
@@ -1687,6 +1820,7 @@ set_tracking(const char *argv0, const char *category,
 		help(argv0, category);
 		return 1;
 	}
+	prep_bus(bus, category, verbose, argc, argv);
 	if (id != NULL) {
 		request = find_request_by_name(globals.tctx, bus, id, verbose);
 	} else {
@@ -1891,6 +2025,7 @@ set_tracking(const char *argv0, const char *category,
 						 dbdir, nickname, token,
 						 keyfile, certfile,
 						 pin, pinfile,
+						 cpass, cpassfile,
 						 ca, profile,
 						 precommand, postcommand,
 						 anchor_dbs, anchor_files,
@@ -1961,7 +2096,7 @@ resubmit(const char *argv0, int argc, char **argv)
 	const struct cm_tdbusm_dict *params[24];
 	char *dbdir = NULL, *token = NULL, *nickname = NULL, *certfile = NULL;
 	char **anchor_dbs = NULL, **anchor_files = NULL;
-	char *pin = NULL, *pinfile = NULL;
+	char *pin = NULL, *pinfile = NULL, *cpass = NULL, *cpassfile = NULL;
 	char *id = NULL, *new_id = NULL, *ca = NULL, *new_request, *nss_scheme;
 	char *subject = NULL, **eku = NULL, *oid = NULL;
 	char **principal = NULL, **dns = NULL, **email = NULL, **ipaddr = NULL;
@@ -1982,9 +2117,14 @@ resubmit(const char *argv0, int argc, char **argv)
 		return 1;
 	}
 
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
+
 	opterr = 0;
 	while ((c = getopt(argc, argv,
-			   ":d:n:N:t:u:U:K:E:D:f:i:I:sSp:P:vB:C:T:A:a:F:w"
+			   ":d:n:N:t:u:U:K:E:D:f:i:I:sSp:P:vB:C:T:A:a:F:wL:l:"
 			   GETOPT_CA)) != -1) {
 		switch (c) {
 		case 'd':
@@ -2085,6 +2225,12 @@ resubmit(const char *argv0, int argc, char **argv)
 		case 'P':
 			pin = optarg;
 			break;
+		case 'l':
+			cpassfile = optarg;
+			break;
+		case 'L':
+			cpass = optarg;
+			break;
 		case 'B':
 			precommand = optarg;
 			break;
@@ -2138,6 +2284,7 @@ resubmit(const char *argv0, int argc, char **argv)
 
 	krb5_free_context(kctx);
 
+	prep_bus(bus, "resubmit", verbose, argc, argv);
 	if (id != NULL) {
 		request = find_request_by_name(globals.tctx, bus, id, verbose);
 	} else {
@@ -2265,6 +2412,20 @@ resubmit(const char *argv0, int argc, char **argv)
 		params[i] = &param[i];
 		i++;
 	}
+	if (cpass != NULL) {
+		param[i].key = CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD;
+		param[i].value_type = cm_tdbusm_dict_s;
+		param[i].value.s = cpass;
+		params[i] = &param[i];
+		i++;
+	}
+	if (cpassfile != NULL) {
+		param[i].key = CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD_FILE;
+		param[i].value_type = cm_tdbusm_dict_s;
+		param[i].value.s = cpassfile;
+		params[i] = &param[i];
+		i++;
+	}
 	if (profile != NULL) {
 		param[i].key = CM_DBUS_PROP_TEMPLATE_PROFILE;
 		param[i].value_type = cm_tdbusm_dict_s;
@@ -2371,6 +2532,11 @@ refresh(const char *argv0, int argc, char **argv)
 	enum cm_state state;
 	int verbose = 0, c, i;
 
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
+
 	opterr = 0;
 	while ((c = getopt(argc, argv, ":sSad:n:f:i:v" GETOPT_CA)) != -1) {
 		switch (c) {
@@ -2419,10 +2585,10 @@ refresh(const char *argv0, int argc, char **argv)
 			if (c == ':') {
 				fprintf(stderr,
 					_("%s: option requires an argument -- '%c'\n"),
-					"list", optopt);
+					"refresh", optopt);
 			} else {
 				fprintf(stderr, _("%s: invalid option -- '%c'\n"),
-					"list", optopt);
+					"refresh", optopt);
 			}
 			help(argv0, "refresh");
 			return 1;
@@ -2440,6 +2606,7 @@ refresh(const char *argv0, int argc, char **argv)
 		help(argv0, "refresh");
 		return 1;
 	}
+	prep_bus(bus, "refresh", verbose, argc, argv);
 	if (only_ca != NULL) {
 		capath = find_ca_by_name(globals.tctx, bus, only_ca, verbose);
 		if (capath == NULL) {
@@ -2531,6 +2698,35 @@ refresh(const char *argv0, int argc, char **argv)
 	return 0;
 }
 
+/* Check if a CA is an SCEP CA. */
+static dbus_bool_t
+ca_is_scep(void *parent, enum cm_tdbus_type bus,
+	   const char *nickname, int verbose)
+{
+	char *busname, *s;
+
+	if (nickname == NULL) {
+		return FALSE;
+	}
+	busname = find_ca_by_name(parent, bus, nickname, verbose);
+	if (busname == NULL) {
+		return FALSE;
+	}
+	s = query_prop_s(bus, busname, CM_DBUS_CA_INTERFACE,
+			 CM_DBUS_PROP_SCEP_RA_CERT,
+			 verbose, parent);
+	if ((s != NULL) && (strlen(s) > 0)) {
+		return TRUE;
+	}
+	s = query_prop_s(bus, busname, CM_DBUS_CA_INTERFACE,
+			 CM_DBUS_PROP_SCEP_CA_CERT,
+			 verbose, parent);
+	if ((s != NULL) && (strlen(s) > 0)) {
+		return TRUE;
+	}
+	return FALSE;
+}
+
 static int
 list(const char *argv0, int argc, char **argv)
 {
@@ -2548,6 +2744,11 @@ list(const char *argv0, int argc, char **argv)
 	int requests_only = 0, tracking_only = 0, verbose = 0, c, i, j;
 	unsigned int k;
 	char key_usages[LINE_MAX];
+
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
 
 	opterr = 0;
 	while ((c = getopt(argc, argv, ":rtsSvd:n:f:i:" GETOPT_CA)) != -1) {
@@ -2605,6 +2806,7 @@ list(const char *argv0, int argc, char **argv)
 		help(argv0, "list");
 		return 1;
 	}
+	prep_bus(bus, "list", verbose, argc, argv);
 	if (only_ca != NULL) {
 		capath = find_ca_by_name(globals.tctx, bus, only_ca, verbose);
 		if (capath == NULL) {
@@ -2687,6 +2889,13 @@ list(const char *argv0, int argc, char **argv)
 		case CM_NEED_CSR_GEN_TOKEN:
 		case CM_GENERATING_CSR:
 		case CM_HAVE_CSR:
+		case CM_NEED_SCEP_DATA:
+		case CM_NEED_SCEP_GEN_PIN:
+		case CM_NEED_SCEP_GEN_TOKEN:
+		case CM_NEED_SCEP_ENCRYPTION_CERT:
+		case CM_NEED_SCEP_RSA_CLIENT_KEY:
+		case CM_GENERATING_SCEP_DATA:
+		case CM_HAVE_SCEP_DATA:
 		case CM_NEED_TO_SUBMIT:
 		case CM_SUBMITTING:
 		case CM_NEED_TO_SAVE_CERT:
@@ -2694,6 +2903,8 @@ list(const char *argv0, int argc, char **argv)
 		case CM_START_SAVING_CERT:
 		case CM_SAVING_CERT:
 		case CM_NEED_CERTSAVE_PERMS:
+		case CM_NEED_CERTSAVE_TOKEN:
+		case CM_NEED_CERTSAVE_PIN:
 		case CM_SAVED_CERT:
 		case CM_POST_SAVED_CERT:
 		case CM_NEED_TO_READ_CERT:
@@ -2719,6 +2930,7 @@ list(const char *argv0, int argc, char **argv)
 		case CM_SAVING_CA_CERTS:
 		case CM_SAVING_ONLY_CA_CERTS:
 		case CM_NEED_CA_CERT_SAVE_PERMS:
+		case CM_NEED_ONLY_CA_CERT_SAVE_PERMS:
 			if (tracking_only) {
 				continue;
 			}
@@ -2728,8 +2940,10 @@ list(const char *argv0, int argc, char **argv)
 		case CM_NOTIFYING_VALIDITY:
 		case CM_NEED_TO_NOTIFY_REJECTION:
 		case CM_NOTIFYING_REJECTION:
-		case CM_NEED_TO_NOTIFY_ISSUED_FAILED:
-		case CM_NOTIFYING_ISSUED_FAILED:
+		case CM_NEED_TO_NOTIFY_ISSUED_SAVE_FAILED:
+		case CM_NOTIFYING_ISSUED_SAVE_FAILED:
+		case CM_NEED_TO_NOTIFY_ISSUED_CA_SAVE_FAILED:
+		case CM_NOTIFYING_ISSUED_CA_SAVE_FAILED:
 		case CM_NEED_TO_NOTIFY_ISSUED_SAVED:
 		case CM_NOTIFYING_ISSUED_SAVED:
 		case CM_NEED_TO_NOTIFY_ONLY_CA_SAVE_FAILED:
@@ -2812,7 +3026,7 @@ list(const char *argv0, int argc, char **argv)
 			printf(_(",token='%s'"), s4);
 		}
 		if (s5 != NULL) {
-			printf(_(",pin='%s'"), s5);
+			printf(_(",pin set"));
 		}
 		if (s6 != NULL) {
 			printf(_(",pinfile='%s'"), s6);
@@ -2834,6 +3048,24 @@ list(const char *argv0, int argc, char **argv)
 			printf(_(",token='%s'"), s4);
 		}
 		printf("\n");
+		/* Information about the CSR. */
+		if ((ca_name != NULL) &&
+		    ca_is_scep(globals.tctx, bus, ca_name, verbose)) {
+			s1 = query_prop_s(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+					  CM_DBUS_PROP_CSR, verbose, globals.tctx);
+			if ((s1 != NULL) && (strlen(s1) > 0)) {
+				s2 = thumbprint(s1, SEC_OID_MD5, 128);
+				if ((s2 != NULL) && (strlen(s2) > 0)) {
+					printf(_("\tsigning request thumbprint (MD5): %s\n"), s2);
+				}
+				free(s2);
+				s2 = thumbprint(s1, SEC_OID_SHA1, 160);
+				if ((s2 != NULL) && (strlen(s2) > 0)) {
+					printf(_("\tsigning request thumbprint (SHA1): %s\n"), s2);
+				}
+				free(s2);
+			}
+		}
 		/* Information from the certificate. */
 		rep = query_rep(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
 				"get_cert_info", verbose);
@@ -2902,6 +3134,12 @@ list(const char *argv0, int argc, char **argv)
 			       j == 0 ? _("\teku: ") : ",",
 			       cm_oid_to_name(NULL, as4[j]),
 			       as4[j + 1] ? "" : "\n");
+		}
+		s1 = query_prop_s(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
+				  CM_DBUS_PROP_CA_PROFILE, verbose,
+				  globals.tctx);
+		if ((s1 != NULL) && (strlen(s1) > 0)) {
+			printf(_("\tcertificate template/profile: %s\n"), s1);
 		}
 		as = query_prop_as(bus, requests[i], CM_DBUS_REQUEST_INTERFACE,
 				   CM_DBUS_PROP_ROOT_CERT_FILES,
@@ -2987,6 +3225,11 @@ status(const char *argv0, int argc, char **argv)
 	dbus_bool_t b;
 	int verbose = 0, c;
 
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
+
 	opterr = 0;
 	while ((c = getopt(argc, argv, ":sSvd:n:f:i:")) != -1) {
 		switch (c) {
@@ -3020,20 +3263,21 @@ status(const char *argv0, int argc, char **argv)
 			if (c == ':') {
 				fprintf(stderr,
 					_("%s: option requires an argument -- '%c'\n"),
-					"list", optopt);
+					"status", optopt);
 			} else {
 				fprintf(stderr, _("%s: invalid option -- '%c'\n"),
-					"list", optopt);
+					"status", optopt);
 			}
-			help(argv0, "list");
+			help(argv0, "status");
 			return 1;
 		}
 	}
 	if (optind < argc) {
 		printf(_("Error: unused extra arguments were supplied.\n"));
-		help(argv0, "list");
+		help(argv0, "status");
 		return 1;
 	}
+	prep_bus(bus, "status", verbose, argc, argv);
 	if (id != NULL) {
 		request = find_request_by_name(globals.tctx, bus, id, verbose);
 		if (request == NULL) {
@@ -3050,6 +3294,12 @@ status(const char *argv0, int argc, char **argv)
 			    (certfile != NULL)) {
 				printf(_("No request found that matched "
 					 "arguments.\n"));
+				return 1;
+			} else {
+				printf(_("None of ID or database directory and "
+					 "and nickname or certificate file "
+					 "specified.\n"));
+				help(argv0, "status");
 				return 1;
 			}
 		}
@@ -3069,13 +3319,60 @@ status(const char *argv0, int argc, char **argv)
 	return evaluate_status(s, b);
 }
 
+char *
+thumbprint(const char *s, SECOidTag tag, int bits)
+{
+	unsigned char digest[CM_DIGEST_MAX], *u = NULL;
+	char *t = NULL;
+	char *ret = NULL;
+	int length, i;
+	const char *hexchars = "0123456789ABCDEF";
+
+	t = cm_submit_u_base64_from_text(s);
+	if (t == NULL) {
+		goto done;
+	}
+	length = strlen(t);
+	if (length == 0) {
+		goto done;
+	}
+	u = malloc(length);
+	if (u == NULL) {
+		goto done;
+	}
+	length = cm_store_base64_to_bin(t, -1, u, length);
+	if (PK11_HashBuf(tag, digest, u, length) == SECSuccess) {
+		free(t);
+		t = malloc(bits / 4 + howmany(bits, 32));
+		if (t != NULL) {
+			ret = t;
+			for (i = 0; i < bits / 8; i++) {
+				if ((i > 0) && ((i % 4) == 0)) {
+					*t++ = ' ';
+				}
+				*t++ = hexchars[(digest[i] >> 4) & 0x0f];
+				*t++ = hexchars[(digest[i]) & 0x0f];
+			}
+			*t++ = '\0';
+		}
+	}
+done:
+	free(u);
+	return ret;
+}
+
 static int
 list_cas(const char *argv0, int argc, char **argv)
 {
 	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
-	char **cas, *s, *only_ca = DEFAULT_CA;
+	char **cas, *s, *only_ca = DEFAULT_CA, *thumb, *ca_name;
 	char **as;
 	int c, i, j, verbose = 0;
+
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
 
 	opterr = 0;
 	while ((c = getopt(argc, argv, ":sSv" GETOPT_CA)) != -1) {
@@ -3110,17 +3407,18 @@ list_cas(const char *argv0, int argc, char **argv)
 		help(argv0, "list-cas");
 		return 1;
 	}
+	prep_bus(bus, "list-cas", verbose, argc, argv);
 	cas = query_rep_ap(bus, CM_DBUS_BASE_PATH, CM_DBUS_BASE_INTERFACE,
 			   "get_known_cas", verbose, globals.tctx);
 	for (i = 0; (cas != NULL) && (cas[i] != NULL); i++) {
 		/* Filter out based on the CA. */
-		s = find_ca_name(globals.tctx, bus, cas[i], verbose);
-		if (s != NULL) {
-			if ((only_ca != NULL) && (strcmp(s, only_ca) != 0)) {
+		ca_name = find_ca_name(globals.tctx, bus, cas[i], verbose);
+		if (ca_name != NULL) {
+			if ((only_ca != NULL) && (strcmp(ca_name, only_ca) != 0)) {
 				continue;
 			}
 		}
-		printf(_("CA '%s':\n"), s);
+		printf(_("CA '%s':\n"), ca_name);
 		if (verbose > 0) {
 			s = query_prop_s(bus, cas[i], CM_DBUS_CA_INTERFACE,
 					 CM_DBUS_PROP_AKA,
@@ -3227,6 +3525,36 @@ list_cas(const char *argv0, int argc, char **argv)
 			printf(_("\tdefault profile/template/certtype: %s\n"),
 			       s);
 		}
+		if (ca_is_scep(globals.tctx, bus, ca_name, verbose)) {
+			s = query_prop_s(bus, cas[i], CM_DBUS_CA_INTERFACE,
+					 CM_DBUS_PROP_SCEP_CA_IDENTIFIER,
+					 verbose, globals.tctx);
+			if ((s != NULL) && (strlen(s) > 0)) {
+				printf(_("\tSCEP CA identifier: %s\n"), s);
+			}
+			s = query_prop_s(bus, cas[i], CM_DBUS_CA_INTERFACE,
+					 CM_DBUS_PROP_SCEP_CA_CERT,
+					 verbose, globals.tctx);
+			if ((s == NULL) || (strlen(s) == 0)) {
+				s = query_prop_s(bus, cas[i], CM_DBUS_CA_INTERFACE,
+						 CM_DBUS_PROP_SCEP_RA_CERT,
+						 verbose, globals.tctx);
+			}
+			if ((s != NULL) && (strlen(s) > 0)) {
+				thumb = thumbprint(s, SEC_OID_MD5, 128);
+				if ((thumb != NULL) && (strlen(thumb) > 0)) {
+					printf(_("\tSCEP CA certificate thumbprint (MD5): %s\n"),
+					       thumb);
+				}
+				free(thumb);
+				thumb = thumbprint(s, SEC_OID_SHA1, 160);
+				if ((thumb != NULL) && (strlen(thumb) > 0)) {
+					printf(_("\tSCEP CA certificate thumbprint (SHA1): %s\n"),
+					       thumb);
+				}
+				free(thumb);
+			}
+		}
 		s = query_prop_s(bus, cas[i], CM_DBUS_CA_INTERFACE,
 				 CM_DBUS_PROP_CA_PRESAVE_COMMAND,
 				 verbose, globals.tctx);
@@ -3250,6 +3578,11 @@ refresh_ca(const char *argv0, int argc, char **argv)
 	char **cas, *s, *only_ca = DEFAULT_CA;
 	int c, i, verbose = 0;
 	dbus_bool_t b, all = FALSE;
+
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
 
 	opterr = 0;
 	while ((c = getopt(argc, argv, ":asSv" GETOPT_CA)) != -1) {
@@ -3293,6 +3626,7 @@ refresh_ca(const char *argv0, int argc, char **argv)
 		help(argv0, "refresh-ca");
 		return 1;
 	}
+	prep_bus(bus, "refresh-ca", verbose, argc, argv);
 	cas = query_rep_ap(bus, CM_DBUS_BASE_PATH, CM_DBUS_BASE_INTERFACE,
 			   "get_known_cas", verbose, globals.tctx);
 	for (i = 0; (cas != NULL) && (cas[i] != NULL); i++) {
@@ -3320,6 +3654,389 @@ refresh_ca(const char *argv0, int argc, char **argv)
 	return 0;
 }
 
+#ifndef FORCE_CA
+static int
+add_ca(const char *argv0, int argc, char **argv)
+{
+	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
+	char *caname = NULL, *command = NULL, *p = NULL, *nickname;
+	int c, verbose = 0;
+	dbus_bool_t b;
+	static DBusMessage *req, *rep;
+
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
+
+	opterr = 0;
+	while ((c = getopt(argc, argv, "c:e:vsS")) != -1) {
+		switch (c) {
+		case 'c':
+			caname = optarg;
+			break;
+		case 'e':
+			command = optarg;
+			break;
+		case 's':
+			bus = cm_tdbus_session;
+			break;
+		case 'S':
+			bus = cm_tdbus_system;
+			break;
+		case 'v':
+			verbose++;
+			break;
+		default:
+			if (c == ':') {
+				fprintf(stderr,
+					_("%s: option requires an argument -- '%c'\n"),
+					"add-ca", optopt);
+			} else {
+				fprintf(stderr, _("%s: invalid option -- '%c'\n"),
+					"add-ca", optopt);
+			}
+			help(argv0, "add-ca");
+			return 1;
+		}
+	}
+	if (caname == NULL) {
+		printf(_("CA nickname not specified.\n"));
+		help(argv0, "add-ca");
+		return 1;
+	}
+	if (command == NULL) {
+		printf(_("CA helper command not specified.\n"));
+		help(argv0, "add-ca");
+		return 1;
+	}
+	if (optind < argc) {
+		printf(_("Error: unused extra arguments were supplied.\n"));
+		help(argv0, "add-ca");
+		return 1;
+	}
+	prep_bus(bus, "add-ca", verbose, argc, argv);
+	req = prep_req(bus, CM_DBUS_BASE_PATH, CM_DBUS_BASE_INTERFACE,
+		       "add_known_ca");
+	if (cm_tdbusm_set_ssoas(req, caname, command, NULL) != 0) {
+		printf(_("Error setting request arguments.\n"));
+		exit(1);
+	}
+	rep = send_req(req, verbose);
+	if (cm_tdbusm_get_bp(rep, globals.tctx, &b, &p) != 0) {
+		printf(_("Error parsing server response.\n"));
+		exit(1);
+	}
+	dbus_message_unref(rep);
+	if (b) {
+		nickname = find_ca_name(globals.tctx, bus, p, verbose);
+		printf(_("New CA \"%s\" added.\n"),
+		       nickname ? nickname : p);
+	} else {
+		printf(_("New CA could not be added.\n"));
+		exit(1);
+	}
+	return 0;
+}
+
+static int
+add_scep_ca(const char *argv0, int argc, char **argv)
+{
+	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
+	char *caname = NULL, *url = NULL, *path = NULL, *id = NULL;
+	char *root = NULL, *racert = NULL, *certs = NULL, *nickname, *command;
+	const char *err;
+	int c, verbose = 0;
+	dbus_bool_t b;
+	static DBusMessage *req, *rep;
+
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
+
+	opterr = 0;
+	while ((c = getopt(argc, argv, "c:u:i:R:vsSr:I:")) != -1) {
+		switch (c) {
+		case 'c':
+			caname = optarg;
+			break;
+		case 'u':
+			url = optarg;
+			break;
+		case 'i':
+			id = optarg;
+			break;
+		case 'R':
+			root = optarg;
+			break;
+		case 's':
+			bus = cm_tdbus_session;
+			break;
+		case 'S':
+			bus = cm_tdbus_system;
+			break;
+		case 'v':
+			verbose++;
+			break;
+		case 'r':
+			racert = optarg;
+			break;
+		case 'I':
+			certs = optarg;
+			break;
+		default:
+			if (c == ':') {
+				fprintf(stderr,
+					_("%s: option requires an argument -- '%c'\n"),
+					"add-scep-ca", optopt);
+			} else {
+				fprintf(stderr, _("%s: invalid option -- '%c'\n"),
+					"add-scep-ca", optopt);
+			}
+			help(argv0, "add-scep-ca");
+			return 1;
+		}
+	}
+	if (caname == NULL) {
+		printf(_("CA nickname not specified.\n"));
+		help(argv0, "add-scep-ca");
+		return 1;
+	}
+	if (url == NULL) {
+		printf(_("server URL not specified.\n"));
+		help(argv0, "add-scep-ca");
+		return 1;
+	}
+	if ((root == NULL) && (strncmp(url, "https:", 6) == 0)) {
+		printf(_("HTTPS requires a CA certificate.\n"));
+		help(argv0, "add-scep-ca");
+		return 1;
+	}
+	if (optind < argc) {
+		printf(_("Error: unused extra arguments were supplied.\n"));
+		help(argv0, "add-scep-ca");
+		return 1;
+	}
+	command = talloc_asprintf(globals.tctx,
+				  "%s -u %s %s %s %s %s %s %s",
+				  shell_escape(globals.tctx,
+					       CM_SCEP_HELPER_PATH),
+				  shell_escape(globals.tctx, url),
+				  root ? "-R" : "",
+				  root ? shell_escape(globals.tctx, root) : "",
+				  racert ? "-r" : "",
+				  racert ? shell_escape(globals.tctx, racert) : "",
+				  certs ? "-I" : "",
+				  certs ? shell_escape(globals.tctx, certs) : "");
+	if (command == NULL) {
+		printf(_("Error building command line.\n"));
+		exit(1);
+	}
+	prep_bus(bus, "add-scep-ca", verbose, argc, argv);
+	req = prep_req(bus, CM_DBUS_BASE_PATH, CM_DBUS_BASE_INTERFACE,
+		       "add_known_ca");
+	if (cm_tdbusm_set_ssoas(req, caname, command, NULL) != 0) {
+		printf(_("Error setting request arguments.\n"));
+		exit(1);
+	}
+	rep = send_req(req, verbose);
+	if (cm_tdbusm_get_bp(rep, globals.tctx, &b, &path) != 0) {
+		printf(_("Error parsing server response.\n"));
+		exit(1);
+	}
+	dbus_message_unref(rep);
+	if (b) {
+		nickname = find_ca_name(globals.tctx, bus, path, verbose);
+		printf(_("New CA \"%s\" added.\n"),
+		       nickname ? nickname : path);
+		if (id != NULL) {
+			req = prep_req(bus, path, DBUS_INTERFACE_PROPERTIES,
+				       "Set");
+			if (cm_tdbusm_set_ssvs(req, CM_DBUS_CA_INTERFACE,
+					       CM_DBUS_PROP_SCEP_CA_IDENTIFIER,
+					       id) != 0) {
+				printf(_("Error setting request arguments.\n"));
+				exit(1);
+			}
+			rep = send_req(req, verbose);
+			err = dbus_message_get_error_name(rep);
+			if (err != NULL) {
+				printf(_("Error setting CA identifier.\n"));
+				exit(1);
+			}
+			dbus_message_unref(rep);
+		}
+	} else {
+		printf(_("New CA could not be added.\n"));
+		exit(1);
+	}
+	return 0;
+}
+
+static int
+modify_ca(const char *argv0, int argc, char **argv)
+{
+	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
+	char *caname = NULL, *command = NULL, *nickname, *path;
+	const char *err;
+	int c, verbose = 0;
+	static DBusMessage *req, *rep;
+
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
+
+	opterr = 0;
+	while ((c = getopt(argc, argv, "c:e:vsS")) != -1) {
+		switch (c) {
+		case 'c':
+			caname = optarg;
+			break;
+		case 'e':
+			command = optarg;
+			break;
+		case 's':
+			bus = cm_tdbus_session;
+			break;
+		case 'S':
+			bus = cm_tdbus_system;
+			break;
+		case 'v':
+			verbose++;
+			break;
+		default:
+			if (c == ':') {
+				fprintf(stderr,
+					_("%s: option requires an argument -- '%c'\n"),
+					"modify-ca", optopt);
+			} else {
+				fprintf(stderr, _("%s: invalid option -- '%c'\n"),
+					"modify-ca", optopt);
+			}
+			help(argv0, "modify-ca");
+			return 1;
+		}
+	}
+	if (caname == NULL) {
+		printf(_("CA nickname not specified.\n"));
+		help(argv0, "modify-ca");
+		return 1;
+	}
+	if (command == NULL) {
+		printf(_("CA helper command not specified.\n"));
+		help(argv0, "modify-ca");
+		return 1;
+	}
+	if (optind < argc) {
+		printf(_("Error: unused extra arguments were supplied.\n"));
+		help(argv0, "modify-ca");
+		return 1;
+	}
+	prep_bus(bus, "modify-ca", verbose, argc, argv);
+	path = find_ca_by_name(globals.tctx, bus, caname, verbose);
+	req = prep_req(bus, path, DBUS_INTERFACE_PROPERTIES, "Set");
+	if (cm_tdbusm_set_ssvs(req, CM_DBUS_CA_INTERFACE,
+			       CM_DBUS_PROP_EXTERNAL_HELPER,
+			       command) != 0) {
+		printf(_("Error setting request arguments.\n"));
+		exit(1);
+	}
+	rep = send_req(req, verbose);
+	err = dbus_message_get_error_name(rep);
+	if (err == NULL) {
+		nickname = find_ca_name(globals.tctx, bus, path, verbose);
+		printf(_("CA \"%s\" modified.\n"),
+		       nickname ? nickname : caname);
+	} else {
+		printf(_("CA could not be modified.\n"));
+		exit(1);
+	}
+	dbus_message_unref(rep);
+	return 0;
+}
+
+static int
+remove_ca(const char *argv0, int argc, char **argv)
+{
+	enum cm_tdbus_type bus = CM_DBUS_DEFAULT_BUS;
+	char *caname = NULL, *path;
+	int c, verbose = 0;
+	dbus_bool_t b;
+	static DBusMessage *req, *rep;
+
+	if ((getenv(CERTMONGER_PVT_ADDRESS_ENV) != NULL) &&
+	    (strlen(getenv(CERTMONGER_PVT_ADDRESS_ENV)) > 0)) {
+		bus = cm_tdbus_private;
+	}
+
+	opterr = 0;
+	while ((c = getopt(argc, argv, "c:vsS")) != -1) {
+		switch (c) {
+		case 'c':
+			caname = optarg;
+			break;
+		case 's':
+			bus = cm_tdbus_session;
+			break;
+		case 'S':
+			bus = cm_tdbus_system;
+			break;
+		case 'v':
+			verbose++;
+			break;
+		default:
+			if (c == ':') {
+				fprintf(stderr,
+					_("%s: option requires an argument -- '%c'\n"),
+					"remove-ca", optopt);
+			} else {
+				fprintf(stderr, _("%s: invalid option -- '%c'\n"),
+					"remove-ca", optopt);
+			}
+			help(argv0, "remove-ca");
+			return 1;
+		}
+	}
+	if (caname == NULL) {
+		printf(_("CA nickname not specified.\n"));
+		help(argv0, "add-ca");
+		return 1;
+	}
+	if (optind < argc) {
+		printf(_("Error: unused extra arguments were supplied.\n"));
+		help(argv0, "remove-ca");
+		return 1;
+	}
+	prep_bus(bus, "remove-ca", verbose, argc, argv);
+	path = find_ca_by_name(globals.tctx, bus, caname, verbose);
+	if (path == NULL) {
+		printf(_("No CA with name \"%s\" found.\n"), caname);
+		return 1;
+	}
+	req = prep_req(bus, CM_DBUS_BASE_PATH, CM_DBUS_BASE_INTERFACE,
+		       "remove_known_ca");
+	if (cm_tdbusm_set_p(req, path) != 0) {
+		printf(_("Error setting request arguments.\n"));
+		exit(1);
+	}
+	rep = send_req(req, verbose);
+	if (cm_tdbusm_get_b(rep, globals.tctx, &b) != 0) {
+		printf(_("Error parsing server response.\n"));
+		exit(1);
+	}
+	dbus_message_unref(rep);
+	if (b) {
+		printf(_("CA \"%s\" removed.\n"), caname);
+	} else {
+		printf(_("CA could not be removed.\n"));
+		exit(1);
+	}
+	return 0;
+}
+#endif
+
 static struct {
 	const char *verb;
 	int (*fn)(const char *, int, char **);
@@ -3331,8 +4048,18 @@ static struct {
 	{"refresh", refresh},
 	{"list", list},
 	{"status", status},
+#ifndef FORCE_CA
+	{"add-ca", add_ca},
+	{"add-scep-ca", add_scep_ca},
+#endif
 	{"list-cas", list_cas},
+#ifndef FORCE_CA
+	{"modify-ca", modify_ca},
+#endif
 	{"refresh-ca", refresh_ca},
+#ifndef FORCE_CA
+	{"remove-ca", remove_ca},
+#endif
 };
 
 static void
@@ -3377,6 +4104,8 @@ help(const char *cmd, const char *category)
 		N_("  -D DNSNAME	set requested DNS name\n"),
 		N_("  -E EMAIL	set requested email address\n"),
 		N_("  -A ADDRESS	set requested IP address\n"),
+		N_("  -l FILE	file which holds an optional challenge password\n"),
+		N_("  -L PASSWORD	an optional challenge password value\n"),
 		N_("* Bus options:\n"),
 		N_("  -S		connect to the certmonger service on the system bus\n"),
 		N_("  -s		connect to the certmonger service on the session bus\n"),
@@ -3422,6 +4151,8 @@ help(const char *cmd, const char *category)
 		N_("  -D DNSNAME	override requested DNS name\n"),
 		N_("  -E EMAIL	override requested email address\n"),
 		N_("  -A ADDRESS	override requested IP address\n"),
+		N_("  -l FILE	file which holds an optional challenge password\n"),
+		N_("  -L PASSWORD	an optional challenge password value\n"),
 		N_("* Bus options:\n"),
 		N_("  -S		connect to the certmonger service on the system bus\n"),
 		N_("  -s		connect to the certmonger service on the session bus\n"),
@@ -3481,6 +4212,8 @@ help(const char *cmd, const char *category)
 		N_("  -D DNSNAME	set requested DNS name\n"),
 		N_("  -E EMAIL	set requested email address\n"),
 		N_("  -A ADDRESS	set requested IP address\n"),
+		N_("  -l FILE	file which holds an optional challenge password\n"),
+		N_("  -L PASSWORD	an optional challenge password value\n"),
 		"\n",
 		N_("Optional arguments:\n"),
 		N_("* Certificate handling settings:\n"),
@@ -3529,7 +4262,7 @@ help(const char *cmd, const char *category)
 		N_("Usage: %s refresh [options]\n"),
 		"\n",
 		N_("* General options:\n"),
-		N_("  -a   	refresh information about all outstanding requests\n"),
+		N_("  -a	refresh information about all outstanding requests\n"),
 		"\n",
 		N_("Required arguments:\n"),
 		N_("* By request identifier:\n"),
@@ -3588,7 +4321,7 @@ help(const char *cmd, const char *category)
 #ifndef FORCE_CA
 		N_("* General options:\n"),
 		N_("  -c CA	refresh information about the CA with this name\n"),
-		N_("  -a   	refresh information about all known CAs\n"),
+		N_("  -a	refresh information about all known CAs\n"),
 #endif
 		N_("* Bus options:\n"),
 		N_("  -S	connect to the certmonger service on the system bus\n"),
@@ -3597,31 +4330,129 @@ help(const char *cmd, const char *category)
 		N_("  -v	report all details of errors\n"),
 		NULL,
 	};
+#ifndef FORCE_CA
+	const char *add_ca_help[] = {
+		N_("Usage: %s add-ca [options]\n"),
+		"\n",
+		N_("Optional arguments:\n"),
+		N_("* General options:\n"),
+		N_("  -c CA		nickname to give to the new CA configuration\n"),
+		N_("  -e CMD	helper command to run to communicate with CA\n"),
+		N_("* Bus options:\n"),
+		N_("  -S	connect to the certmonger service on the system bus\n"),
+		N_("  -s	connect to the certmonger service on the session bus\n"),
+		N_("* Other options:\n"),
+		N_("  -v	report all details of errors\n"),
+		NULL,
+	};
+	const char *add_scep_ca_help[] = {
+		N_("Usage: %s add-scep-ca [options]\n"),
+		"\n",
+		N_("Optional arguments:\n"),
+		N_("* General options:\n"),
+		N_("  -c CA		nickname to give to the new CA configuration\n"),
+		N_("  -u URL	location of SCEP server\n"),
+		N_("  -i ID		CA identifier\n"),
+		N_("  -R FILE	file containing CA's certificate\n"),
+		N_("  -r FILE	file containing RA's certificate\n"),
+		N_("  -I FILE	file containing certificates in RA's certifying chain\n"),
+		N_("* Bus options:\n"),
+		N_("  -S	connect to the certmonger service on the system bus\n"),
+		N_("  -s	connect to the certmonger service on the session bus\n"),
+		N_("* Other options:\n"),
+		N_("  -v	report all details of errors\n"),
+		NULL,
+	};
+	const char *modify_ca_help[] = {
+		N_("Usage: %s modify-ca [options]\n"),
+		"\n",
+		N_("Optional arguments:\n"),
+		N_("* General options:\n"),
+		N_("  -c CA		nickname of the CA configuration\n"),
+		N_("  -e CMD	updated helper command to run to communicate with CA\n"),
+		N_("* Bus options:\n"),
+		N_("  -S	connect to the certmonger service on the system bus\n"),
+		N_("  -s	connect to the certmonger service on the session bus\n"),
+		N_("* Other options:\n"),
+		N_("  -v	report all details of errors\n"),
+		NULL,
+	};
+	const char *remove_ca_help[] = {
+		N_("Usage: %s remove-ca [options]\n"),
+		"\n",
+		N_("Optional arguments:\n"),
+		N_("* General options:\n"),
+		N_("  -c CA	nickname of CA configuration to remove\n"),
+		N_("* Bus options:\n"),
+		N_("  -S	connect to the certmonger service on the system bus\n"),
+		N_("  -s	connect to the certmonger service on the session bus\n"),
+		N_("* Other options:\n"),
+		N_("  -v	report all details of errors\n"),
+		NULL,
+	};
+#endif
 	struct {
 		const char *category;
 		const char **msgs;
+		const char *brief;
 	} msgs[] = {
-		{NULL, general_help},
-		{"request", request_help},
-		{"start-tracking", start_tracking_help},
-		{"stop-tracking", stop_tracking_help},
-		{"resubmit", resubmit_help},
-		{"refresh", refresh_help},
-		{"list", list_help},
-		{"status", status_help},
-		{"list-cas", list_cas_help},
-		{"refresh-ca", refresh_ca_help},
+		{NULL, general_help,
+		 N_("Usage: %s command [options]\n")},
+		{"request", request_help,
+		 N_("request a new certificate from a CA\n")},
+		{"start-tracking", start_tracking_help,
+		 N_("begin monitoring an already-issued certificate\n")},
+		{"stop-tracking", stop_tracking_help,
+		 N_("stop monitoring a certificate\n")},
+		{"resubmit", resubmit_help,
+		 N_("resubmit an in-progress enrollment request, or start a new one\n")},
+		{"refresh", refresh_help,
+		 N_("check on the status of an in-progress enrollment request\n")},
+		{"list", list_help,
+		 N_("list certificates being monitored and requested\n")},
+		{"status", status_help,
+		 N_("check the status of a certificate being monitored or requested\n")},
+#ifndef FORCE_CA
+		{"add-ca", add_ca_help,
+		 N_("add a CA configuration\n")},
+		{"add-scep-ca", add_scep_ca_help,
+		 N_("add an SCEP CA configuration\n")},
+#endif
+		{"list-cas", list_cas_help,
+		 N_("list known CA configurations\n")},
+#ifndef FORCE_CA
+		{"modify-ca", modify_ca_help,
+		 N_("modify a CA configuration\n")},
+#endif
+		{"refresh-ca", refresh_ca_help,
+		 N_("refresh cache of all information obtained from a CA\n")},
+#ifndef FORCE_CA
+		{"remove-ca", remove_ca_help,
+		 N_("remove a CA configuration\n")},
+#endif
 	};
 	for (i = 0; i < sizeof(msgs) / sizeof(msgs[0]); i++) {
 		if ((category != NULL) && (msgs[i].category != NULL) &&
 		    (strcmp(category, msgs[i].category) != 0)) {
 			continue;
 		}
-		if (i > 0) {
-			printf("\n");
-		}
-		for (j = 0; msgs[i].msgs[j] != NULL; j++) {
-			printf(_(msgs[i].msgs[j]), cmd);
+		if (category == NULL) {
+			if (msgs[i].category != NULL) {
+				printf("%-15s\t", msgs[i].category);
+			} else {
+				for (j = 0; msgs[i].msgs[j] != NULL; j++) {
+					printf(_(msgs[i].msgs[j]), cmd);
+				}
+				printf("\n");
+			}
+			printf(_(msgs[i].brief), cmd);
+		} else {
+			if (i > 0) {
+				printf("\n");
+			}
+			for (j = 0; msgs[i].msgs[j] != NULL; j++) {
+				printf(_(msgs[i].msgs[j]), cmd);
+			}
 		}
 	}
 }
@@ -3634,10 +4465,12 @@ main(int argc, char **argv)
 #ifdef ENABLE_NLS
 	bindtextdomain(PACKAGE, MYLOCALEDIR);
 #endif
+	NSS_NoDB_Init(NULL);
 	p = argv[0];
 	if (strchr(p, '/') != NULL) {
 		p = strrchr(p, '/') + 1;
 	}
+	globals.argv0 = p;
 	if (argc > 1) {
 		verb = argv[1];
 		globals.tctx = talloc_new(NULL);

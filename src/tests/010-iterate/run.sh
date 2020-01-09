@@ -69,12 +69,33 @@ echo iLoveCookiesSome
 exit 1
 EOF
 chmod u+x ca-ask-again
+cat > ca-issued-binary-x509 << EOF
+#!/bin/sh
+echo "$cert" | openssl x509 -outform der
+exit 0
+EOF
+chmod u+x ca-issued-binary-x509
 cat > ca-reject << EOF
 #!/bin/sh
 echo CA rejected us, must have been having a bad day.
 exit 2
 EOF
 chmod u+x ca-reject
+cat > ca-reject-second-time << EOF
+#!/bin/sh
+if test -z "\$CERTMONGER_CA_COOKIE" ; then
+	echo 1
+	echo Try again.
+	echo
+	echo Maybe later.
+	exit 5
+else
+	echo CA rejected us, must have been having a bad day.
+	echo cookie was "\$CERTMONGER_CA_COOKIE"
+	exit 2
+fi
+EOF
+chmod u+x ca-reject-second-time
 cat > ca-unreachable << EOF
 #!/bin/sh
 echo Could not contact CA.
@@ -107,6 +128,12 @@ echo What do you want?
 exit 6
 EOF
 chmod u+x ca-what-what-6
+cat > ca-needs-scep-16 << EOF
+#!/bin/sh
+echo Nope, need SCEP data.
+exit 16
+EOF
+chmod u+x ca-needs-scep-16
 
 cat > ca << EOF
 id=SelfSign
@@ -122,6 +149,10 @@ key_storage_location=$tmpdir/keyfile
 cert_storage_type=FILE
 cert_storage_location=$tmpdir/certfile
 notification_method=STDOUT
+post_certsave_command=echo POSTHOOK
+post_certsave_uid=`id -u`
+pre_certsave_command=echo PREHOOK
+pre_certsave_uid=`id -u`
 EOF
 # These cover parts of the process, forcing it to stop if any phase needs
 # to be tried again, so that we don't hit infinite loops.
@@ -132,6 +163,7 @@ if test "`grep ^state entry`" != state=NEED_KEYINFO ; then
 	grep ^state entry
 	exit 1
 fi
+grep ^key.\*count= entry | LANG=C sort
 
 echo
 echo '[Reading back key info.]'
@@ -142,6 +174,7 @@ if test "`grep ^state entry`" != state=NEED_CSR ; then
 	exit 1
 fi
 grep ^key_size entry
+grep ^key.\*count= entry | LANG=C sort
 
 echo
 echo '[Generating CSR.]'
@@ -151,6 +184,7 @@ if test "`grep ^state entry`" != state=HAVE_CSR ; then
 	grep ^state entry
 	exit 1
 fi
+grep ^key.\*count= entry | LANG=C sort
 
 echo
 echo '[Getting CSR signed.]'
@@ -160,15 +194,17 @@ if test "`grep ^state entry`" != state=NEED_TO_SAVE_CERT ; then
 	grep ^state entry
 	exit 1
 fi
+grep ^key.\*count= entry | LANG=C sort
 
 echo
 echo '[Saving certificate.]'
-$toolsdir/iterate ca entry START_SAVING_CERT,SAVING_CERT,NEED_TO_READ_CERT,READING_CERT,NEED_TO_SAVE_CA_CERTS,START_SAVING_CA_CERTS,SAVING_CA_CERTS,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
+$toolsdir/iterate ca entry START_SAVING_CERT,PRE_SAVE_CERT,SAVING_CERT,NEED_TO_READ_CERT,READING_CERT,POST_SAVED_CERT,NEED_TO_SAVE_CA_CERTS,START_SAVING_CA_CERTS,SAVING_CA_CERTS,NEED_TO_NOTIFY_ISSUED_SAVED,NOTIFYING_ISSUED_SAVED,SAVED_CERT | sed 's@'"$tmpdir"'@$tmpdir@g'
 if test "`grep ^state entry`" != state=MONITORING ; then
 	echo Saving failed or did not move to monitoring.
 	grep ^state entry
 	exit 1
 fi
+grep ^key.\*count= entry | LANG=C sort
 
 echo
 echo '[From-scratch enrollment scenario OK.]'
@@ -293,9 +329,13 @@ ca_external_helper=$tmpdir/ca-issued
 EOF
 : > $tmpdir/certfile4
 $toolsdir/iterate ca3 entry3 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+grep ^key.\*count= entry3 | LANG=C sort
 $toolsdir/iterate ca3 entry3 NEED_CSR,GENERATING_CSR
+grep ^key.\*count= entry3 | LANG=C sort
 $toolsdir/iterate ca3 entry3 NEED_TO_SUBMIT,SUBMITTING
+grep ^key.\*count= entry3 | LANG=C sort
 $toolsdir/iterate ca3 entry3 NEED_TO_SAVE_CERT,SAVING_CERT,START_SAVING_CERT
+grep ^key.\*count= entry3 | LANG=C sort
 
 echo
 echo '[Enroll, helper produces noise before.]'
@@ -390,6 +430,29 @@ $toolsdir/iterate ca3 entry3 NEED_TO_SUBMIT,SUBMITTING
 $toolsdir/iterate ca3 entry3 NEED_TO_SAVE_CERT,SAVING_CERT,START_SAVING_CERT
 
 echo
+echo '[Enroll, helper produces binary certificate output.]'
+cat > entry3 << EOF
+id=Test
+ca_name=Friendly
+state=HAVE_KEY_PAIR
+key_storage_type=FILE
+key_storage_location=$tmpdir/keyfile
+cert_storage_type=FILE
+cert_storage_location=$tmpdir/certfile4
+notification_method=STDOUT
+EOF
+cat > ca3 << EOF
+id=Friendly
+ca_type=EXTERNAL
+ca_external_helper=$tmpdir/ca-issued-binary-x509
+EOF
+: > $tmpdir/certfile4
+$toolsdir/iterate ca3 entry3 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+$toolsdir/iterate ca3 entry3 NEED_CSR,GENERATING_CSR
+$toolsdir/iterate ca3 entry3 NEED_TO_SUBMIT,SUBMITTING
+$toolsdir/iterate ca3 entry3 NEED_TO_SAVE_CERT,SAVING_CERT,START_SAVING_CERT
+
+echo
 echo '[Enroll until we notice we have no specified CA.]'
 cat > entry3 << EOF
 id=Test
@@ -446,8 +509,36 @@ ca_type=EXTERNAL
 ca_external_helper=$tmpdir/ca-reject
 EOF
 $toolsdir/iterate ca5 entry5 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+grep ^key.\*count= entry5 | LANG=C sort
 $toolsdir/iterate ca5 entry5 NEED_CSR,GENERATING_CSR
+grep ^key.\*count= entry5 | LANG=C sort
 $toolsdir/iterate ca5 entry5 NEED_TO_SUBMIT,SUBMITTING
+grep ^key.\*count= entry5 | LANG=C sort
+$toolsdir/iterate ca5 entry5 NEED_TO_NOTIFY_REJECTION,NOTIFYING_REJECTION | sed 's@'"$tmpdir"'@$tmpdir@g'
+grep ^key.\*count= entry5 | LANG=C sort
+$toolsdir/iterate ca5 entry5 "" | sed 's@'"$tmpdir"'@$tmpdir@g'
+grep ^key.\*count= entry5 | LANG=C sort
+
+echo
+echo '[Enroll until the CA rejects us after poll.]'
+cat > entry5 << EOF
+id=Test
+ca_name=Meanie
+state=HAVE_KEY_PAIR
+key_storage_type=FILE
+key_storage_location=$tmpdir/keyfile
+cert_storage_type=FILE
+cert_storage_location=$tmpdir/certfile3
+notification_method=STDOUT
+EOF
+cat > ca5 << EOF
+id=Meanie
+ca_type=EXTERNAL
+ca_external_helper=$tmpdir/ca-reject-second-time
+EOF
+$toolsdir/iterate ca5 entry5 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+$toolsdir/iterate ca5 entry5 NEED_CSR,GENERATING_CSR
+$toolsdir/iterate ca5 entry5 NEED_TO_SUBMIT,SUBMITTING,CA_WORKING
 $toolsdir/iterate ca5 entry5 NEED_TO_NOTIFY_REJECTION,NOTIFYING_REJECTION | sed 's@'"$tmpdir"'@$tmpdir@g'
 $toolsdir/iterate ca5 entry5 "" | sed 's@'"$tmpdir"'@$tmpdir@g'
 
@@ -551,6 +642,43 @@ EOF
 $toolsdir/iterate ca9 entry9 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
 $toolsdir/iterate ca9 entry9 NEED_CSR,GENERATING_CSR
 $toolsdir/iterate ca9 entry9 NEED_TO_SUBMIT,SUBMITTING
+
+echo
+echo "[Enroll until we have SCEP data to go with it.]"
+cat > entry9 << EOF
+id=Test
+ca_name=SCEP
+state=HAVE_KEY_PAIR
+key_storage_type=FILE
+key_storage_location=$tmpdir/keyfile
+notification_method=STDOUT
+EOF
+cat > ca9 << EOF
+id=SCEP
+ca_type=EXTERNAL
+ca_external_helper=$tmpdir/ca-needs-scep-16
+ca_encryption_cert=-----BEGIN CERTIFICATE-----
+ MIICBDCCAW2gAwIBAgIEEjRWgTANBgkqhkiG9w0BAQUFADAaMRgwFgYDVQQDDA9U
+ ZXN0IExldmVsIDggQ0EwHhcNMTUwMjA0MTk0NjU4WhcNMTYwMjA0MTk0NjU4WjAX
+ MRUwEwYDVQQDDAxUZXN0IEVFIENlcnQwgZ8wDQYJKoZIhvcNAQEBBQADgY0AMIGJ
+ AoGBALjcinKYW+KHmciWmdXK5ZNRpKXcc6DqKykg0dUYgUsKTr6GYBeyA64Jmq8S
+ IOYqP2gWnSnw+LWQpbzKvCW0gCO6/skqwNdDZfcxXQmWVEE2oJPmu0a5I02DD46y
+ vVeugjriz2RHVNNjORXmf2xm6bZtcWtzzXew+H5lJIpRzj4LAgMBAAGjWjBYMAkG
+ A1UdEwQCMAAwCwYDVR0PBAQDAgTwMB0GA1UdDgQWBBRd3x1DMcHyzexXrenW0TRw
+ 3ANRyjAfBgNVHSMEGDAWgBQz4V1OzMt4ObAn9koy3aLP2bzFTjANBgkqhkiG9w0B
+ AQUFAAOBgQBozEcRs625HJ6YMZ2TLJKST1Z38ouIfwtl2Gv4WzGgVcRKVpoMgWjl
+ DbC+yjEDPm5+GwzEwVuR0E4g/nThfff/Ld8wVLfqdvClIUcgM8XEpPSRGrWLri+t
+ 9KqCx+t7heiWQcRD4OT1EfsHmXUz2+tAat6XvRcJ3AI1gtks0vJ6mA==
+ -----END CERTIFICATE-----
+EOF
+$toolsdir/iterate ca9 entry9 NEED_KEYINFO,READING_KEYINFO,HAVE_KEYINFO
+grep ^key.\*count= entry9 | LANG=C sort
+$toolsdir/iterate ca9 entry9 NEED_CSR,GENERATING_CSR
+grep ^key.\*count= entry9 | LANG=C sort
+$toolsdir/iterate ca9 entry9 NEED_TO_SUBMIT,SUBMITTING
+grep ^key.\*count= entry9 | LANG=C sort
+$toolsdir/iterate ca9 entry9 NEED_SCEP_DATA,GENERATING_SCEP_DATA,HAVE_SCEP_DATA
+grep ^key.\*count= entry9 | LANG=C sort
 
 # Note! The "iterate" harness rounds delay times up to the next multiple of 50.
 for interval in 0 30 1800 3600 7200 86000 86500 604800 1000000 2000000; do

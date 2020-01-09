@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Red Hat, Inc.
+ * Copyright (C) 2014,2015 Red Hat, Inc.
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,6 +41,7 @@ const char *attribute_map[] = {
 	CM_SUBMIT_REQ_HOSTNAME_ENV, CM_DBUS_PROP_TEMPLATE_HOSTNAME,
 	CM_SUBMIT_REQ_PRINCIPAL_ENV, CM_DBUS_PROP_TEMPLATE_PRINCIPAL,
 	CM_SUBMIT_REQ_EMAIL_ENV, CM_DBUS_PROP_TEMPLATE_EMAIL,
+	CM_SUBMIT_REQ_IP_ADDRESS_ENV, CM_DBUS_PROP_TEMPLATE_IP_ADDRESS,
 	CM_SUBMIT_PROFILE_ENV, CM_DBUS_PROP_TEMPLATE_PROFILE,
 	NULL,
 };
@@ -90,7 +91,7 @@ fetch(int fd, struct cm_store_ca *ca, struct cm_store_entry *entry, void *data)
 		}
 		return -1;
 	}
-	cm_subproc_mark_most_cloexec(STDOUT_FILENO);
+	cm_subproc_mark_most_cloexec(STDOUT_FILENO, -1, -1);
 	cm_log(1, "Running enrollment/cadata helper \"%s\".\n", argv[0]);
 	execvp(argv[0], argv);
 	u = errno;
@@ -120,13 +121,10 @@ parse_identification(struct cm_store_ca *ca, struct cm_cadata_state *state,
 		if ((old_aka == NULL) && (ca->cm_ca_aka == NULL)) {
 			state->modified = 0;
 		} else
-		if ((old_aka == NULL) && (ca->cm_ca_aka != NULL)) {
-			state->modified = 1;
-		} else
-		if ((old_aka != NULL) && (ca->cm_ca_aka == NULL)) {
-			state->modified = 1;
-		} else {
+		if ((old_aka != NULL) && (ca->cm_ca_aka != NULL)) {
 			state->modified = (strcmp(old_aka, ca->cm_ca_aka) != 0);
+		} else {
+			state->modified = 1;
 		}
 	}
 
@@ -421,6 +419,82 @@ parse_renew_reqs(struct cm_store_ca *ca, struct cm_cadata_state *state,
 		   &ca->cm_ca_required_renewal_attributes);
 }
 
+static void
+parse_capabilities(struct cm_store_ca *ca, struct cm_cadata_state *state,
+		   const char *msg)
+{
+	parse_list(ca, state, msg, NULL, &ca->cm_ca_capabilities);
+}
+
+static dbus_bool_t
+strings_differ(const char *a, const char *b)
+{
+	if (a == NULL) {
+		a = "";
+	}
+	if (b == NULL) {
+		b = "";
+	}
+	return (strcmp(a, b) != 0);
+}
+
+static void
+parse_encryption_certs(struct cm_store_ca *ca, struct cm_cadata_state *state,
+		       const char *msg)
+{
+	const char *olde, *oldei, *oldep;
+	char *p;
+
+	olde = ca->cm_ca_encryption_cert;
+	oldei = ca->cm_ca_encryption_issuer_cert;
+	oldep = ca->cm_ca_encryption_cert_pool;
+	ca->cm_ca_encryption_cert = talloc_strdup(ca, msg);
+	ca->cm_ca_encryption_issuer_cert = NULL;
+	ca->cm_ca_encryption_cert_pool = NULL;
+	p = strstr(ca->cm_ca_encryption_cert, "-----END CERTIFICATE-----");
+	if (p != NULL) {
+		p += strcspn(p, "\r\n");
+		p += strspn(p, "\r\n");
+		if (strstr(p, "-----END CERTIFICATE-----") != NULL) {
+			ca->cm_ca_encryption_issuer_cert = talloc_strdup(ca, p);
+			*p = '\0';
+		}
+	}
+	if (ca->cm_ca_encryption_issuer_cert != NULL) {
+		p = strstr(ca->cm_ca_encryption_issuer_cert,
+			   "-----END CERTIFICATE-----");
+		if (p != NULL) {
+			p += strcspn(p, "\r\n");
+			p += strspn(p, "\r\n");
+			if (strstr(p, "-----END CERTIFICATE-----") != NULL) {
+				ca->cm_ca_encryption_cert_pool = talloc_strdup(ca, p);
+			}
+			*p = '\0';
+		}
+	}
+	if (ca->cm_ca_encryption_cert != NULL) {
+		if (strspn(ca->cm_ca_encryption_cert, "\r\n \t") ==
+		    strlen(ca->cm_ca_encryption_cert)) {
+			ca->cm_ca_encryption_cert = NULL;
+		}
+	}
+	if (ca->cm_ca_encryption_issuer_cert != NULL) {
+		if (strspn(ca->cm_ca_encryption_issuer_cert, "\r\n \t") ==
+		    strlen(ca->cm_ca_encryption_issuer_cert)) {
+			ca->cm_ca_encryption_issuer_cert = NULL;
+		}
+	}
+	if (ca->cm_ca_encryption_cert_pool != NULL) {
+		if (strspn(ca->cm_ca_encryption_cert_pool, "\r\n \t") ==
+		    strlen(ca->cm_ca_encryption_cert_pool)) {
+			ca->cm_ca_encryption_cert_pool = NULL;
+		}
+	}
+	state->modified = strings_differ(olde, ca->cm_ca_encryption_cert) ||
+			  strings_differ(oldei, ca->cm_ca_encryption_issuer_cert) ||
+			  strings_differ(oldep, ca->cm_ca_encryption_cert_pool);
+}
+
 static struct cm_cadata_state *
 cm_cadata_start_generic(struct cm_store_ca *ca, const char *op,
 			void (*parse)(struct cm_store_ca *,
@@ -434,7 +508,7 @@ cm_cadata_start_generic(struct cm_store_ca *ca, const char *op,
 	case cm_ca_internal_self:
 		if (strcasecmp(op, CM_OP_IDENTIFY) == 0) {
 			ca->cm_ca_aka = talloc_asprintf(ca,
-							"SelfSign (%s %s)",
+							CM_SELF_SIGN_CA_NAME " (%s %s)",
 							PACKAGE_NAME,
 							PACKAGE_VERSION);
 		} else
@@ -489,8 +563,8 @@ cm_cadata_start_generic(struct cm_store_ca *ca, const char *op,
 	ret->error_fd = -1;
 	ret->parse = parse;
 	if (read(error_fd[0], &u, 1) == 1) {
-		cm_log(1, "Error running enrollment helper: %s.\n",
-		       strerror(u));
+		cm_log(1, "Error running enrollment helper \"%s\": %s.\n",
+		       ca->cm_ca_external_helper, strerror(u));
 		talloc_free(ret);
 		return NULL;
 	}
@@ -539,6 +613,20 @@ cm_cadata_start_renew_reqs(struct cm_store_ca *ca)
 				       parse_renew_reqs);
 }
 
+struct cm_cadata_state *
+cm_cadata_start_capabilities(struct cm_store_ca *ca)
+{
+	return cm_cadata_start_generic(ca, CM_OP_FETCH_SCEP_CA_CAPS,
+				       parse_capabilities);
+}
+
+struct cm_cadata_state *
+cm_cadata_start_encryption_certs(struct cm_store_ca *ca)
+{
+	return cm_cadata_start_generic(ca, CM_OP_FETCH_SCEP_CA_CERTS,
+				       parse_encryption_certs);
+}
+
 int
 cm_cadata_ready(struct cm_cadata_state *state)
 {
@@ -584,6 +672,19 @@ int
 cm_cadata_modified(struct cm_cadata_state *state)
 {
 	return state->modified ? 0 : -1;
+}
+
+int
+cm_cadata_rejected(struct cm_cadata_state *state)
+{
+	int status;
+
+	status = cm_subproc_get_exitstatus(state->subproc);
+	if (WIFEXITED(status) &&
+	    (WEXITSTATUS(status) == CM_SUBMIT_STATUS_REJECTED)) {
+		return 0;
+	}
+	return -1;
 }
 
 int

@@ -1,10 +1,17 @@
 /* src/config.h.in.  Generated from configure.ac by autoheader.  */
 
+/* Define to the variable name used to pass the location of the private D-Bus
+   connection to subprocesses. */
+#undef CERTMONGER_PVT_ADDRESS_ENV
+
 /* Define to the name that the default certmaster CA will be known by. */
 #undef CM_CERTMASTER_CA_NAME
 
 /* Define to the path of the CERTMASTER submission helper. */
 #undef CM_CERTMASTER_HELPER_PATH
+
+/* Define to the path of the certmonger daemon after installation. */
+#undef CM_CERTMONGER_DAEMON_PATH
 
 /* Define to the path of the certmonger main node. */
 #undef CM_DBUS_BASE_PATH
@@ -91,6 +98,10 @@
    certificate. */
 #undef CM_DELAY_CA_POLL
 
+/* Define to the absolute maximum time to wait between attempts to see if the
+   CA issued a certificate. */
+#undef CM_DELAY_CA_POLL_MAXIMUM
+
 /* Define to the absolute minimum time to wait between attempts to see if the
    CA issued a certificate. */
 #undef CM_DELAY_CA_POLL_MINIMUM
@@ -123,6 +134,10 @@
 /* Define to enable EC support. */
 #undef CM_ENABLE_EC
 
+/* Define to the directory holding various getcert commands after
+   installation. */
+#undef CM_GETCERT_DIR
+
 /* Define to the default location to be used for storing temporary files. */
 #undef CM_HOMEDIR
 
@@ -152,6 +167,9 @@
 
 /* Define to the variable name to be used to hold a notification message. */
 #undef CM_NOTIFICATION_ENV
+
+/* Define to the path of the SCEP submission helper. */
+#undef CM_SCEP_HELPER_PATH
 
 /* Define to the name that the internal self-signing not-really-a-CA will be
    known by. */
@@ -197,18 +215,29 @@
 /* Define to the default path for user request tracking files. */
 #undef CM_STORE_SESSION_REQUESTS_DIRECTORY
 
+/* Define to the default path for the system daemon lock file. */
+#undef CM_STORE_SYSTEM_LOCK_FILE
+
+/* Define to the name of the environment variable which can specify the
+   location of the system daemon lock file. */
+#undef CM_STORE_SYSTEM_LOCK_FILE_ENV
+
 /* Define to the default location to be used for storing temporary files. */
 #undef CM_TMPDIR
 
 /* Define to the default location to be used for storing temporary files. */
 #undef CM_TMPDIR_ENV
 
-/* Define if dnsName subjectAltNames should be encoded properly. */
+/* Define if dnsName subjectAltNames should be encoded properly, and if
+   international domain names should be handled during service location. */
 #undef CM_USE_IDN
 
 /* Define to 1 if translation of program messages to the user's native
    language is requested. */
 #undef ENABLE_NLS
+
+/* Define to 1 if you have the <arpa/nameser.h> header file. */
+#undef HAVE_ARPA_NAMESER_H
 
 /* Define to 1 if you have the MacOS X function CFLocaleCopyCurrent in the
    CoreFoundation framework. */
@@ -323,8 +352,17 @@
 /* Define if you have NSS. */
 #undef HAVE_NSS
 
+/* Define if you have ns_initparse() and want to use SRV location */
+#undef HAVE_NS_INITPARSE
+
 /* Define if you have OpenSSL. */
 #undef HAVE_OPENSSL
+
+/* Define to 1 if you have the `PK11_PrivDecrypt' function. */
+#undef HAVE_PK11_PRIVDECRYPT
+
+/* Define to 1 if you have the <resolv.h> header file. */
+#undef HAVE_RESOLV_H
 
 /* Define to 1 if you have the `SECKEY_CreateECPrivateKey' function. */
 #undef HAVE_SECKEY_CREATEECPRIVATEKEY

@@ -1,4 +1,4 @@
-.TH certmonger 1 "30 May 2014" "certmonger Manual"
+.TH certmonger 1 "9 February 2015" "certmonger Manual"
 
 .SH NAME
 getcert
@@ -134,6 +134,15 @@ as its value, to the signing request.
 \fB\-A\fR ADDRESS
 Add an extensionRequest for a subjectAltName, with the specified IP address
 as its value, to the signing request.
+.TP
+\fB\-l\fR FILE
+Add an optional ChallengePassword value, read from the file, to the signing
+request.  A ChallengePassword is often required when the CA is accessed using
+SCEP.
+.TP
+\fB\-L\fR PIN
+Add the argument value to the signing request as a ChallengePassword attribute.
+A ChallengePassword is often required when the CA is accessed using SCEP.
 
 .SH OTHER OPTIONS
 .TP
@@ -180,15 +189,22 @@ Please file tickets for any that you find at https://fedorahosted.org/certmonger
 .SH SEE ALSO
 \fBcertmonger\fR(8)
 \fBgetcert\fR(1)
-\fBgetcert-list\fR(1)
+\fBgetcert-add-ca\fR(1)
+\fBgetcert-add-scep-ca\fR(1)
 \fBgetcert-list-cas\fR(1)
-\fBgetcert-refresh\fR(1)
+\fBgetcert-list\fR(1)
+\fBgetcert-modify-ca\fR(1)
 \fBgetcert-refresh-ca\fR(1)
+\fBgetcert-refresh\fR(1)
+\fBgetcert-remove-ca\fR(1)
 \fBgetcert-request\fR(1)
 \fBgetcert-resubmit\fR(1)
 \fBgetcert-status\fR(1)
 \fBgetcert-stop-tracking\fR(1)
 \fBcertmonger-certmaster-submit\fR(8)
+\fBcertmonger-dogtag-ipa-renew-agent-submit\fR(8)
+\fBcertmonger-dogtag-submit\fR(8)
 \fBcertmonger-ipa-submit\fR(8)
 \fBcertmonger-local-submit\fR(8)
+\fBcertmonger-scep-submit\fR(8)
 \fBcertmonger_selinux\fR(8)

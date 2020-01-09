@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009,2011,2012,2014 Red Hat, Inc.
+ * Copyright (C) 2009,2011,2012,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -47,6 +47,8 @@
 #define CM_DBUS_PROP_CERT_ISSUER "issuer"
 #define CM_DBUS_PROP_CERT_SERIAL "serial"
 #define CM_DBUS_PROP_CERT_SUBJECT "subject"
+#define CM_DBUS_PROP_CERT_NOT_VALID_BEFORE "not-valid-before"
+#define CM_DBUS_PROP_CERT_NOT_VALID_AFTER "not-valid-after"
 #define CM_DBUS_PROP_CERT_EMAIL "email"
 #define CM_DBUS_PROP_CERT_KU "ku"
 #define CM_DBUS_PROP_CERT_EKU "eku"
@@ -65,6 +67,8 @@
 #define CM_DBUS_PROP_TEMPLATE_EKU "template-eku"
 #define CM_DBUS_PROP_TEMPLATE_HOSTNAME "template-hostname"
 #define CM_DBUS_PROP_TEMPLATE_PRINCIPAL "template-principal"
+#define CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD "template-challenge-password"
+#define CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD_FILE "template-challenge-password-file"
 #define CM_DBUS_PROP_KEY_LOCATION_TYPE "key-storage"
 #define CM_DBUS_PROP_KEY_LOCATION_FILE "key-file"
 #define CM_DBUS_PROP_KEY_LOCATION_DATABASE "key-database"
@@ -105,6 +109,11 @@
 #define CM_DBUS_PROP_ROOT_CERTS "root-certs"
 #define CM_DBUS_PROP_OTHER_ROOT_CERTS "root-other-certs"
 #define CM_DBUS_PROP_OTHER_CERTS "other-certs"
+#define CM_DBUS_PROP_SCEP_CA_IDENTIFIER "scep-ca-identifier"
+#define CM_DBUS_PROP_SCEP_CA_CAPABILITIES "scep-ca-capabilities"
+#define CM_DBUS_PROP_SCEP_RA_CERT "scep-ra-cert"
+#define CM_DBUS_PROP_SCEP_CA_CERT "scep-ca-cert"
+#define CM_DBUS_PROP_SCEP_OTHER_CERTS "scep-other-certs"
 #define CM_DBUS_PROP_ROOT_CERT_FILES "root-cert-files"
 #define CM_DBUS_PROP_OTHER_ROOT_CERT_FILES "root-other-cert-files"
 #define CM_DBUS_PROP_OTHER_CERT_FILES "other-cert-files"
@@ -117,8 +126,12 @@
 #define CM_DBUS_PROP_REQUIRED_RENEW_ATTRIBUTES "required-renew-attributes"
 #define CM_DBUS_PROP_AKA "aka"
 
-enum cm_tdbus_type { cm_tdbus_system, cm_tdbus_session };
-int cm_tdbus_setup(struct tevent_context *ec, enum cm_tdbus_type bus_type,
-		   void *data, DBusError *error);
+enum cm_tdbus_type { cm_tdbus_system, cm_tdbus_session, cm_tdbus_private };
+int cm_tdbus_setup_public(struct tevent_context *ec,
+			  enum cm_tdbus_type bus_type,
+			  void *data, DBusError *error);
+int cm_tdbus_setup_private(struct tevent_context *ec, void *data,
+			   const char *socket_path,
+			   char **address, DBusError *error);
 
 #endif

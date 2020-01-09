@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010,2012,2014 Red Hat, Inc.
+ * Copyright (C) 2010,2012,2014,2015 Red Hat, Inc.
  * 
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,6 +21,8 @@
 enum cm_prefs_cipher {
 	cm_prefs_aes128,
 	cm_prefs_aes256,
+	cm_prefs_des3,
+	cm_prefs_des,
 };
 
 enum cm_prefs_digest {
@@ -28,6 +30,7 @@ enum cm_prefs_digest {
 	cm_prefs_sha384,
 	cm_prefs_sha512,
 	cm_prefs_sha1,
+	cm_prefs_md5,
 };
 
 enum cm_notification_method;
@@ -42,7 +45,8 @@ int cm_prefs_enroll_ttls(const time_t **ttls, unsigned int *n_ttls);
 enum cm_notification_method cm_prefs_notification_method(void);
 const char *cm_prefs_notification_destination(void);
 const char *cm_prefs_default_ca(void);
-const char *cm_prefs_validity_period(void);
+const char *cm_prefs_selfsign_validity_period(void);
+const char *cm_prefs_local_validity_period(void);
 int cm_prefs_monitor(void);
 int cm_prefs_autorenew(void);
 int cm_prefs_populate_unique_id(void);

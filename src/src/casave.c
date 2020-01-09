@@ -187,12 +187,14 @@ cm_casave_main_n(int fd, struct cm_store_ca *ca, struct cm_store_entry *e,
 				if (found != NULL) {
 					items[0] = &found->derCert;
 					items[1] = NULL;
-					if (CERT_ImportCerts(certdb,
-							     certUsageSSLCA,
-							     1, items,
-							     &imported,
-							     PR_TRUE, PR_FALSE,
-							     p) != SECSuccess) {
+					if ((CERT_ImportCerts(certdb,
+							      certUsageSSLCA,
+							      1, items,
+							      &imported,
+							      PR_TRUE, PR_FALSE,
+							      p) != SECSuccess) ||
+					    (imported == NULL) ||
+					    (imported[0] == NULL)) {
 						ec = PORT_GetError();
 						if (ec != 0) {
 							es = PR_ErrorToName(ec);
@@ -312,7 +314,7 @@ add_string(void *parent, char ***dest, const char *value)
 	tmp = talloc_array_ptrtype(parent, tmp, i + 2);
 	if (tmp == NULL) {
 		printf(_("Out of memory.\n"));
-		exit(CM_CERTSAVE_STATUS_INTERNAL_ERROR);
+		_exit(CM_CERTSAVE_STATUS_INTERNAL_ERROR);
 	}
 	if (i > 0) {
 		memcpy(tmp, *dest, sizeof(tmp[0]) * i);
@@ -351,7 +353,7 @@ add_cert(void *parent, struct cm_savecert ***dest, enum cert_level level,
 	tmp = talloc_array_ptrtype(parent, tmp, i + 2);
 	if (tmp == NULL) {
 		printf(_("Out of memory.\n"));
-		exit(CM_CERTSAVE_STATUS_INTERNAL_ERROR);
+		_exit(CM_CERTSAVE_STATUS_INTERNAL_ERROR);
 	}
 	if (i > 0) {
 		memcpy(tmp, *dest, sizeof(tmp[0]) * i);

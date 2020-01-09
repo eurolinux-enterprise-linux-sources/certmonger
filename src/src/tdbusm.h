@@ -22,6 +22,7 @@ int cm_tdbusm_get_b(DBusMessage *msg, void *parent, dbus_bool_t *b);
 int cm_tdbusm_get_n(DBusMessage *msg, void *parent, long *n);
 int cm_tdbusm_get_p(DBusMessage *msg, void *parent, char **p);
 int cm_tdbusm_get_s(DBusMessage *msg, void *parent, char **s);
+int cm_tdbusm_get_vs(DBusMessage *msg, void *parent, char **s);
 int cm_tdbusm_get_bp(DBusMessage *msg, void *parent, dbus_bool_t *b, char **p);
 int cm_tdbusm_get_bs(DBusMessage *msg, void *parent, dbus_bool_t *b, char **s);
 int cm_tdbusm_get_sb(DBusMessage *msg, void *parent, char **s, dbus_bool_t *b);
@@ -111,6 +112,8 @@ int cm_tdbusm_set_ssass(DBusMessage *msg,
 int cm_tdbusm_set_ssss(DBusMessage *msg,
 		       const char *s1, const char *s2,
 		       const char *s3, const char *s4);
+int cm_tdbusm_set_ssvs(DBusMessage *msg, const char *s1, const char *s2,
+		       const char *s3);
 int cm_tdbusm_set_ssoas(DBusMessage *msg,
 			const char *s1, const char *s2, const char **as);
 int cm_tdbusm_set_sssas(DBusMessage *msg,

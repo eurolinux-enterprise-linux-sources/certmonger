@@ -55,8 +55,9 @@
 #define _(_text) (_text)
 #endif
 
-#define IPACONFIG "/etc/ipa/default.conf"
-#define IPASECTION "dogtag"
+#ifdef DOGTAG_IPA_RENEW_AGENT
+#include "dogtag-ipa.h"
+#endif
 
 static void
 help(const char *cmd)
@@ -76,8 +77,9 @@ help(const char *cmd)
 		"\t[-D serial (decimal)]\n"
 		"\t[-S state]\n"
 		"\t[-T profile]\n"
+		"\t[-O param=value]\n"
 		"\t[-v]\n"
-		"\t[-N]\n"
+		"\t[-N | -R]\n"
 		"\t[-V dogtag_version]\n"
 		"\t[csrfile]\n",
 		strchr(cmd, '/') ? strrchr(cmd, '/') + 1 : cmd);
@@ -139,16 +141,23 @@ main(int argc, char **argv)
 	const char *ssldir = NULL, *cainfo = NULL, *capath = NULL;
 	const char *sslcert = NULL, *sslkey = NULL;
 	const char *sslpin = NULL, *sslpinfile = NULL;
-	const char *host = NULL, *csr = NULL, *serial = NULL, *template = NULL;
-	const char *dogtag_version = NULL;
-	char *ipaconfig = NULL, *savedstate = NULL;
+	const char *csr = NULL, *serial = NULL, *template = NULL;
+	struct {
+		char *name;
+		char *value;
+	} *options = NULL;
+	size_t num_options = 0, j;
+	char *savedstate = NULL;
 	char *p, *q, *params = NULL, *params2 = NULL;
 	const char *lasturl = NULL, *lastparams = NULL;
 	const char *tmp = NULL, *results = NULL;
 	struct cm_submit_h_context *hctx;
 	void *ctx;
 	int c, verbose = 0, force_new = 0, force_renew = 0, i;
+#ifdef DOGTAG_IPA_RENEW_AGENT
+	const char *host = NULL, *dogtag_version = NULL;
 	int eeport, agentport;
+#endif
 	enum { op_none, op_submit, op_check, op_approve, op_retrieve } op = op_none;
 	dbus_bool_t can_agent, use_agent, missing_args = FALSE;
 	struct dogtag_default **defaults;
@@ -165,7 +174,12 @@ main(int argc, char **argv)
 		/* fall through */
 	} else
 	if (strcasecmp(mode, CM_OP_IDENTIFY) == 0) {
+#ifdef DOGTAG_IPA_RENEW_AGENT
+		printf("Dogtag (IPA,renew,agent) (%s %s)\n", PACKAGE_NAME,
+		       PACKAGE_VERSION);
+#else
 		printf("Dogtag (%s %s)\n", PACKAGE_NAME, PACKAGE_VERSION);
+#endif
 		return 0;
 	} else {
 		/* unsupported request */
@@ -178,7 +192,7 @@ main(int argc, char **argv)
 
 	savedstate = getenv(CM_SUBMIT_COOKIE_ENV);
 
-	while ((c = getopt(argc, argv, "E:A:d:n:i:C:c:k:p:P:s:D:S:T:vV:NR")) != -1) {
+	while ((c = getopt(argc, argv, "E:A:d:n:i:C:c:k:p:P:s:D:S:T:O:vV:NR")) != -1) {
 		switch (c) {
 		case 'E':
 			eeurl = optarg;
@@ -220,12 +234,36 @@ main(int argc, char **argv)
 		case 'T':
 			template = optarg;
 			break;
+		case 'O':
+			if (strchr(optarg, '=') == NULL) {
+				printf(_("Profile params (-O) must be in the form of param=value.\n"));
+				help(argv[0]);
+				return CM_SUBMIT_STATUS_UNCONFIGURED;
+			}
+			options = realloc(options,
+					  ++num_options * sizeof(*options));
+			if (options == NULL) {
+				printf(_("Out of memory.\n"));
+				return CM_SUBMIT_STATUS_UNCONFIGURED;
+			}
+			p = strdup(optarg);
+			if (p == NULL) {
+				printf(_("Out of memory.\n"));
+				return CM_SUBMIT_STATUS_UNCONFIGURED;
+			}
+			i = strcspn(p, "=");
+			options[num_options - 1].name = p;
+			p[i] = '\0';
+			options[num_options - 1].value = p + i + 1;
+			break;
 		case 'v':
 			verbose++;
 			break;
+#ifdef DOGTAG_IPA_RENEW_AGENT
 		case 'V':
 			dogtag_version = optarg;
 			break;
+#endif
 		case 'N':
 			force_new++;
 			force_renew = 0;
@@ -261,21 +299,8 @@ main(int argc, char **argv)
 
 	ctx = talloc_new(NULL);
 
-	ipaconfig = read_config_file(IPACONFIG);
-	if (ipaconfig != NULL) {
-		host = get_config_entry(ipaconfig,
-					"global",
-					"host");
-		if (dogtag_version == NULL) {
-			dogtag_version = get_config_entry(ipaconfig,
-							  "global",
-							  "dogtag_version");
-		}
-	} else {
-		host = NULL;
-		dogtag_version = NULL;
-	}
-
+#ifdef DOGTAG_IPA_RENEW_AGENT
+	cm_dogtag_ipa_hostver(&host, &dogtag_version);
 	if ((dogtag_version != NULL) && (atof(dogtag_version) >= 10)) {
 		eeport = 8080;
 		agentport = 8443;
@@ -283,7 +308,6 @@ main(int argc, char **argv)
 		eeport = 9180;
 		agentport = 9443;
 	}
-
 	if (eeurl == NULL) {
 		eeurl = cm_prefs_dogtag_ee_url();
 		if ((eeurl == NULL) && (host != NULL)) {
@@ -300,6 +324,8 @@ main(int argc, char **argv)
 						   host, agentport);
 		}
 	}
+#endif
+
 	if (template == NULL) {
 		template = getenv(CM_SUBMIT_PROFILE_ENV);
 		if (template == NULL) {
@@ -341,6 +367,7 @@ main(int argc, char **argv)
 	if ((sslpinfile == NULL) && (sslpin == NULL)) {
 		sslpinfile = cm_prefs_dogtag_sslpinfile();
 	}
+#ifdef DOGTAG_IPA_RENEW_AGENT
 	if ((cainfo == NULL) &&
 	    (capath == NULL) &&
 	    (ssldir == NULL) &&
@@ -353,6 +380,7 @@ main(int argc, char **argv)
 		sslcert = "ipaCert";
 		sslpinfile = "/etc/httpd/alias/pwdfile.txt";
 	}
+#endif
 	if ((sslcert != NULL) && (strlen(sslcert) > 0)) {
 		can_agent = TRUE;
 	} else {
@@ -366,13 +394,27 @@ main(int argc, char **argv)
 		printf(_("No end-entity URL (-E) given, and no default known.\n"));
 		missing_args = TRUE;
 	}
+#ifdef DOGTAG_IPA_RENEW_AGENT
 	if (agenturl == NULL) {
 		printf(_("No agent URL (-A) given, and no default known.\n"));
 		missing_args = TRUE;
 	}
+#endif
 	if (template == NULL) {
 		printf(_("No profile/template (-T) given, and no default known.\n"));
 		missing_args = TRUE;
+	}
+	if (options != NULL) {
+		if (agenturl == NULL) {
+			printf(_("No agent URL (-A) given, and no default "
+				 "known.\n"));
+			missing_args = TRUE;
+		}
+		if (!can_agent) {
+			printf(_("No agent credentials specified, and no "
+				 "default known.\n"));
+			missing_args = TRUE;
+		}
 	}
 	if (missing_args) {
 		help(argv[0]);
@@ -460,6 +502,18 @@ main(int argc, char **argv)
 		use_agent = FALSE;
 		break;
 	case op_approve:
+		if (agenturl == NULL) {
+			printf(_("No agent URL (-A) given, and no default "
+				 "known.\n"));
+			help(argv[0]);
+			return CM_SUBMIT_STATUS_UNCONFIGURED;
+		}
+		if ((sslcert == NULL) || (strlen(sslcert) == 0)) {
+			printf(_("No agent credentials (-n) given, but they "
+				 "are needed.\n"));
+			help(argv[0]);
+			return CM_SUBMIT_STATUS_UNCONFIGURED;
+		}
 		/* Reading profile defaults for this certificate, then applying
 		 * them and issuing a new certificate. */
 		url = talloc_asprintf(ctx, "%s/profileReview", agenturl);
@@ -516,14 +570,14 @@ main(int argc, char **argv)
 		lastparams = params;
 		cm_submit_h_run(hctx);
 		if (verbose > 0) {
-			printf("%s \"%s?%s\"\n", "GET", url, params);
-			printf("code = %d\n", cm_submit_h_result_code(hctx));
-			printf("code_text = \"%s\"\n", cm_submit_h_result_code_text(hctx));
+			fprintf(stderr, "%s \"%s?%s\"\n", "GET", url, params);
+			fprintf(stderr, "code = %d\n", cm_submit_h_result_code(hctx));
+			fprintf(stderr, "code_text = \"%s\"\n", cm_submit_h_result_code_text(hctx));
 			syslog(LOG_DEBUG, "%s %s?%s\n", "GET", url, params);
 		}
-		results = cm_submit_h_results(hctx);
+		results = cm_submit_h_results(hctx, NULL);
 		if (verbose > 0) {
-			printf("results = \"%s\"\n", results);
+			fprintf(stderr, "results = \"%s\"\n", results);
 			syslog(LOG_DEBUG, "%s", results);
 		}
 		if (cm_submit_h_result_code(hctx) != 0) {
@@ -544,12 +598,33 @@ main(int argc, char **argv)
 			for (i = 0;
 			     (defaults != NULL) && (defaults[i] != NULL);
 			     i++) {
+				/* Check if this default is one of the
+				 * paramters we've been explicitly provided. */
+				for (j = 0; j < num_options; j++) {
+					if (strcmp(defaults[i]->name,
+						   options[j].name) == 0) {
+						break;
+					}
+				}
+				/* If we have a non-default value for it, skip
+				 * this default. */
+				if (j < num_options) {
+					continue;
+				}
 				p = cm_submit_u_url_encode(defaults[i]->name);
 				q = cm_submit_u_url_encode(defaults[i]->value);
 				params2 = talloc_asprintf(ctx,
 							  "%s&%s=%s",
 							  params2, p, q);
 			};
+			/* Add parameters specified on command line */
+			for (j = 0; j < num_options; j++) {
+				p = cm_submit_u_url_encode(options[j].name);
+				q = cm_submit_u_url_encode(options[j].value);
+				params2 = talloc_asprintf(ctx,
+							  "%s&%s=%s",
+							  params2, p, q);
+			}
 			break;
 		case op_none:
 		case op_submit:

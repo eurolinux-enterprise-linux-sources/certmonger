@@ -62,19 +62,21 @@ Complete:
   * Put NSS into FIPS mode.
   * Offer to store certificates for CAs and their intermediates, potentially in
     multiple certificate databases and PEM files.
+  * Local signing should support signing with a key other than the one
+    used to generate the CSR.
+  * Add an option to getcert to specify a challenge password and a friendly
+    name to add to a CSR.
+  * Learn to generate SCEP messages.
+  * Learn to parse SCEP responses.
 
 To-do:
   * Also generate a CRMF request (RFC 4211) when we generate CSRs.  Not sure
     if we can do this as easily with PEM keys as OpenSSL doesn't appear to
     offer APIs for it, and I don't want to just break if the PEM module's not
     available. (more research needed)
-  * Add an option to getcert to specify a challenge password and a friendly
-    name to add to a CSR.
   * Make certmonger a proper daemon.
     * Sort out logging levels for log messages. (1 day)
       MUST
-  * Local signing should support signing with a key other than the one
-    used to generate the CSR. (2 days)
   * Local signing should track a revocation list for each signing key
     and maintain a CRL for it. (3 days)
     COULD
@@ -115,9 +117,7 @@ To-do:
     whether or not they're actually required to be specified for a given CA,
     rather than sloppily hard-coding it as we do now.
   * Learn about using SRV records for locating servers, particularly KCA ones.
-  * Learn to talk to KCAs (per http://datatracker.ietf.org/doc/draft-hotz-kx509)
-  * Learn to generate SCEP messages (versions 1 and 2).
-  * Learn to parse SCEP responses (versions 1 and 2).
+  * Learn to talk to KCAs (RFC 6717)
   * Learn to speak CMP (see http://marc.info/?l=openssl-dev&m=137535536301203)
   * Learn to talk to puppet CAs.
     * Check in with awnuk, who's been looking at this combination.
@@ -130,3 +130,4 @@ To-do:
   * Stamp "approved by certmonger $version", or something, on certificates,
     to help identify certificates that we approve with agent credentials.
   * Learn to read and create RFC3820 ProxyCertInfo extensions.
+  * Learn to speak ACME (see https://github.com/letsencrypt/acme-spec).
