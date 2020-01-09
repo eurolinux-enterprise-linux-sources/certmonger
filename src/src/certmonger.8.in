@@ -1,0 +1,110 @@
+.TH certmonger 8 "14 June 2015" "certmonger Manual"
+
+.SH NAME
+certmonger
+
+.SH SYNOPSIS
+certmonger [-s|-S] [-L|-l] [-P SOCKET] [-b TIMEOUT|-B] [-n|-f] [-d LEVEL] [-p FILE] [-F] [-c cmd] [-v]
+
+.SH DESCRIPTION
+The \fIcertmonger\fR daemon monitors certificates for impending
+expiration, and can optionally refresh soon-to-be-expired certificates
+with the help of a CA.  If told to, it can drive the entire enrollment
+process from key generation through enrollment and refresh.
+
+The daemon provides a control interface via the \fI@CM_DBUS_NAME@\fR
+service, with which client tools such as \fBgetcert\fR(1) interact.
+
+.SH OPTIONS
+.TP
+-s
+Listen on the session bus rather than the system bus.
+.TP
+-S
+Listen on the system bus rather than the session bus.  This is the default.
+.TP
+-l
+Also listen on a private socket for connections from clients running under the
+same UID.
+.TP
+-L
+Listen only on a private socket for connections from clients running under the
+same UID, and skip connecting to a bus.
+.TP
+-P
+Specify a location for the private listening socket.  If the location beings
+with a '/' character, it will be prefixed with 'unix:path=', otherwise it will
+be prefixed with 'unix:'.  If this option is not specified, the listening
+socket, if one is created, will be placed in the abstract namespace.
+.TP
+-b TIMEOUT
+Behave as a bus-activated service: if there are no certificates to be monitored
+or obtained, and no requests are received within TIMEOUT seconds, exit.  Not
+compatible with the -c option.
+.TP
+-B
+Don't behave as a bus-activated service.  This is the default.
+.TP
+-n
+Don't fork, and log messages to stderr rather than syslog.
+.TP
+-f
+Do fork, and log messages to syslog rather than stderr.  This is the default.
+.TP
+-d LEVEL
+Set debugging level.  Higher values produce more debugging output.  Implies -n.
+.TP
+-p FILE
+Store the daemon's process ID in the named file.
+.TP
+-F
+Force NSS to be initialized in FIPS mode.  The default behavior is to heed
+the setting stored in \fI/proc/sys/crypto/fips_enabled\fR.
+.TP
+-c cmd
+After the service has initialized, run the specified command, then shut down
+the service after the command exits.  If the -l or -L option was also
+specified, the command will be run with the \fI@CERTMONGER_PVT_ADDRESS_ENV@\fR
+environment variable set to the listening socket's location.  Not compatible
+with the -b option.
+.TP
+-v
+Print version information and exit.
+
+.SH FILES
+The set of certificates being monitored or signed is tracked using files stored
+under \fI@CM_STORE_REQUESTS_DIRECTORY@\fR, or in a directory named by the
+\fI@CM_STORE_REQUESTS_DIRECTORY_ENV@\fR environment variable.
+
+The set of known CAs is tracked using files stored
+under \fI@CM_STORE_CAS_DIRECTORY@\fR, or in a directory named by the
+\fI@CM_STORE_CAS_DIRECTORY_ENV@\fR environment variable.
+
+Temporary files will be stored in "\fI@CM_TMPDIR@\fR", or in the directory
+named by the \fI@CM_TMPDIR_ENV@\fR environment variable if that value was
+not given at compile time.
+
+.SH BUGS
+Please file tickets for any that you find at https://fedorahosted.org/certmonger/
+
+.SH SEE ALSO
+\fBgetcert\fR(1)
+\fBgetcert-add-ca\fR(1)
+\fBgetcert-add-scep-ca\fR(1)
+\fBgetcert-list-cas\fR(1)
+\fBgetcert-list\fR(1)
+\fBgetcert-modify-ca\fR(1)
+\fBgetcert-refresh-ca\fR(1)
+\fBgetcert-remove-ca\fR(1)
+\fBgetcert-request\fR(1)
+\fBgetcert-resubmit\fR(1)
+\fBgetcert-start-tracking\fR(1)
+\fBgetcert-status\fR(1)
+\fBgetcert-stop-tracking\fR(1)
+\fBcertmonger-certmaster-submit\fR(8)
+\fBcertmonger-dogtag-ipa-renew-agent-submit\fR(8)
+\fBcertmonger-dogtag-submit\fR(8)
+\fBcertmonger-ipa-submit\fR(8)
+\fBcertmonger-local-submit\fR(8)
+\fBcertmonger-scep-submit\fR(8)
+\fBcertmonger_selinux\fR(8)

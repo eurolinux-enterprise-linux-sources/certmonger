@@ -1,0 +1,465 @@
+/* src/config.h.in.  Generated from configure.ac by autoheader.  */
+
+/* Define to the variable name used to pass the location of the private D-Bus
+   connection to subprocesses. */
+#undef CERTMONGER_PVT_ADDRESS_ENV
+
+/* Define to the name that the default certmaster CA will be known by. */
+#undef CM_CERTMASTER_CA_NAME
+
+/* Define to the path of the CERTMASTER submission helper. */
+#undef CM_CERTMASTER_HELPER_PATH
+
+/* Define to the path of the certmonger daemon after installation. */
+#undef CM_CERTMONGER_DAEMON_PATH
+
+/* Define to the path of the certmonger main node. */
+#undef CM_DBUS_BASE_PATH
+
+/* Define to the name of the certmonger service. */
+#undef CM_DBUS_NAME
+
+/* Define to the amount of time to wait between attempts to reconnect to the
+   message bus if we get disconnected. */
+#undef CM_DBUS_RECONNECT_TIMEOUT
+
+/* Define to the default certificate lifetime for self-signed certificates. */
+#undef CM_DEFAULT_CERT_LIFETIME
+
+/* Define to the default nickname given to certificates. */
+#undef CM_DEFAULT_CERT_NICKNAME
+
+/* Define to the default starting serial number for self-signed certificates.
+   */
+#undef CM_DEFAULT_CERT_SERIAL
+
+/* Define to the default location of storage used for certificates. */
+#undef CM_DEFAULT_CERT_STORAGE_LOCATION
+
+/* Define to the default type of storage used for certificates. */
+#undef CM_DEFAULT_CERT_STORAGE_TYPE
+
+/* Define to the last-ditch default CN value for a signing request. */
+#undef CM_DEFAULT_CERT_SUBJECT_CN
+
+/* Define to the default token used to store certificates. */
+#undef CM_DEFAULT_CERT_TOKEN
+
+/* Define to the default path of submission helpers. */
+#undef CM_DEFAULT_HELPER_PATH
+
+/* Define to the default idle-timeout when bus-activated. */
+#undef CM_DEFAULT_IDLE_TIMEOUT
+
+/* Define to the default nickname given to keys. */
+#undef CM_DEFAULT_KEY_NICKNAME
+
+/* Define to the default location of storage used for keys. */
+#undef CM_DEFAULT_KEY_STORAGE_LOCATION
+
+/* Define to the default type of storage used for keys. */
+#undef CM_DEFAULT_KEY_STORAGE_TYPE
+
+/* Define to the default token used for holding keys. */
+#undef CM_DEFAULT_KEY_TOKEN
+
+/* Define to the address where notification mail should be sent by default. */
+#undef CM_DEFAULT_NOTIFICATION_MAIL
+
+/* Define to the default method of notification. */
+#undef CM_DEFAULT_NOTIFICATION_METHOD
+
+/* Define to the syslog facility from which notification messages should be
+   sent by default. */
+#undef CM_DEFAULT_NOTIFICATION_SYSLOG_PRIORITY
+
+/* Define to the default for the selfsign/populate_unique_id configuration
+   setting. */
+#undef CM_DEFAULT_POPULATE_UNIQUE_ID
+
+/* Define to the default public key size. */
+#undef CM_DEFAULT_PUBKEY_SIZE
+
+/* Define to the default public key type. */
+#undef CM_DEFAULT_PUBKEY_TYPE
+
+/* Define to the default RSA key exponent. */
+#undef CM_DEFAULT_RSA_EXPONENT
+
+/* Define to the list of default time-left thresholds at which we need to warn
+   the user. */
+#undef CM_DEFAULT_TTL_LIST
+
+/* Define to the time to wait between attempts to fetch the CA certificate, if
+   it was unreachable. */
+#undef CM_DELAY_CADATA_POLL
+
+/* Define to the time to wait between attempts to see if the CA issued a
+   certificate. */
+#undef CM_DELAY_CA_POLL
+
+/* Define to the absolute maximum time to wait between attempts to see if the
+   CA issued a certificate. */
+#undef CM_DELAY_CA_POLL_MAXIMUM
+
+/* Define to the absolute minimum time to wait between attempts to see if the
+   CA issued a certificate. */
+#undef CM_DELAY_CA_POLL_MINIMUM
+
+/* Define to the time to wait between attempts to re-read a certificate and
+   check for expiration. */
+#undef CM_DELAY_MONITOR_POLL
+
+/* Define to the absolute minimum time to wait between attempts to re-read a
+   certificate and check for expiration. */
+#undef CM_DELAY_MONITOR_POLL_MINIMUM
+
+/* Define to the time to wait after a netlink routing notification to retry
+   submissions. */
+#undef CM_DELAY_NETLINK
+
+/* Define to the time to wait for something that will happen soon. */
+#undef CM_DELAY_SOON
+
+/* Define to the time to wait for something that will happen soon, but not
+   that soon. */
+#undef CM_DELAY_SOONISH
+
+/* Define to the maximum size (in bytes) of supported digests. */
+#undef CM_DIGEST_MAX
+
+/* Define to enable DSA support. */
+#undef CM_ENABLE_DSA
+
+/* Define to enable EC support. */
+#undef CM_ENABLE_EC
+
+/* Define to the directory holding various getcert commands after
+   installation. */
+#undef CM_GETCERT_DIR
+
+/* Define to the default location to be used for storing temporary files. */
+#undef CM_HOMEDIR
+
+/* Define to the name that the default IPA CA will be known by. */
+#undef CM_IPA_CA_NAME
+
+/* Define to the path of the IPA submission helper. */
+#undef CM_IPA_HELPER_PATH
+
+/* Define to the name that the local CA will be known by. */
+#undef CM_LOCAL_CA_NAME
+
+/* Define to the path of the local submission helper. */
+#undef CM_LOCAL_HELPER_PATH
+
+/* Define to the minimum key size when generating DSA parameters and keys.
+   Requests to generate smaller keys will be forced to this key size. */
+#undef CM_MINIMUM_DSA_KEY_SIZE
+
+/* Define to the minimum key size when selecting elliptic curve parameters.
+   Requests to generate smaller keys will be forced to this key size. */
+#undef CM_MINIMUM_EC_KEY_SIZE
+
+/* Define to the minimum key size when generating RSA keys. Requests to
+   generate smaller keys will be forced to this key size. */
+#undef CM_MINIMUM_RSA_KEY_SIZE
+
+/* Define to the variable name to be used to hold a notification message. */
+#undef CM_NOTIFICATION_ENV
+
+/* Define to the path of the SCEP submission helper. */
+#undef CM_SCEP_HELPER_PATH
+
+/* Define to the name that the internal self-signing not-really-a-CA will be
+   known by. */
+#undef CM_SELF_SIGN_CA_NAME
+
+/* Define to the default path for CA tracking files. */
+#undef CM_STORE_CAS_DIRECTORY
+
+/* Define to the name of the environment variable which can specify the
+   directory for tracking CAs. */
+#undef CM_STORE_CAS_DIRECTORY_ENV
+
+/* Define to the directory which holds configuration files. */
+#undef CM_STORE_CONFIG_DIRECTORY
+
+/* Define to the name of the environment variable which can specify the
+   directory which holds configuration files. */
+#undef CM_STORE_CONFIG_DIRECTORY_ENV
+
+/* Define to the default path for data belonging to the local CA. */
+#undef CM_STORE_LOCAL_CA_DIRECTORY
+
+/* Define to the name of the environment variable which can specify the
+   directory for the local CA. */
+#undef CM_STORE_LOCAL_CA_DIRECTORY_ENV
+
+/* Define to the default path for request tracking files. */
+#undef CM_STORE_REQUESTS_DIRECTORY
+
+/* Define to the name of the environment variable which can specify the
+   directory for tracking requests. */
+#undef CM_STORE_REQUESTS_DIRECTORY_ENV
+
+/* Define to the default path for user CA tracking files. */
+#undef CM_STORE_SESSION_CAS_DIRECTORY
+
+/* Define to the directory which holds user configuration files. */
+#undef CM_STORE_SESSION_CONFIG_DIRECTORY
+
+/* Define to the default path for data belonging to the user CA. */
+#undef CM_STORE_SESSION_LOCAL_CA_DIRECTORY
+
+/* Define to the default path for user request tracking files. */
+#undef CM_STORE_SESSION_REQUESTS_DIRECTORY
+
+/* Define to the default path for the system daemon lock file. */
+#undef CM_STORE_SYSTEM_LOCK_FILE
+
+/* Define to the name of the environment variable which can specify the
+   location of the system daemon lock file. */
+#undef CM_STORE_SYSTEM_LOCK_FILE_ENV
+
+/* Define to the default location to be used for storing temporary files. */
+#undef CM_TMPDIR
+
+/* Define to the default location to be used for storing temporary files. */
+#undef CM_TMPDIR_ENV
+
+/* Define if dnsName subjectAltNames should be encoded properly, and if
+   international domain names should be handled during service location. */
+#undef CM_USE_IDN
+
+/* Define to 1 if translation of program messages to the user's native
+   language is requested. */
+#undef ENABLE_NLS
+
+/* Define to 1 if you have the <arpa/nameser.h> header file. */
+#undef HAVE_ARPA_NAMESER_H
+
+/* Define to 1 if you have the MacOS X function CFLocaleCopyCurrent in the
+   CoreFoundation framework. */
+#undef HAVE_CFLOCALECOPYCURRENT
+
+/* Define to 1 if you have the MacOS X function CFPreferencesCopyAppValue in
+   the CoreFoundation framework. */
+#undef HAVE_CFPREFERENCESCOPYAPPVALUE
+
+/* Define to 1 if you have the `clearenv' function. */
+#undef HAVE_CLEARENV
+
+/* Define if your copy of NSS supports DBMite databases. */
+#undef HAVE_DBM_NSSDB
+
+/* Define to 1 if you have the `dbus_watch_get_fd' function. */
+#undef HAVE_DBUS_WATCH_GET_FD
+
+/* Define to 1 if you have the `dbus_watch_get_unix_fd' function. */
+#undef HAVE_DBUS_WATCH_GET_UNIX_FD
+
+/* Define if the GNU dcgettext() function is already present or preinstalled.
+   */
+#undef HAVE_DCGETTEXT
+
+/* Define to 1 if you have the declaration of `CURLOPT_KEYPASSWD', and to 0 if
+   you don't. */
+#undef HAVE_DECL_CURLOPT_KEYPASSWD
+
+/* Define to 1 if you have the declaration of `CURLOPT_SSLCERTPASSWD', and to
+   0 if you don't. */
+#undef HAVE_DECL_CURLOPT_SSLCERTPASSWD
+
+/* Define to 1 if you have the declaration of `CURLOPT_SSLKEYPASSWD', and to 0
+   if you don't. */
+#undef HAVE_DECL_CURLOPT_SSLKEYPASSWD
+
+/* Define to 1 if you have the declaration of `krb5_princ_component', and to 0
+   if you don't. */
+#undef HAVE_DECL_KRB5_PRINC_COMPONENT
+
+/* Define to 1 if you have the declaration of `krb5_princ_name', and to 0 if
+   you don't. */
+#undef HAVE_DECL_KRB5_PRINC_NAME
+
+/* Define to 1 if you have the declaration of `krb5_princ_set_realm_length',
+   and to 0 if you don't. */
+#undef HAVE_DECL_KRB5_PRINC_SET_REALM_LENGTH
+
+/* Define to 1 if you have the declaration of `krb5_princ_size', and to 0 if
+   you don't. */
+#undef HAVE_DECL_KRB5_PRINC_SIZE
+
+/* Define to 1 if you have the declaration of `krb5_princ_type', and to 0 if
+   you don't. */
+#undef HAVE_DECL_KRB5_PRINC_TYPE
+
+/* Define to 1 if you have the declaration of `OpenSSL_add_all_algorithms',
+   and to 0 if you don't. */
+#undef HAVE_DECL_OPENSSL_ADD_ALL_ALGORITHMS
+
+/* Define to 1 if you have the declaration of `OpenSSL_add_ssl_algorithms',
+   and to 0 if you don't. */
+#undef HAVE_DECL_OPENSSL_ADD_SSL_ALGORITHMS
+
+/* Define to 1 if you have the declaration of `OPENSSL_free', and to 0 if you
+   don't. */
+#undef HAVE_DECL_OPENSSL_FREE
+
+/* Define to 1 if you have the declaration of `strtold', and to 0 if you
+   don't. */
+#undef HAVE_DECL_STRTOLD
+
+/* Define if the GNU gettext() function is already present or preinstalled. */
+#undef HAVE_GETTEXT
+
+/* Define if you have GMP for hex-to-decimal conversions. */
+#undef HAVE_GMP
+
+/* Define to 1 if you have the <gmp.h> header file. */
+#undef HAVE_GMP_H
+
+/* Define if you have the iconv() function and it works. */
+#undef HAVE_ICONV
+
+/* Define to 1 if you have the <inttypes.h> header file. */
+#undef HAVE_INTTYPES_H
+
+/* Define to 1 if you have the `krb5_free_unparsed_name' function. */
+#undef HAVE_KRB5_FREE_UNPARSED_NAME
+
+/* Define to 1 if you have the `krb5_get_error_message' function. */
+#undef HAVE_KRB5_GET_ERROR_MESSAGE
+
+/* Define to 1 if you have the `krb5_get_init_creds_opt_alloc' function. */
+#undef HAVE_KRB5_GET_INIT_CREDS_OPT_ALLOC
+
+/* Define to 1 if you have the `crypto' library (-lcrypto). */
+#undef HAVE_LIBCRYPTO
+
+/* Define to 1 if you have the `ldap' library (-lldap). */
+#undef HAVE_LIBLDAP
+
+/* Define to 1 if you have the `popt' library (-lpopt). */
+#undef HAVE_LIBPOPT
+
+/* Define to 1 if you have the <linux/netlink.h> header file. */
+#undef HAVE_LINUX_NETLINK_H
+
+/* Define to 1 if you have the <linux/rtnetlink.h> header file. */
+#undef HAVE_LINUX_RTNETLINK_H
+
+/* Define to 1 if you have the <linux/types.h> header file. */
+#undef HAVE_LINUX_TYPES_H
+
+/* Define to 1 if you have the <memory.h> header file. */
+#undef HAVE_MEMORY_H
+
+/* Define if you have NSS. */
+#undef HAVE_NSS
+
+/* Define if you have ns_initparse() and want to use SRV location */
+#undef HAVE_NS_INITPARSE
+
+/* Define if you have OpenSSL. */
+#undef HAVE_OPENSSL
+
+/* Define to 1 if you have the `PK11_PrivDecrypt' function. */
+#undef HAVE_PK11_PRIVDECRYPT
+
+/* Define to 1 if you have the <popt.h> header file. */
+#undef HAVE_POPT_H
+
+/* Define to 1 if you have the <resolv.h> header file. */
+#undef HAVE_RESOLV_H
+
+/* Define to 1 if you have the `SECKEY_CreateECPrivateKey' function. */
+#undef HAVE_SECKEY_CREATEECPRIVATEKEY
+
+/* Define if your copy of NSS supports SQLite databases. */
+#undef HAVE_SQL_NSSDB
+
+/* Define to 1 if you have the <stdint.h> header file. */
+#undef HAVE_STDINT_H
+
+/* Define to 1 if you have the <stdlib.h> header file. */
+#undef HAVE_STDLIB_H
+
+/* Define to 1 if you have the <strings.h> header file. */
+#undef HAVE_STRINGS_H
+
+/* Define to 1 if you have the <string.h> header file. */
+#undef HAVE_STRING_H
+
+/* Define to 1 if `gssapi_delegation' is a member of `struct
+   xmlrpc_curl_xportparms'. */
+#undef HAVE_STRUCT_XMLRPC_CURL_XPORTPARMS_GSSAPI_DELEGATION
+
+/* Define to 1 if you have the <systemd/sd-login.h> header file. */
+#undef HAVE_SYSTEMD_SD_LOGIN_H
+
+/* Define to 1 if you have the <sys/socket.h> header file. */
+#undef HAVE_SYS_SOCKET_H
+
+/* Define to 1 if you have the <sys/stat.h> header file. */
+#undef HAVE_SYS_STAT_H
+
+/* Define to 1 if you have the <sys/types.h> header file. */
+#undef HAVE_SYS_TYPES_H
+
+/* Define to 1 if you have the <unistd.h> header file. */
+#undef HAVE_UNISTD_H
+
+/* Define to have the ability to populate subjectUniqueID in self-signed
+   certs. */
+#undef HAVE_UUID
+
+/* Define to 1 if you have the <uuid.h> header file. */
+#undef HAVE_UUID_H
+
+/* Define to 1 if you have the <uuid/uuid.h> header file. */
+#undef HAVE_UUID_UUID_H
+
+/* Define as const if the declaration of iconv() needs const. */
+#undef ICONV_CONST
+
+/* Define to the name of the directory under which locale data will be
+   installed. */
+#undef MYLOCALEDIR
+
+/* Name of package */
+#undef PACKAGE
+
+/* Define to the address where bug reports for this package should be sent. */
+#undef PACKAGE_BUGREPORT
+
+/* Define to the full name of this package. */
+#undef PACKAGE_NAME
+
+/* Define to the full name and version of this package. */
+#undef PACKAGE_STRING
+
+/* Define to the one symbol short name of this package. */
+#undef PACKAGE_TARNAME
+
+/* Define to the home page for this package. */
+#undef PACKAGE_URL
+
+/* Define to the version of this package. */
+#undef PACKAGE_VERSION
+
+/* Define to 1 if you have the ANSI C header files. */
+#undef STDC_HEADERS
+
+/* Version number of package */
+#undef VERSION
+
+/* Define to ensure that there's always a CERTMASTER CA defined. */
+#undef WITH_CERTMASTER
+
+/* Define to ensure that there's always an IPA CA defined. */
+#undef WITH_IPA
+
+/* Define to ensure that there's always a local CA defined. */
+#undef WITH_LOCAL

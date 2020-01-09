@@ -1,0 +1,32 @@
+From 3a734708fb96d0fed7850a5615782e27a039cda1 Mon Sep 17 00:00:00 2001
+From: Nalin Dahyabhai <nalin@redhat.com>
+Date: Wed, 15 Jun 2016 17:20:52 -0400
+Subject: [PATCH] Document the -X option in the ipa-submit man page
+
+Add documentation for the new -X option to certmonger-ipa-submit(8).
+---
+ src/certmonger-ipa-submit.8.in | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/certmonger-ipa-submit.8.in b/src/certmonger-ipa-submit.8.in
+index 62b6991c7e1e13ed02cb04a76e9446b69a01093d..2a986c63f97c117175f84007cb54b63b8e221cf7 100644
+--- a/src/certmonger-ipa-submit.8.in
++++ b/src/certmonger-ipa-submit.8.in
+@@ -28,6 +28,14 @@ LDAP server's directory tree, where $BASE defaults to the value of the
+ Identifies the principal name of the service for which the certificate is being
+ issued.  This setting is required by IPA and must always be specified.
+ .TP
++\fB\-X\fR issuer
++Requests that the certificate be processed by the specified certificate issuer.
++By default, if this flag is not specified, and the \fBCERTMONGER_CA_ISSUER\fR
++variable is set in the environment, then the value of the environment variable
++will be used.  This setting is optional, and if a server returns error 3005,
++indicating that it does not understand multiple profiles, the request will be
++re-submitted without specifying an issuer name.
++.TP
+ \fB\-T\fR profile
+ Requests that the certificate be processed using the specified certificate profile.
+ By default, if this flag is not specified, and the \fBCERTMONGER_CA_PROFILE\fR
+-- 
+2.9.0
+

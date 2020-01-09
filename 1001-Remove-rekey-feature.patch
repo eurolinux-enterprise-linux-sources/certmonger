@@ -1,0 +1,374 @@
+From 3c763332adc224d0e325502cb3e5b97d4155bb0c Mon Sep 17 00:00:00 2001
+From: Jan Cholasta <jcholast@redhat.com>
+Date: Fri, 7 Aug 2015 13:40:41 +0200
+Subject: [PATCH] Remove rekey feature
+
+https://bugzilla.redhat.com/show_bug.cgi?id=1250397
+---
+ src/certmonger-scep-submit.8.in |  8 --------
+ src/certmonger.conf.5.in        | 19 -------------------
+ src/getcert-add-scep-ca.1.in    |  8 --------
+ src/getcert.c                   |  3 ---
+ src/prefs.c                     | 27 +--------------------------
+ src/scep.c                      |  5 -----
+ src/submit-e.c                  |  6 ------
+ src/tdbush.c                    | 10 +---------
+ tests/010-iterate/expected.out  | 14 +++++---------
+ tests/028-dbus/expected.out     |  6 ------
+ tests/036-getcert/expected.out  | 26 ++++++++++++++------------
+ tests/037-rekey2/expected.out   |  4 ++--
+ 12 files changed, 23 insertions(+), 113 deletions(-)
+
+diff --git a/src/certmonger-scep-submit.8.in b/src/certmonger-scep-submit.8.in
+index 7319c6a..31203c3 100644
+--- a/src/certmonger-scep-submit.8.in
++++ b/src/certmonger-scep-submit.8.in
+@@ -80,14 +80,6 @@ When called with the \fB-c\fR or \fB-C\fR flag, this option can be used to
+ specify the CA identifier which is passed to the server as part of the client's
+ request.  The default is "0".
+ .TP
+-\fB\-n\fR
+-The SCEP Renewal feature allows a client with a previously-issued certificate
+-to use that certificate and the associated private key to request a new
+-certificate for a different key pair, and can be used to support
+-\fIcertmonger\fR's rekeying feature if the SCEP server advertises support for
+-it.  This option forces the \fIscep-submit\fR helper to prefer to issue
+-requests which do not make use of this feature.
+-.TP
+ \fB-v\fR
+ Increases the logging level.  Use twice for more logging.  This option
+ is mainly useful for troubleshooting.
+diff --git a/src/certmonger.conf.5.in b/src/certmonger.conf.5.in
+index 241f48b..e1220f1 100644
+--- a/src/certmonger.conf.5.in
++++ b/src/certmonger.conf.5.in
+@@ -72,25 +72,6 @@ These are the trust attributes which are applied to certificates which are not
+ necessarily to be trusted, when they are saved to NSS databases.  The default
+ is \fI,,\fP.
+ 
+-.IP max_key_use_count
+-When attempting to replace a certificate, if \fIcertmonger\fR has previously
+-obtained at least this number of certificates using the current key pair, it
+-will generate a new key pair to use before proceeding.  There is effectively no
+-default for this setting.
+-
+-.IP max_key_lifetime
+-The amount of time after a key was first generated when \fIcertmonger\fR will
+-attempt to generate a new key pair to replace it, as part of the process of
+-replacing a certificate.
+-The value is specified as a combination of years (y), months (M), weeks (w),
+-days (d), hours (h), minutes (m), and/or seconds (s).  If no unit of time is
+-specified, seconds are assumed.
+-The date when a key was generated is not recorded if the key was not generated
+-by \fIcertmonger\fR, or if the key was generated with a version of
+-\fIcertmonger\fR older than 0.78, and for those cases, this option has no
+-effect.
+-There is effectively no default for this setting.
+-
+ .SH SELFSIGN
+ Within the \fIselfsign\fR section, these variables and values are recognized:
+ 
+diff --git a/src/getcert-add-scep-ca.1.in b/src/getcert-add-scep-ca.1.in
+index f07b900..64f0f5e 100644
+--- a/src/getcert-add-scep-ca.1.in
++++ b/src/getcert-add-scep-ca.1.in
+@@ -46,14 +46,6 @@ A CA identifier value which will passed to the server when the
+ \fIscep-submit\fR helper is used to retrieve copies of the server's
+ certificates.
+ .TP
+-\fB\-n\fR
+-The SCEP Renewal feature allows a client with a previously-issued certificate
+-to use that certificate and the associated private key to request a new
+-certificate for a different key pair, and can be used to support
+-\fIcertmonger\fR's rekeying feature if the SCEP server advertises support for
+-it.  This option forces the \fIscep-submit\fR helper to issue requests without
+-making use of this feature.
+-.TP
+ \fB\-v\fR
+ Be verbose about errors.  Normally, the details of an error received from
+ the daemon will be suppressed if the client can make a diagnostic suggestion.
+diff --git a/src/getcert.c b/src/getcert.c
+index 26a88f3..966ff41 100644
+--- a/src/getcert.c
++++ b/src/getcert.c
+@@ -4663,7 +4663,6 @@ static struct {
+ 	{"start-tracking", start_tracking},
+ 	{"stop-tracking", stop_tracking},
+ 	{"resubmit", resubmit},
+-	{"rekey", rekey},
+ 	{"refresh", refresh},
+ 	{"list", list},
+ 	{"status", status},
+@@ -5087,8 +5086,6 @@ help(const char *twopartcmd, const char *category)
+ 		 N_("stop monitoring a certificate\n")},
+ 		{"resubmit", resubmit_help,
+ 		 N_("resubmit an in-progress enrollment request, or start a new one\n")},
+-		{"rekey", rekey_help,
+-		 N_("generate a new private key and replace a certificate\n")},
+ 		{"refresh", refresh_help,
+ 		 N_("check on the status of an in-progress enrollment request\n")},
+ 		{"list", list_help,
+diff --git a/src/prefs.c b/src/prefs.c
+index ab363bb..0a8e166 100644
+--- a/src/prefs.c
++++ b/src/prefs.c
+@@ -545,36 +545,11 @@ cm_prefs_nss_other_trust(void)
+ long long
+ prefs_key_end_of_life(time_t ref)
+ {
+-	const char *cfg;
+-	time_t tmp;
+-
+-	tmp = -1;
+-	cfg = cm_prefs_config(NULL, "max_key_lifetime");
+-	if (cfg != NULL) {
+-		if (cm_submit_u_delta_from_string(cfg, ref, &tmp) == 0) {
+-			return tmp;
+-		}
+-	}
+ 	return -1;
+ }
+ 
+ long
+ prefs_max_key_use_count(void)
+ {
+-	static long count = -2;
+-	long tmp;
+-	const char *cfg;
+-	char *p;
+-
+-	if (count == -2) {
+-		count = -1;
+-		cfg = cm_prefs_config(NULL, "max_key_use_count");
+-		if (cfg != NULL) {
+-			tmp = strtol(cfg, &p, 10);
+-			if ((p != NULL) && (*p == '\0')) {
+-				count = tmp;
+-			}
+-		}
+-	}
+-	return count;
++	return -1;
+ }
+diff --git a/src/scep.c b/src/scep.c
+index d3bbc05..11f9ae3 100644
+--- a/src/scep.c
++++ b/src/scep.c
+@@ -231,7 +231,6 @@ main(int argc, const char **argv)
+ 		{"racert", 'r', POPT_ARG_STRING, NULL, 'r', "the RA certificate, used for encrypting requests", "FILENAME"},
+ 		{"cacert", 'R', POPT_ARG_STRING, NULL, 'R', "the CA certificate, used for verifying responses", "FILENAME"},
+ 		{"other-certs", 'I', POPT_ARG_STRING, NULL, 'I', "additional certificates", "FILENAME"},
+-		{"non-renewal", 'n', POPT_ARG_NONE, &prefer_non_renewal, 0, "prefer to not use the SCEP Renewal feature", NULL},
+ 		{"verbose", 'v', POPT_ARG_NONE, NULL, 'v', NULL, NULL},
+ 		POPT_AUTOHELP
+ 		POPT_TABLEEND
+@@ -255,8 +254,6 @@ main(int argc, const char **argv)
+ 			message = getenv(CM_SUBMIT_SCEP_PKCSREQ_REKEY_ENV);
+ 			if (message == NULL) {
+ 				message = getenv(CM_SUBMIT_SCEP_PKCSREQ_ENV);
+-			} else {
+-				rekey_message = getenv(CM_SUBMIT_SCEP_PKCSREQ_ENV);
+ 			}
+ 		} else
+ 		if (strcasecmp(mode, CM_OP_POLL) == 0) {
+@@ -264,8 +261,6 @@ main(int argc, const char **argv)
+ 			message = getenv(CM_SUBMIT_SCEP_PKCSREQ_REKEY_ENV);
+ 			if (message == NULL) {
+ 				message = getenv(CM_SUBMIT_SCEP_PKCSREQ_ENV);
+-			} else {
+-				rekey_message = getenv(CM_SUBMIT_SCEP_PKCSREQ_ENV);
+ 			}
+ 		} else
+ 		if (strcasecmp(mode, CM_OP_FETCH_SCEP_CA_CERTS) == 0) {
+diff --git a/src/submit-e.c b/src/submit-e.c
+index befd01e..af05efe 100644
+--- a/src/submit-e.c
++++ b/src/submit-e.c
+@@ -446,12 +446,6 @@ cm_submit_e_need_scep_messages(struct cm_submit_state *state)
+ static int
+ cm_submit_e_need_rekey(struct cm_submit_state *state)
+ {
+-	int status;
+-	status = cm_subproc_get_exitstatus(state->subproc);
+-	if (WIFEXITED(status) &&
+-	    (WEXITSTATUS(status) == CM_SUBMIT_STATUS_NEED_REKEY)) {
+-		return 0;
+-	}
+ 	return -1;
+ }
+ 
+diff --git a/src/tdbush.c b/src/tdbush.c
+index 7fb3d16..04fe57e 100644
+--- a/src/tdbush.c
++++ b/src/tdbush.c
+@@ -7164,14 +7164,6 @@ cm_tdbush_iface_request(void)
+ 										     cm_tdbush_method_arg_out,
+ 										     NULL))),
+ 								     NULL),
+-				     make_interface_item(cm_tdbush_interface_method,
+-							 make_method("rekey",
+-								     request_rekey,
+-								     make_method_arg("working",
+-										     DBUS_TYPE_BOOLEAN_AS_STRING,
+-										     cm_tdbush_method_arg_out,
+-										     NULL),
+-								     NULL),
+ 				     make_interface_item(cm_tdbush_interface_method,
+ 							 make_method("resubmit",
+ 								     request_resubmit,
+@@ -7227,7 +7219,7 @@ cm_tdbush_iface_request(void)
+ 				     make_interface_item(cm_tdbush_interface_signal,
+ 							 make_signal(CM_DBUS_SIGNAL_REQUEST_CERT_SAVED,
+ 								     NULL),
+-							 NULL)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
++							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+ 	}
+ 	return ret;
+ }
+diff --git a/tests/010-iterate/expected.out b/tests/010-iterate/expected.out
+index bd57a01..85d07b3 100644
+--- a/tests/010-iterate/expected.out
++++ b/tests/010-iterate/expected.out
+@@ -398,19 +398,15 @@ HAVE_CSR
+ -START-
+ NEED_TO_SUBMIT
+ SUBMITTING
+-NEED_KEY_PAIR
++NEED_GUIDANCE
+ -STOP-
+-NEED_KEY_PAIR
++NEED_GUIDANCE
+ -START-
+-GENERATING_KEY_PAIR
+-HAVE_KEY_PAIR
+-NEED_KEYINFO
++NEED_GUIDANCE
+ -STOP-
+-NEED_KEYINFO
++NEED_GUIDANCE
+ -START-
+-READING_KEYINFO
+-HAVE_KEYINFO
+-NEED_CSR
++NEED_GUIDANCE
+ -STOP-
+ 
+ [Enroll until we notice we have no specified CA.]
+diff --git a/tests/028-dbus/expected.out b/tests/028-dbus/expected.out
+index 8a81a7f..4c33e9a 100644
+--- a/tests/028-dbus/expected.out
++++ b/tests/028-dbus/expected.out
+@@ -404,9 +404,6 @@ OK
+    <arg name="status" type="b" direction="out"/>
+    <arg name="path" type="o" direction="out"/>
+   </method>
+-  <method name="rekey">
+-   <arg name="working" type="b" direction="out"/>
+-  </method>
+   <method name="resubmit">
+    <arg name="working" type="b" direction="out"/>
+   </method>
+@@ -484,9 +481,6 @@ recently
+ 1 on /org/fedorahosted/certmonger/requests/Request2
+ After setting template-eku to 1.2.3.4.5.6.7.8.9.10, we got dbus.Array([dbus.String(u'1.2.3.4.5.6.7.8.9.10')], signature=dbus.Signature('s'), variant_level=1)
+ 
+-[ /org/fedorahosted/certmonger/requests/Request2: org.fedorahosted.certmonger.request.rekey ]
+-1
+-
+ [ /org/fedorahosted/certmonger/requests/Request2: org.fedorahosted.certmonger.request.resubmit ]
+ 1
+ 
+diff --git a/tests/036-getcert/expected.out b/tests/036-getcert/expected.out
+index c1a13c8..b6d1eaf 100644
+--- a/tests/036-getcert/expected.out
++++ b/tests/036-getcert/expected.out
+@@ -11,20 +11,21 @@ certs:1
+ keys:1
+ -----BEGIN PRIVATE KEY-----
+ [Files, rekey]
+-Resubmitting "first" to "local".
+ certs:1
+ -----BEGIN CERTIFICATE-----
+ keys:1
+ -----BEGIN PRIVATE KEY-----
++ERROR: keys were not changed on rekey
++ERROR: cert was not changed on rekey
+ [Files, rekey with preserve=1]
+-Resubmitting "first" to "local".
+ certs:1
+ -----BEGIN CERTIFICATE-----
+-keys:2
+------BEGIN PRIVATE KEY-----
++keys:1
+ -----BEGIN PRIVATE KEY-----
++ERROR: keys were not changed on rekey
++ERROR: cert was not changed on rekey
++ERROR: old keys were not saved on rekey
+ [Files, rekey with jerk CA]
+-Resubmitting "first" to "jerkca".
+ certs:1
+ -----BEGIN CERTIFICATE-----
+ keys:1
+@@ -44,30 +45,31 @@ pk12util: PKCS12 EXPORT SUCCESSFUL
+ cert:1
+ key:1
+ [Database, rekey]
+-Resubmitting "first" to "local".
+ certs:1
+ keys:1
+ pk12util: PKCS12 EXPORT SUCCESSFUL
+ cert:1
+ key:1
++ERROR: keys were not changed on rekey
++ERROR: cert was not changed on rekey
+ [Database, rekey with preserve=1]
+-Resubmitting "first" to "local".
+ certs:1
+-keys:2
++keys:1
+ pk12util: PKCS12 EXPORT SUCCESSFUL
+ cert:1
+ key:1
++ERROR: keys were not changed on rekey
++ERROR: cert was not changed on rekey
++ERROR: old keys were not saved on rekey
+ [Database, rekey with jerk CA]
+-Resubmitting "first" to "jerkca".
+ certs:1
+-keys:3
++keys:1
+ pk12util: PKCS12 EXPORT SUCCESSFUL
+ cert:1
+ key:1
+ [Database, rekey with jerk CA, nonpreserving]
+-Resubmitting "first" to "jerkca".
+ certs:1
+-keys:3
++keys:1
+ pk12util: PKCS12 EXPORT SUCCESSFUL
+ cert:1
+ key:1
+diff --git a/tests/037-rekey2/expected.out b/tests/037-rekey2/expected.out
+index bd8cca7..62a1c74 100644
+--- a/tests/037-rekey2/expected.out
++++ b/tests/037-rekey2/expected.out
+@@ -112,7 +112,7 @@ MONITORING
+ -STOP-
+ MONITORING
+ -START-
+-NEED_KEY_PAIR
++NEED_CSR
+ -STOP-
+ [Uses = 2.]
+ NEED_KEY_PAIR
+@@ -228,6 +228,6 @@ MONITORING
+ -STOP-
+ MONITORING
+ -START-
+-NEED_KEY_PAIR
++NEED_CSR
+ -STOP-
+ Test complete.
+-- 
+2.14.4
+

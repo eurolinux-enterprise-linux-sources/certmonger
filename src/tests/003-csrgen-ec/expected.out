@@ -1,0 +1,7 @@
+verify OK
+verify OK
+Signature OK
+Signature OK
+minicert.openssl.secp256r1.pem: OK
+minicert.nss.secp256r1.pem: OK
+Test complete.

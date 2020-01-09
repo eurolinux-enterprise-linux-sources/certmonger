@@ -1,0 +1,135 @@
+Limited local-only support, helpers for external IPA and certmaster-based CAs.
+Keys can also be self-signed.
+
+Complete:
+  * Generating RSA keys of configurable size.
+  * Storing keys in either PEM or NSSDB format.
+  * Generating signing requests for keys in PEM or NSSDB format.
+  * Self-sign requests using keys in PEM or NSSDB format.
+  * Save issued certificate in PEM or NSSDB format.
+  * Refresh certificate parameters from the certificates at startup,
+    parsing and recovering fields and extensions that we care about to refresh
+    the request tracking file (key usage, extended key usage, subject alt name
+    of type email, dns, or kerberos/nt principal name).
+  * Populate requested-extensions in signing requests with as much
+    information as we can.
+    * Locally-signed certificates use the requested extension values.
+    * Locally-signed certificates get a configured validity lifetime.
+    * Locally-signed certificates get a somewhat-useful serial number.
+    * Locally-signed certificates are marked as not being CAs.
+  * Maintaining queued items in an upgrade-proofable format.
+  * Should offer an API over D-Bus which the client uses instead of
+    mutilating the queue directly (see doc/api.txt):
+    * Add new entry.  Figure out the state based on what the requester supplies
+      (i.e., if there's a certificate where the request says it should go,
+      assume it's been issued; ditto for private keys).
+    * List entries.
+    * List known CAs.
+    * Resubmit requests after generating a new signing request.
+    * Provide introspection data as a well-behaved D-Bus service would.
+      * D-Feet seems to be happy.
+    * Start and stop tracking (i.e., notification of expiration).
+  * Make certmonger a proper daemon.
+    * Detach from console, foreground for debugging.
+    * Sort out an init script.
+  * Sort out storage for system-local defaults which are consulted
+    before falling back to compiled-in defaults.
+  * Actually do notification of expiration and impending expiration.
+  * Learn to exec a helper to do non-local enrollment.
+  * Detect when network connections go up and "kick" anything that's
+    waiting for a server to become reachable.
+  * Learn to submit to at least one actual CA: IPA via XML-RPC over
+    HTTPS, authenticating using Negotiate with creds obtained using
+    the host's keytab (administrator may have logged off long before
+    we could have contacted the CA).
+  * Learn to submit to a second CA: certmaster via XML-RPC over HTTP.
+    * Learn how certmaster's root gets distributed.  It doesn't.
+    * Learn to submit to certmaster's XMLRPC interface, preferably by
+      calling out to the python library it supplies.  Ended up reusing
+      large chunks of the IPA client code, so it's in C.
+  * Handle PIN values for encrypted key storage.
+  * Be able to use hashes other than SHA256.
+  * Make certmonger a proper daemon.
+    * Sort out SELinux policy. (unscoped)
+  * Figure out how to let the local deamon's client do key generation.
+    It's either that or force them to give the daemon the PIN for
+    encrypted storage.  Or don't support encrypted key storage at all,
+    which is probably not going to be a popular limitation to have. (3 days)
+    DROPPED in favor of giving the daemon the PIN for encrypted storage.
+  * Offer an API over D-Bus which the client can use instead of
+    mutilating the queue directly (per doc/api.txt).
+  * Generate an SPKAC value when generating PKCS#10 CSRs.
+  * Put NSS into FIPS mode.
+  * Offer to store certificates for CAs and their intermediates, potentially in
+    multiple certificate databases and PEM files.
+  * Local signing should support signing with a key other than the one
+    used to generate the CSR.
+  * Add an option to getcert to specify a challenge password and a friendly
+    name to add to a CSR.
+  * Learn to generate SCEP messages.
+  * Learn to parse SCEP responses.
+
+To-do:
+  * Also generate a CRMF request (RFC 4211) when we generate CSRs.  Not sure
+    if we can do this as easily with PEM keys as OpenSSL doesn't appear to
+    offer APIs for it, and I don't want to just break if the PEM module's not
+    available. (more research needed)
+  * Make certmonger a proper daemon.
+    * Sort out logging levels for log messages. (1 day)
+      MUST
+  * Local signing should track a revocation list for each signing key
+    and maintain a CRL for it. (3 days)
+    COULD
+  * Learn to handle keys and certificates stored in files in virtual
+    guests of the current OS instance (using libguestfs).  Would need
+    to refactor some of the current storage code to to it for "file".
+    Not at all sure how to do it for "nssdb".
+    COULD
+  * Learn to "handle" keys and certificates stored in PKCS12 bundles.
+    COULD
+  * Learn to handle keys and certificates stored in PKCS11 modules directly.
+    COULD
+  * Queue management.
+    COULD -> Move entries and CAs from hand-rolled files to simple XML. (2 days)
+    COULD -> Move them to JSON. (2 days)
+    COULD -> Move them to an ldb. (3 days)
+    COULD -> Move them to something that's more end-user-serviceable. (3 days)
+    - IPA mucks with our files directly in their current form, so this is
+      tabled indefinitely.
+  * Lighten build requirements by crafting and parsing XML-RPC ourselves
+    since we already have to deal with non-XML-RPC XML and HTTP for Dogtag.
+  * Add IDENTIFY operations to helpers, so they can output their
+    preferred/default name, and we can cache root and intermediate chain
+    certificates from CAs which provide a way for clients to retrieve them via
+    an integrity-checked path.
+    * Populate/update the known-issuer-names list for the CA using these.
+    * Cache the authorityKeyIdentifier and/or subjectPublicKeyIdentifier from
+      the CA certificate, and use that to match up certificates that need to be
+      renewed with their CAs.
+    * If the CA cert includes a CRL distribution point extension, cache the
+      CRL, too.  This'll require a new dependency on a retrieval library
+      (probably libcurl again) and changes to the internal state machine to
+      handle CRL retrieval as another type of task.  The local signer's CRL
+      would be regenerated before being "retrieved".
+    * More on this in "doc/submit.txt".
+  * Add a GET_NEW_REQUEST_REQUIREMENTS operation to helpers so that they can
+    list variables which the daemon should supply for them for it to note, so
+    that if they're not specified by a client, we can intelligently decide
+    whether or not they're actually required to be specified for a given CA,
+    rather than sloppily hard-coding it as we do now.
+  * Learn about using SRV records for locating servers, particularly KCA ones.
+  * Learn to talk to KCAs (RFC 6717)
+  * Learn to speak CMP (see http://marc.info/?l=openssl-dev&m=137535536301203)
+  * Learn to talk to puppet CAs.
+    * Check in with awnuk, who's been looking at this combination.
+  * Learn to talk to r509 CAs.
+  * Switch to SSL access methods when submitting end-entity requests to Dogtag
+    CAs (profileSubmit, checkRequest, displayCertFromRequest).
+  * Be able to fill requester contact info when submitting end-entity
+    enrollment requests, particularly for cases when we don't have agent
+    credentials, and make that a client-suppliable value.
+  * Stamp "approved by certmonger $version", or something, on certificates,
+    to help identify certificates that we approve with agent credentials.
+  * Learn to read and create RFC3820 ProxyCertInfo extensions.
+  * Learn to speak ACME (see https://github.com/letsencrypt/acme-spec).
+  * Learn to read and create NameConstraints extensions.

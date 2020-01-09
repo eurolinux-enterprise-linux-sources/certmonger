@@ -1,0 +1,37 @@
+From f1c410e315ebf70cc18296c959f40c8870d1a105 Mon Sep 17 00:00:00 2001
+From: Trevor Vaughan <tvaughan@onyxpoint.com>
+Date: Fri, 23 Feb 2018 16:10:29 -0500
+Subject: [PATCH] Fix C99 build error on EL7 systems
+
+Needed for testing #89
+---
+ src/certext.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/src/certext.c b/src/certext.c
+index 587496f..c44c8bb 100644
+--- a/src/certext.c
++++ b/src/certext.c
+@@ -1,6 +1,6 @@
+ /*
+  * Copyright (C) 2009,2011,2012,2013,2014,2015 Red Hat, Inc.
+- * 
++ *
+  * This program is free software: you can redistribute it and/or modify
+  * it under the terms of the GNU General Public License as published by
+  * the Free Software Foundation, either version 3 of the License, or
+@@ -1612,9 +1612,9 @@ cm_certext_build_certificate_template(
+ 		return NULL;
+ 
+ 	int i = 0;
+-	char *saveptr, *endptr;
++	char *saveptr, *endptr, *part;
+ 	for (
+-		char *part = strtok_r(template_spec_dup, ":", &saveptr);
++		part = strtok_r(template_spec_dup, ":", &saveptr);
+ 		part != NULL;
+ 		part = strtok_r(NULL, ":", &saveptr)
+ 	) {
+-- 
+1.8.3.1
+

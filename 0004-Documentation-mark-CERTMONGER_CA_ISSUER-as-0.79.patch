@@ -1,0 +1,44 @@
+From f78836266df6fdbdc321e002dc7ae2229866e621 Mon Sep 17 00:00:00 2001
+From: Nalin Dahyabhai <nalin@redhat.com>
+Date: Tue, 14 Jun 2016 15:56:30 -0400
+Subject: [PATCH] Documentation: mark $CERTMONGER_CA_ISSUER as 0.79
+
+In documentation that now mentions that we set $CERTMONGER_CA_ISSUER for
+helpers, list 0.79 as the first version where we started doing so.
+---
+ doc/helpers.txt | 5 +++++
+ doc/submit.txt  | 2 +-
+ 2 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/doc/helpers.txt b/doc/helpers.txt
+index 9d43e2390122c67719d549387b070879bf7e1f2d..975a741eeb76ef6d9005a05e5283ab92a1ccd399 100644
+--- a/doc/helpers.txt
++++ b/doc/helpers.txt
+@@ -103,6 +103,11 @@ helper is called.
+   * CERTMONGER_REQ_IP_ADDRESS
+     Any iPAddress subject alt name values from the request.
+ 
++  These are also present starting with version 0.79:
++
++  * CERTMONGER_CA_ISSUER
++    The requested issuer for enrollment.
++
+   The helper is expected to use this information, along with whatever
+   credentials it has or is passed on the command line, to send the signing
+   request to the CA.
+diff --git a/doc/submit.txt b/doc/submit.txt
+index 7444f88c078b7453ae350268482832485259348a..b1742c3f2e54adcaa60f58371c9ff1fded0d30b0 100644
+--- a/doc/submit.txt
++++ b/doc/submit.txt
+@@ -13,7 +13,7 @@ An external CA helper has a few jobs:
+   * $CERTMONGER_REQ_PRINCIPAL -> Kerberos principal name subjectAltName values
+   * $CERTMONGER_REQ_IP_ADDRESS-> IP address subjectAltName values (since 0.78)
+   * $CERTMONGER_CA_PROFILE    -> requested enrollment profile/template/certtype
+-  * $CERTMONGER_CA_ISSUER     -> requested issuer for enrollment
++  * $CERTMONGER_CA_ISSUER     -> requested issuer for enrollment (since 0.79)
+   * $CERTMONGER_CSR           -> certificate signing request
+   * $CERTMONGER_CERTIFICATE   -> previously-issued certificate, if there is one
+   * $CERTMONGER_CA_NICKNAME   -> nickname of CA (since 0.73)
+-- 
+2.9.0
+

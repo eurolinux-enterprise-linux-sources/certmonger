@@ -1,0 +1,29 @@
+From c4b456b2c7515fd896d2806d70f3ebc86c7a85ac Mon Sep 17 00:00:00 2001
+From: Rob Crittenden <rcritten@redhat.com>
+Date: Mon, 5 Mar 2018 10:18:38 -0500
+Subject: [PATCH] Set all bits to 1 in local CA Basic Constraint to set TRUE
+
+This was previously using the value of 1 which OpenSSL didn't
+have an issue with but NSS is stricter when it comes to DER
+encoding. Section 11.1 in X.690 requires that DER boolean set
+all bits to 1 to indicate TRUE.
+---
+ src/local.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/local.c b/src/local.c
+index 8450c9b5..48a9e360 100644
+--- a/src/local.c
++++ b/src/local.c
+@@ -85,7 +85,7 @@ set_ca_extensions(void *parent, X509_REQ *req, EVP_PKEY *key)
+ 	exts = sk_X509_EXTENSION_new(NULL);
+ 
+ 	memset(&basic, 0, sizeof(basic));
+-	basic.ca = 1;
++	basic.ca = 255; // set all bits for TRUE
+ 	X509V3_add1_i2d(&exts, NID_basic_constraints, &basic, TRUE, 0);
+ 
+ 	len = i2d_PUBKEY(key, NULL);
+-- 
+2.13.6
+

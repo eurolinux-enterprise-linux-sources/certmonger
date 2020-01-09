@@ -1,0 +1,251 @@
+This is modeled after the NetworkManager API, which seems to expose quite a
+bit to unprivileged processes running on the desktop.
+http://people.redhat.com/dcbw/NetworkManager/NetworkManager%20DBUS%20API.txt
+
+Despite efforts, this may not match introspection data and the implementation,
+since they're only kept in agreement manually.  These may not all be
+implemented yet, but if you find a piece you need, please add a ticket or a
+patch to do so.  Eventually we'll get it all.
+
+The D-Bus API:
+o service name = org.fedorahosted.certmonger
+o object layout
+
+  /org/fedorahosted/certmonger
+  interface=org.fedorahosted.certmonger
+  - find_request_by_nickname
+    arguments: nickname -> string of request's nickname
+    returns: path -> object path for request, if found
+  - get_requests
+    returns: array of paths -> object paths for requests
+  - get_supported_key_types
+    returns: array of string -> "RSA"
+  - get_supported_key_storage
+    returns: array of string -> "NSSDB", "FILE"
+  - get_supported_cert_storage
+    returns: array of string -> "NSSDB", "FILE"
+  - add_request
+    arguments: [dict{string,variant{string/path/array-of-string/number/boolean}}]
+               {"NICKNAME"("nickname"),string}
+               {"KEY_TYPE"("key-type"),"RSA"/"DSA"/"EC"}
+               {"KEY_SIZE"("key-size"),integer}
+               {"KEY_STORAGE"("key-storage"),"NSSDB"/"FILE"/"NONE"}*
+               {"KEY_LOCATION"("key-file"/"key-database"),string}*
+               {"KEY_NICKNAME"("key-nickname"),string}
+               {"KEY_TOKEN"("key-token"),string}
+               {"KEY_PIN"("key-pin"),string}
+               {"KEY_PIN_FILE"("key-pin-file"),string}
+               {"CERT_STORAGE"("cert-storage"),"NSSDB"/"FILE"}*
+               {"CERT_LOCATION"("cert-file"/"cert-database"),string}*
+               {"CERT_NICKNAME"("cert-nickname"),string}
+               {"CERT_TOKEN"("cert-token"),string}
+               {"TRACK"("monitoring"),boolean}
+               {"RENEW"("autorenew"),boolean}
+               {"SUBJECT"("template-subject"),string}
+               {"KU"("template-ku"),string (bit field)}
+               {"EKU"("template-eku"),array-of-string (oids)}
+               {"PRINCIPAL"("template-principal"),array-of-string (principal names)}
+               {"DNS"("template-hostname"),array-of-string (dns names)}
+               {"EMAIL"("template-email"),array-of-string (email addresses)}
+               {"CA"("ca"),path (known CA to use)}
+               {("ca-profile"),string (known CA profile to use)}
+               {("template-ip-address"),array-of-string (IP addresses in text form)} (since 0.75)
+               {("template-is-ca"),boolean}
+               {("template-ca-path-length"),integer}
+               {("template-ocsp"),array-of-string (ocsp responder URIs)}
+               {("template-crldp"),array-of-string (CRL distribution point URIs)}
+               {("template-ns-comment"),string (Netscape comment)}
+               {("template-profile"),string (certificate profile)}
+               {("template-challenge-password"),string (password to add to CSR)}
+               {("template-challenge-password-file"),string (password file)
+               {("cert-presave-command"),string}
+               {("cert-postsave-command"),string}
+               * = required values
+    returns: boolean -> succeeded
+             path (optional) -> object path for new request
+  - remove_request
+    arguments: path -> object path for request
+    returns: boolean -> succeeded
+  - find_ca_by_nickname
+    arguments: nickname -> string of ca's nickname
+    returns: path -> object path for ca, if found
+  - get_known_cas
+    returns: array of path -> object paths for known cas
+  - add_known_ca
+    arguments: string -> ca nickname
+               string -> external helper command
+               array of string (optional) -> known issuer names used by ca
+    returns: boolean -> succeeded
+  - remove_known_ca
+    arguments: path -> object path for ca
+    returns: boolean -> succeeded
+
+  (objects whose names are returned by "get-requests" or "get-defaults")
+  interface=org.fedorahosted.certmonger.request
+  - get_nickname ("nickname" property)
+    returns: string
+  - get_status ("status"/"stuck" property pair)
+    returns: string -> state name
+             boolean -> i-am-stuck
+  - get_key_type_and_size ("key-type"/"key-size" property pair)
+    returns: string -> key algorithm
+             number -> key size
+  - get_key_storage_info ("key-storage"/"key-file"/"key-database"/"key-nickname"/"key-token" property set)
+    returns: string -> "file", "nssdb"
+             string(required for "nssdb" or "file") -> filename (for "file"), or directory (for "nssdb")
+             string(required for "nssdb") -> nssdb nickname
+             string(optional) -> nssdb token name
+  - get_cert_storage_info ("key-storage"/"key-file"/"key-database"/"key-nickname"/"key-token" property set)
+    returns: string -> "file", "nssdb"
+             string -> filename (for "file"), or directory (for "nssdb")
+             string(required for "nssdb") -> nssdb nickname
+             string(optional) -> nssdb token name
+  - get_cert_data ("cert" property)
+    returns: string -> certificate in PEM format
+  - get_cert_info ("issuer"/"serial"/"subject"/"email"/"hostname"/"principal"/"eku" property set)
+    returns: string -> issuer
+             string -> serial number
+             string -> subject
+             number -> expiration (unix time)
+             array of string -> email addresses
+             array of string -> dns names
+             array of string -> principal names
+             number -> key usage as bitfield based on RFC5280's values
+             array of string -> oid values
+  - get_monitoring ("monitoring" property)
+    returns: boolean -> enabled?
+  - get_cert_last_checked ("last-checked" property)
+    returns: number -> time of last check for expiration (unix time)
+  - get_notification_info ("notification-type"/"notification-syslog-priority"/"notification-email" property set)
+    returns: string -> method ("syslog", "email")
+             string -> destination (log level or recipient)
+  - get_autorenew ("autorenew" property)
+    returns: boolean -> enabled?
+  - get_csr_info ("template-subject"/"template-email"/"template-hostname"/"template-principal"/"template-eku" property set)
+    returns: string -> subject
+             array of string -> email addresses
+             array of string -> dns names
+             array of string -> principal names
+             number -> key usage as bitfield based on RFC5280's values
+             array of string -> oid values
+  - get_key_pin ("key-pin" property)
+    returns: string -> key storage PIN
+  - get_key_pin_file ("key-pin-file" property)
+    returns: string -> path of file containing key storage PIN
+  - get_csr_data ("csr" property)
+    returns: string -> signing request in PEM format
+  - get_ca ("ca" property)
+    returns: path(optional) -> path to CA object
+  - get_submitted_date ("submitted-date" property)
+    returns: number(optional) -> time of last submission to a CA (as time_t)
+  - get_submitted_cookie ("ca-cookie" property)
+    returns: string(optional) -> CA-specific value
+  - get_ca_error ("ca-error" property)
+    returns: text(optional) -> error text sent by the CA
+  - modify
+    arguments: [dict{string,variant{string/path/array-of-string/number/boolean}}]
+               {"NICKNAME"("nickname"),string}
+               {"CA"("ca"),path (known CA to use)}
+               {("ca-profile"),string (known CA profile to use)}
+               {"TRACK"("monitoring"),boolean}
+               {"RENEW"("autorenew"),boolean}
+               {"SUBJECT"("template-subject"),string}
+               {"KEY_PIN"("key-pin"),string}
+               {"KEY_PIN_FILE"("key-pin-file"),string}
+               {"KU"("template-ku"),string (bit field)}
+               {"EKU"("template-eku"),array-of-string (oids)}
+               {"PRINCIPAL"("template-principal"),array-of-string (principal names)}
+               {"DNS"("template-hostname"),array-of-string (dns names)}
+               {"EMAIL"("template-email"),array-of-string (email addresses)}
+               {("template-ip-address"),array-of-string (IP addresses in text form)} (since 0.75)
+               {("template-is-ca"),boolean}
+               {("template-ca-path-length"),integer}
+               {("template-ocsp"),array-of-string (ocsp responder URIs)}
+               {("template-crldp"),array-of-string (CRL distribution point URIs)}
+               {("template-ns-comment"),string (Netscape comment)}
+               {("template-profile"),string (certificate profile)}
+               {("template-challenge-password"),string (password to add to CSR)}
+               {("template-challenge-password-file"),string (password file)
+               {("cert-presave-command"),string}
+               {("cert-postsave-command"),string}
+    - nickname for request
+      argument: string -> new ID
+    - pin for key storage
+      argument: string -> PIN used for key storage
+    - pin file for key storage
+      argument: string -> name of file containing PIN used for key storage
+    - requested subject name
+      argument: string -> requested subject
+    - requested subject alternative name(s): email
+      argument: array of string -> new requested addresses
+    - requested subject alternative name(s): dnsname
+      argument: array of string -> new requested hostnames
+    - requested subject alternative name(s): principalname
+      argument: array of string -> new requested principal names
+    - requested new key usage
+      argument: number -> key usage as bitfield based on RFC5280's values
+    - requested new extended key usage
+      argument: array of string -> requested OIDs
+    - known-ca to use
+      argument: path -> object path of CA
+    returns: boolean -> ok
+             path    -> object path, in case it changed
+  - refresh
+    returns: boolean -> in progress
+  - resubmit (for requests that have been denied, generates a new csr)
+    returns: boolean -> working-on-it
+
+  (objects whose names are returned by "get-known-cas")
+  interface=org.fedorahosted.certmonger.ca
+  - get_nickname ("nickname" property)
+    returns: string
+  - get_is_default ("is-default" property)
+    returns: boolean -> is-the-default-ca
+  - get_type
+    returns: string -> "EXTERNAL" if this is implemented by an external helper
+  - get_location
+    returns: string -> path to external helper
+  - get_serial
+    returns: string -> hex value (optional)
+  - get_issuer_names ("issuer-names" property)
+    returns: array of string (optional) -> set of known issuer names
+  - modify
+    - nickname
+      arguments: string -> name of ca
+      returns: boolean -> changed?
+    - is-default
+      arguments: boolean -> should-be-the-default-ca
+      returns: boolean -> is-the-default-ca
+    - helper-location
+      arguments: string -> path to external helper
+      returns: boolean -> changed?
+    - associated issuer names (for when we have to guess which CA to use)
+      arguments: array of string (optional) -> set of issuer names
+  - refresh
+    returns: boolean -> in progress
+
+Marshallers needed:
+Arguments:
+	string
+	path
+	string,string,string,array-of-string
+	string,string
+	boolean
+	array-of-string
+	dict{string,variant{string/array-of-string/number/boolean}}
+Return:
+	boolean
+	number
+	string
+	path
+	boolean,string
+	boolean,path
+	string,boolean
+	string,number
+	string,string
+	array-of-path
+	array-of-string
+	string,string,string
+	string,string,string,string
+	string,string,string,array-of-string
+	string,string,string,number,array-of-string,array-of-string,array-of-string,number,array-of-string

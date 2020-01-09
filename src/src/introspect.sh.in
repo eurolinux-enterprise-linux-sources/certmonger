@@ -1,0 +1,17 @@
+#!/bin/sh -x
+if test -n "$@CERTMONGER_PVT_ADDRESS_ENV@" ; then
+	address=--address="$@CERTMONGER_PVT_ADDRESS_ENV@"
+else
+	address="--system --dest=@CM_DBUS_NAME@"
+fi
+for object in "$@" ; do
+	case "$object" in
+	--*)
+		address="$object"
+		object=
+		;;
+	*)
+		dbus-send $address --print-reply "${object:-/}" org.freedesktop.DBus.Introspectable.Introspect
+		;;
+	esac
+done
