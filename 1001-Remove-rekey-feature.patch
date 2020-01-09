@@ -1,4 +1,4 @@
-From 3c763332adc224d0e325502cb3e5b97d4155bb0c Mon Sep 17 00:00:00 2001
+From c47a439f510adffe4e2225408261d0e93059e077 Mon Sep 17 00:00:00 2001
 From: Jan Cholasta <jcholast@redhat.com>
 Date: Fri, 7 Aug 2015 13:40:41 +0200
 Subject: [PATCH] Remove rekey feature
@@ -20,7 +20,7 @@ https://bugzilla.redhat.com/show_bug.cgi?id=1250397
  12 files changed, 23 insertions(+), 113 deletions(-)
 
 diff --git a/src/certmonger-scep-submit.8.in b/src/certmonger-scep-submit.8.in
-index 7319c6a..31203c3 100644
+index 7319c6a42c090420eb035515d94fd0640d990dda..31203c37fde407d2306de9d7f5aba9d3541eaaa3 100644
 --- a/src/certmonger-scep-submit.8.in
 +++ b/src/certmonger-scep-submit.8.in
 @@ -80,14 +80,6 @@ When called with the \fB-c\fR or \fB-C\fR flag, this option can be used to
@@ -39,7 +39,7 @@ index 7319c6a..31203c3 100644
  Increases the logging level.  Use twice for more logging.  This option
  is mainly useful for troubleshooting.
 diff --git a/src/certmonger.conf.5.in b/src/certmonger.conf.5.in
-index 241f48b..e1220f1 100644
+index 241f48b07b5045708aa118663b569d5ac3947782..e1220f134c30e760af73fb0abc88a498e94f23d2 100644
 --- a/src/certmonger.conf.5.in
 +++ b/src/certmonger.conf.5.in
 @@ -72,25 +72,6 @@ These are the trust attributes which are applied to certificates which are not
@@ -69,7 +69,7 @@ index 241f48b..e1220f1 100644
  Within the \fIselfsign\fR section, these variables and values are recognized:
  
 diff --git a/src/getcert-add-scep-ca.1.in b/src/getcert-add-scep-ca.1.in
-index f07b900..64f0f5e 100644
+index f07b9002a206526ea7f0334f5ba0071d8fffd3ae..64f0f5e80cd0fa3ae01fcf27828f97935dfb99c7 100644
 --- a/src/getcert-add-scep-ca.1.in
 +++ b/src/getcert-add-scep-ca.1.in
 @@ -46,14 +46,6 @@ A CA identifier value which will passed to the server when the
@@ -88,10 +88,10 @@ index f07b900..64f0f5e 100644
  Be verbose about errors.  Normally, the details of an error received from
  the daemon will be suppressed if the client can make a diagnostic suggestion.
 diff --git a/src/getcert.c b/src/getcert.c
-index 26a88f3..966ff41 100644
+index c84273a9bfc8730422f18ade87ce174fbbc44634..dcdbdd455dd8c61c1aeaad6a5c7feef21b56feab 100644
 --- a/src/getcert.c
 +++ b/src/getcert.c
-@@ -4663,7 +4663,6 @@ static struct {
+@@ -4625,7 +4625,6 @@ static struct {
  	{"start-tracking", start_tracking},
  	{"stop-tracking", stop_tracking},
  	{"resubmit", resubmit},
@@ -99,7 +99,7 @@ index 26a88f3..966ff41 100644
  	{"refresh", refresh},
  	{"list", list},
  	{"status", status},
-@@ -5087,8 +5086,6 @@ help(const char *twopartcmd, const char *category)
+@@ -5041,8 +5040,6 @@ help(const char *twopartcmd, const char *category)
  		 N_("stop monitoring a certificate\n")},
  		{"resubmit", resubmit_help,
  		 N_("resubmit an in-progress enrollment request, or start a new one\n")},
@@ -109,7 +109,7 @@ index 26a88f3..966ff41 100644
  		 N_("check on the status of an in-progress enrollment request\n")},
  		{"list", list_help,
 diff --git a/src/prefs.c b/src/prefs.c
-index ab363bb..0a8e166 100644
+index ab363bbc2c08f834e7fc1bede8f1cf2c50229f1c..0a8e166ce30f3b0288cd7430568ae18d0e5ab914 100644
 --- a/src/prefs.c
 +++ b/src/prefs.c
 @@ -545,36 +545,11 @@ cm_prefs_nss_other_trust(void)
@@ -151,7 +151,7 @@ index ab363bb..0a8e166 100644
 +	return -1;
  }
 diff --git a/src/scep.c b/src/scep.c
-index d3bbc05..11f9ae3 100644
+index d3bbc050947a1a0472187503110682c9028f9c6f..11f9ae3cc193981d3c2bf986a4a5c4c7d81506f5 100644
 --- a/src/scep.c
 +++ b/src/scep.c
 @@ -231,7 +231,6 @@ main(int argc, const char **argv)
@@ -181,7 +181,7 @@ index d3bbc05..11f9ae3 100644
  		} else
  		if (strcasecmp(mode, CM_OP_FETCH_SCEP_CA_CERTS) == 0) {
 diff --git a/src/submit-e.c b/src/submit-e.c
-index befd01e..af05efe 100644
+index befd01e0fd00b8f9e239752ffbd80c985fae5057..af05efeb762933e31fecc67b1204001b7e81c697 100644
 --- a/src/submit-e.c
 +++ b/src/submit-e.c
 @@ -446,12 +446,6 @@ cm_submit_e_need_scep_messages(struct cm_submit_state *state)
@@ -198,14 +198,13 @@ index befd01e..af05efe 100644
  }
  
 diff --git a/src/tdbush.c b/src/tdbush.c
-index 7fb3d16..04fe57e 100644
+index 631da3ed2bbb1f6828d576760299ad51d7e41923..aec5e9d0a36a7cb5c035e1aefda04c2b32b1e100 100644
 --- a/src/tdbush.c
 +++ b/src/tdbush.c
-@@ -7164,14 +7164,6 @@ cm_tdbush_iface_request(void)
- 										     cm_tdbush_method_arg_out,
+@@ -7117,14 +7117,6 @@ cm_tdbush_iface_request(void)
  										     NULL))),
  								     NULL),
--				     make_interface_item(cm_tdbush_interface_method,
+ 				     make_interface_item(cm_tdbush_interface_method,
 -							 make_method("rekey",
 -								     request_rekey,
 -								     make_method_arg("working",
@@ -213,20 +212,21 @@ index 7fb3d16..04fe57e 100644
 -										     cm_tdbush_method_arg_out,
 -										     NULL),
 -								     NULL),
- 				     make_interface_item(cm_tdbush_interface_method,
+-				     make_interface_item(cm_tdbush_interface_method,
  							 make_method("resubmit",
  								     request_resubmit,
-@@ -7227,7 +7219,7 @@ cm_tdbush_iface_request(void)
+ 								     make_method_arg("working",
+@@ -7179,7 +7171,7 @@ cm_tdbush_iface_request(void)
  				     make_interface_item(cm_tdbush_interface_signal,
  							 make_signal(CM_DBUS_SIGNAL_REQUEST_CERT_SAVED,
  								     NULL),
--							 NULL)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
-+							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+-							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
++							 NULL)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
  	}
  	return ret;
  }
 diff --git a/tests/010-iterate/expected.out b/tests/010-iterate/expected.out
-index bd57a01..85d07b3 100644
+index bd57a01ba8725418978259018441f6a9a6672758..85d07b3baef83dbafd39c03888881cb665518733 100644
 --- a/tests/010-iterate/expected.out
 +++ b/tests/010-iterate/expected.out
 @@ -398,19 +398,15 @@ HAVE_CSR
@@ -255,10 +255,10 @@ index bd57a01..85d07b3 100644
  
  [Enroll until we notice we have no specified CA.]
 diff --git a/tests/028-dbus/expected.out b/tests/028-dbus/expected.out
-index 8a81a7f..4c33e9a 100644
+index 93cc4d184524c4b1aeba02a650c94d832462c236..26850efaedb966cd94ecd0db42d6adb378b47f37 100644
 --- a/tests/028-dbus/expected.out
 +++ b/tests/028-dbus/expected.out
-@@ -404,9 +404,6 @@ OK
+@@ -403,9 +403,6 @@ OK
     <arg name="status" type="b" direction="out"/>
     <arg name="path" type="o" direction="out"/>
    </method>
@@ -268,7 +268,7 @@ index 8a81a7f..4c33e9a 100644
    <method name="resubmit">
     <arg name="working" type="b" direction="out"/>
    </method>
-@@ -484,9 +481,6 @@ recently
+@@ -483,9 +480,6 @@ recently
  1 on /org/fedorahosted/certmonger/requests/Request2
  After setting template-eku to 1.2.3.4.5.6.7.8.9.10, we got dbus.Array([dbus.String(u'1.2.3.4.5.6.7.8.9.10')], signature=dbus.Signature('s'), variant_level=1)
  
@@ -279,7 +279,7 @@ index 8a81a7f..4c33e9a 100644
  1
  
 diff --git a/tests/036-getcert/expected.out b/tests/036-getcert/expected.out
-index c1a13c8..b6d1eaf 100644
+index c1a13c8e058e39285ee842b173356002da2fd0e6..b6d1eaf7c733e04d5b928e7a59edeca43a27a5ef 100644
 --- a/tests/036-getcert/expected.out
 +++ b/tests/036-getcert/expected.out
 @@ -11,20 +11,21 @@ certs:1
@@ -349,7 +349,7 @@ index c1a13c8..b6d1eaf 100644
  cert:1
  key:1
 diff --git a/tests/037-rekey2/expected.out b/tests/037-rekey2/expected.out
-index bd8cca7..62a1c74 100644
+index bd8cca7c3eedb5a02249f450451b651bb270ec24..62a1c746f86bb53fe79d1226ab9194825f7642d8 100644
 --- a/tests/037-rekey2/expected.out
 +++ b/tests/037-rekey2/expected.out
 @@ -112,7 +112,7 @@ MONITORING
@@ -370,5 +370,5 @@ index bd8cca7..62a1c74 100644
  -STOP-
  Test complete.
 -- 
-2.14.4
+2.7.4
 

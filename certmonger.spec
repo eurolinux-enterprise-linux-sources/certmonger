@@ -26,14 +26,14 @@
 
 Name:		certmonger
 Version:	0.78.4
-Release:	11%{?dist}
+Release:	3%{?dist}
 Summary:	Certificate status monitor and PKI enrollment client
 
 Group:		System Environment/Daemons
 License:	GPLv3+
-URL:		https://pagure.io/certmonger/
-Source0:	https://releases.pagure.org/certmonger/certmonger-%{version}.tar.gz
-Source1:	https://releases.pagure.org/released/certmonger/certmonger-%{version}.tar.gz.sig
+URL:		http://certmonger.fedorahosted.org
+Source0:	http://fedorahosted.org/released/certmonger/certmonger-%{version}.tar.gz
+Source1:	http://fedorahosted.org/released/certmonger/certmonger-%{version}.tar.gz.sig
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
 Patch0001:	0001-Stop-assuming-RSA-512-works.patch
@@ -45,23 +45,6 @@ Patch0006:	0006-ipa-submit-Retry-without-ca-on-OptionError.patch
 Patch0007:	0007-getcert-fix-a-potential-out-of-bounds.patch
 Patch0008:	0008-Document-the-X-option-in-the-ipa-submit-man-page.patch
 Patch0009:	0009-Fix-a-flakiness-in-the-028-dbus-test.patch
-Patch0010:	0010-Set-all-bits-to-1-in-local-CA-Basic-Constraint-to-se.patch
-Patch0011:	0011-Fix-conversions-of-bit-lengths-to-byte-lengths.patch
-Patch0012:	0012-Remove-trailing-CR-LF-when-reading-passwords-from-a-.patch
-Patch0013:	0013-Disable-the-10-iterate-tests-which-randomly-fail.patch
-Patch0014:	0014-MS-cert-template-add-D-Bus-property-and-storage.patch
-Patch0015:	0015-MS-cert-template-add-template-extension-to-CSR.patch
-Patch0016:	0016-MS-cert-template-add-option-to-command-line-programs.patch
-Patch0017:	0017-MS-cert-template-validate-argument.patch
-Patch0018:	0018-MS-cert-template-add-tests.patch
-Patch0019:	0019-Fix-C99-build-error-on-EL7-systems.patch
-Patch0020:	0020-If-stderr-is-not-a-tty-log-to-syslog-so-the-helpers-.patch
-Patch0021:	0021-On-PKCS-7-verify-failures-log-the-PKCS-7-file-fix-va.patch
-Patch0022:	0022-Allow-configuration-of-client-SCEP-algorithms.patch
-Patch0023:	0023-Updates-per-Feedback.patch
-Patch0024:	0024-Updated-tests.patch
-Patch0025:	0025-Add-cipher-and-digest-difference-messages.patch
-
 
 Patch1001:	1001-Remove-rekey-feature.patch
 Patch1002:	1002-Fix-CA-option-name-for-ipa-cert-request.patch
@@ -105,17 +88,9 @@ BuildRequires:	/usr/bin/which
 BuildRequires:	dbus-python
 #  for popt or popt-devel, depending on the build environment
 BuildRequires: /usr/include/popt.h
-BuildRequires:  autoconf
-BuildRequires:  automake
-BuildRequires:  pkgconfig
-BuildRequires:  libtool
-BuildRequires:	gettext-devel
 
 # we need a running system bus
 Requires:	dbus
-
-# for killall in post script
-Requires:      psmisc
 
 %if %{systemd}
 BuildRequires:	systemd-units
@@ -159,7 +134,6 @@ sed -i 's,^# chkconfig: - ,# chkconfig: 345 ,g' sysvinit/certmonger.in
 %endif
 
 %build
-autoreconf -i -f
 %configure \
 %if %{systemd}
 	--enable-systemd \
@@ -282,39 +256,6 @@ exit 0
 %endif
 
 %changelog
-* Tue Feb 12 2019 Rob Crittenden <rcritten@redhat.com> - 0.78.4-11
-- Increase SCEP spec compliance, set more secure default cipher and hash.
-  (#1533216)
-
-* Fri Aug 24 2018 Rob Crittenden <rcritten@redhat.com> - 0.78.4-10
-- Backport patches to add support for the MS Certificate Template V2
-  extension (#1622184)
-
-* Mon Aug 13 2018 Rob Crittenden <rcritten@redhat.com> - 0.78.4-9
-- Remove patch to pass _PROXY, _proxy, LANG and LC_* environment
-  variables to helpers. The root cause was a bug in IPA (#1596161)
-
-* Tue Jul 17 2018 Rob Crittenden <rcritten@redhat.com> - 0.78.4-8
-- Disable iterate-10 test which fails intermitently (#1596161)
-- Add BuildRequires for running autoreconf
-
-* Tue Jul 17 2018 Rob Crittenden <rcritten@redhat.com> - 0.78.4-7
-- Pass _PROXY, _proxy, LANG and LC_* environment variables to
-  helpers (#1596161)
-
-* Tue May 29 2018 Rob Crittenden <rcritten@redhat.com> - 0.78.4-6
-- Remove reference to unused patch
-
-* Mon May 21 2018 Rob Crittenden <rcritten@redhat.com> - 0.78.4-5
-- Add Requires on psmsic for killall in post script (#1458890)
-- upstream project migrated from fedorahosted.org to pagure.io (#1501723)
-- Strip CR/LF from passwords read from a file (#1545935)
-
-* Mon Mar  5 2018 Rob Crittenden <rcritten@redhat.com> - 0.78.4-4
-- Use required DER encoding when setting CA basic constraint (#1551635)
-- NSS 3.34 more strictly enforces length checking when verifying signatures
-  (#1551702)
-
 * Tue Sep  6 2016 Jan Cholasta <jcholast@redhat.com> - 0.78.4-3
 - Resolves: #1367683 getcert request command fails to use Sub CA using -X
   argument
