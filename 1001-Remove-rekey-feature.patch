@@ -1,4 +1,4 @@
-From f85876b61af0716c00a255be42c7b62fc3c83e3f Mon Sep 17 00:00:00 2001
+From 3c763332adc224d0e325502cb3e5b97d4155bb0c Mon Sep 17 00:00:00 2001
 From: Jan Cholasta <jcholast@redhat.com>
 Date: Fri, 7 Aug 2015 13:40:41 +0200
 Subject: [PATCH] Remove rekey feature
@@ -20,7 +20,7 @@ https://bugzilla.redhat.com/show_bug.cgi?id=1250397
  12 files changed, 23 insertions(+), 113 deletions(-)
 
 diff --git a/src/certmonger-scep-submit.8.in b/src/certmonger-scep-submit.8.in
-index 7319c6a42c090420eb035515d94fd0640d990dda..31203c37fde407d2306de9d7f5aba9d3541eaaa3 100644
+index 7319c6a..31203c3 100644
 --- a/src/certmonger-scep-submit.8.in
 +++ b/src/certmonger-scep-submit.8.in
 @@ -80,14 +80,6 @@ When called with the \fB-c\fR or \fB-C\fR flag, this option can be used to
@@ -39,7 +39,7 @@ index 7319c6a42c090420eb035515d94fd0640d990dda..31203c37fde407d2306de9d7f5aba9d3
  Increases the logging level.  Use twice for more logging.  This option
  is mainly useful for troubleshooting.
 diff --git a/src/certmonger.conf.5.in b/src/certmonger.conf.5.in
-index 241f48b07b5045708aa118663b569d5ac3947782..e1220f134c30e760af73fb0abc88a498e94f23d2 100644
+index 241f48b..e1220f1 100644
 --- a/src/certmonger.conf.5.in
 +++ b/src/certmonger.conf.5.in
 @@ -72,25 +72,6 @@ These are the trust attributes which are applied to certificates which are not
@@ -69,7 +69,7 @@ index 241f48b07b5045708aa118663b569d5ac3947782..e1220f134c30e760af73fb0abc88a498
  Within the \fIselfsign\fR section, these variables and values are recognized:
  
 diff --git a/src/getcert-add-scep-ca.1.in b/src/getcert-add-scep-ca.1.in
-index f07b9002a206526ea7f0334f5ba0071d8fffd3ae..64f0f5e80cd0fa3ae01fcf27828f97935dfb99c7 100644
+index f07b900..64f0f5e 100644
 --- a/src/getcert-add-scep-ca.1.in
 +++ b/src/getcert-add-scep-ca.1.in
 @@ -46,14 +46,6 @@ A CA identifier value which will passed to the server when the
@@ -88,10 +88,10 @@ index f07b9002a206526ea7f0334f5ba0071d8fffd3ae..64f0f5e80cd0fa3ae01fcf27828f9793
  Be verbose about errors.  Normally, the details of an error received from
  the daemon will be suppressed if the client can make a diagnostic suggestion.
 diff --git a/src/getcert.c b/src/getcert.c
-index 49840dd968a75929ef55c6b77966187f0c59fa78..1b7d5fc27c970178e310e9bb7e9abde3f6b7bbce 100644
+index 26a88f3..966ff41 100644
 --- a/src/getcert.c
 +++ b/src/getcert.c
-@@ -4595,7 +4595,6 @@ static struct {
+@@ -4663,7 +4663,6 @@ static struct {
  	{"start-tracking", start_tracking},
  	{"stop-tracking", stop_tracking},
  	{"resubmit", resubmit},
@@ -99,7 +99,7 @@ index 49840dd968a75929ef55c6b77966187f0c59fa78..1b7d5fc27c970178e310e9bb7e9abde3
  	{"refresh", refresh},
  	{"list", list},
  	{"status", status},
-@@ -5007,8 +5006,6 @@ help(const char *twopartcmd, const char *category)
+@@ -5087,8 +5086,6 @@ help(const char *twopartcmd, const char *category)
  		 N_("stop monitoring a certificate\n")},
  		{"resubmit", resubmit_help,
  		 N_("resubmit an in-progress enrollment request, or start a new one\n")},
@@ -109,7 +109,7 @@ index 49840dd968a75929ef55c6b77966187f0c59fa78..1b7d5fc27c970178e310e9bb7e9abde3
  		 N_("check on the status of an in-progress enrollment request\n")},
  		{"list", list_help,
 diff --git a/src/prefs.c b/src/prefs.c
-index ab363bbc2c08f834e7fc1bede8f1cf2c50229f1c..0a8e166ce30f3b0288cd7430568ae18d0e5ab914 100644
+index ab363bb..0a8e166 100644
 --- a/src/prefs.c
 +++ b/src/prefs.c
 @@ -545,36 +545,11 @@ cm_prefs_nss_other_trust(void)
@@ -151,7 +151,7 @@ index ab363bbc2c08f834e7fc1bede8f1cf2c50229f1c..0a8e166ce30f3b0288cd7430568ae18d
 +	return -1;
  }
 diff --git a/src/scep.c b/src/scep.c
-index d3bbc050947a1a0472187503110682c9028f9c6f..11f9ae3cc193981d3c2bf986a4a5c4c7d81506f5 100644
+index d3bbc05..11f9ae3 100644
 --- a/src/scep.c
 +++ b/src/scep.c
 @@ -231,7 +231,6 @@ main(int argc, const char **argv)
@@ -181,7 +181,7 @@ index d3bbc050947a1a0472187503110682c9028f9c6f..11f9ae3cc193981d3c2bf986a4a5c4c7
  		} else
  		if (strcasecmp(mode, CM_OP_FETCH_SCEP_CA_CERTS) == 0) {
 diff --git a/src/submit-e.c b/src/submit-e.c
-index 6997b436e42aa4f77c421040070ee2484467dea5..4d434f3ef1c87f9b5288a80d66006ea7baa9f643 100644
+index befd01e..af05efe 100644
 --- a/src/submit-e.c
 +++ b/src/submit-e.c
 @@ -446,12 +446,6 @@ cm_submit_e_need_scep_messages(struct cm_submit_state *state)
@@ -198,13 +198,14 @@ index 6997b436e42aa4f77c421040070ee2484467dea5..4d434f3ef1c87f9b5288a80d66006ea7
  }
  
 diff --git a/src/tdbush.c b/src/tdbush.c
-index 4660f80f26669d31b2629c543384fe95bbec1ea9..9a03674d7ba313129083f6f606e86ca4b3933186 100644
+index 7fb3d16..04fe57e 100644
 --- a/src/tdbush.c
 +++ b/src/tdbush.c
-@@ -7094,14 +7094,6 @@ cm_tdbush_iface_request(void)
+@@ -7164,14 +7164,6 @@ cm_tdbush_iface_request(void)
+ 										     cm_tdbush_method_arg_out,
  										     NULL))),
  								     NULL),
- 				     make_interface_item(cm_tdbush_interface_method,
+-				     make_interface_item(cm_tdbush_interface_method,
 -							 make_method("rekey",
 -								     request_rekey,
 -								     make_method_arg("working",
@@ -212,21 +213,20 @@ index 4660f80f26669d31b2629c543384fe95bbec1ea9..9a03674d7ba313129083f6f606e86ca4
 -										     cm_tdbush_method_arg_out,
 -										     NULL),
 -								     NULL),
--				     make_interface_item(cm_tdbush_interface_method,
+ 				     make_interface_item(cm_tdbush_interface_method,
  							 make_method("resubmit",
  								     request_resubmit,
- 								     make_method_arg("working",
-@@ -7156,7 +7148,7 @@ cm_tdbush_iface_request(void)
+@@ -7227,7 +7219,7 @@ cm_tdbush_iface_request(void)
  				     make_interface_item(cm_tdbush_interface_signal,
  							 make_signal(CM_DBUS_SIGNAL_REQUEST_CERT_SAVED,
  								     NULL),
--							 NULL)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
-+							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+-							 NULL)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
++							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
  	}
  	return ret;
  }
 diff --git a/tests/010-iterate/expected.out b/tests/010-iterate/expected.out
-index bd57a01ba8725418978259018441f6a9a6672758..85d07b3baef83dbafd39c03888881cb665518733 100644
+index bd57a01..85d07b3 100644
 --- a/tests/010-iterate/expected.out
 +++ b/tests/010-iterate/expected.out
 @@ -398,19 +398,15 @@ HAVE_CSR
@@ -255,10 +255,10 @@ index bd57a01ba8725418978259018441f6a9a6672758..85d07b3baef83dbafd39c03888881cb6
  
  [Enroll until we notice we have no specified CA.]
 diff --git a/tests/028-dbus/expected.out b/tests/028-dbus/expected.out
-index ba55dd5ce97c74475dbebb761c41dd2e64e64365..d8fb98bcf9950c9c21c48feac303dc0b46189ab7 100644
+index 8a81a7f..4c33e9a 100644
 --- a/tests/028-dbus/expected.out
 +++ b/tests/028-dbus/expected.out
-@@ -401,9 +401,6 @@ OK
+@@ -404,9 +404,6 @@ OK
     <arg name="status" type="b" direction="out"/>
     <arg name="path" type="o" direction="out"/>
    </method>
@@ -268,7 +268,7 @@ index ba55dd5ce97c74475dbebb761c41dd2e64e64365..d8fb98bcf9950c9c21c48feac303dc0b
    <method name="resubmit">
     <arg name="working" type="b" direction="out"/>
    </method>
-@@ -481,9 +478,6 @@ recently
+@@ -484,9 +481,6 @@ recently
  1 on /org/fedorahosted/certmonger/requests/Request2
  After setting template-eku to 1.2.3.4.5.6.7.8.9.10, we got dbus.Array([dbus.String(u'1.2.3.4.5.6.7.8.9.10')], signature=dbus.Signature('s'), variant_level=1)
  
@@ -279,7 +279,7 @@ index ba55dd5ce97c74475dbebb761c41dd2e64e64365..d8fb98bcf9950c9c21c48feac303dc0b
  1
  
 diff --git a/tests/036-getcert/expected.out b/tests/036-getcert/expected.out
-index c1a13c8e058e39285ee842b173356002da2fd0e6..b6d1eaf7c733e04d5b928e7a59edeca43a27a5ef 100644
+index c1a13c8..b6d1eaf 100644
 --- a/tests/036-getcert/expected.out
 +++ b/tests/036-getcert/expected.out
 @@ -11,20 +11,21 @@ certs:1
@@ -349,7 +349,7 @@ index c1a13c8e058e39285ee842b173356002da2fd0e6..b6d1eaf7c733e04d5b928e7a59edeca4
  cert:1
  key:1
 diff --git a/tests/037-rekey2/expected.out b/tests/037-rekey2/expected.out
-index bd8cca7c3eedb5a02249f450451b651bb270ec24..62a1c746f86bb53fe79d1226ab9194825f7642d8 100644
+index bd8cca7..62a1c74 100644
 --- a/tests/037-rekey2/expected.out
 +++ b/tests/037-rekey2/expected.out
 @@ -112,7 +112,7 @@ MONITORING
@@ -370,5 +370,5 @@ index bd8cca7c3eedb5a02249f450451b651bb270ec24..62a1c746f86bb53fe79d1226ab919482
  -STOP-
  Test complete.
 -- 
-2.4.3
+2.14.4
 

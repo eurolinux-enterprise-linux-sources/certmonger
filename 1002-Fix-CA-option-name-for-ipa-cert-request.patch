@@ -1,0 +1,38 @@
+From 6aca3545c847673a7bc3d5120378f896dc420a15 Mon Sep 17 00:00:00 2001
+From: Fraser Tweedale <ftweedal@redhat.com>
+Date: Thu, 18 Aug 2016 18:25:49 +1000
+Subject: [PATCH] Fix CA option name for ipa cert-request
+
+The cert-request option for specifying the issuer is 'cacn', but
+certmonger is sending 'ca'.  Use the correct option name.
+
+Part of: https://fedorahosted.org/certmonger/ticket/51
+---
+ src/ipa.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/ipa.c b/src/ipa.c
+index f8abe609a603b614067e56ebe9935472b647ed99..13ea4cadf108a86687ab3f689b1a4dd92e5f8339 100644
+--- a/src/ipa.c
++++ b/src/ipa.c
+@@ -369,7 +369,7 @@ submit:
+ 	}
+ 	/* Add the requested CA issuer named argument. */
+ 	if (issuer != NULL) {
+-		cm_submit_x_add_named_arg_s(ctx, "ca", issuer);
++		cm_submit_x_add_named_arg_s(ctx, "cacn", issuer);
+ 	}
+ 	/* Tell the server to add entries for a principal if one
+ 	 * doesn't exist yet. */
+@@ -389,7 +389,7 @@ submit:
+ 		case 3: /* invocation error - permanent */
+ 			if ((i == 3005) && (issuer != NULL)) {
+ 				/* Most likely the server didn't understand the
+-				 * "ca" argument.  At least, at this
++				 * "cacn" argument.  At least, at this
+ 				 * point.  Randomly dropping arguments is not
+ 				 * really an extensible solution, though. */
+ 				issuer = NULL;
+-- 
+2.7.4
+

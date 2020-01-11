@@ -1,0 +1,548 @@
+From 2187e205da4fb2fcfdc2d8b9e4a4117f849041f7 Mon Sep 17 00:00:00 2001
+From: Fraser Tweedale <ftweedal@redhat.com>
+Date: Fri, 3 Jun 2016 10:22:23 +1000
+Subject: [PATCH] Add 'issuer' request option for specifying issuer
+
+FreeIPA is implementing a 'lightweight CAs' feature where a single
+Dogtag instance can host multiple CAs.  Add the '--issuer' / '-X'
+getcert-request option for specifying a particular CA, and the
+'CERTMONGER_CA_ISSUER' environment variable for passing the value to
+submit helpers.  Also update the 'ipa-submit' helper to set the 'ca'
+argument if the environment variable is set.
+
+Reviewed-by: Nalin Dahyabhai <nalin@redhat.com>
+---
+ doc/api.txt                     |  2 ++
+ doc/submit.txt                  |  1 +
+ src/cadata.c                    |  1 +
+ src/getcert-request.1.in        |  3 +++
+ src/getcert-resubmit.1.in       |  3 +++
+ src/getcert-start-tracking.1.in |  3 +++
+ src/getcert.c                   | 44 ++++++++++++++++++++++++++++++++++++-----
+ src/ipa.c                       | 25 +++++++++++++++++------
+ src/store-files.c               |  9 +++++++++
+ src/store-int.h                 |  1 +
+ src/submit-e.c                  |  1 +
+ src/submit-e.h                  |  1 +
+ src/tdbus.h                     |  1 +
+ src/tdbush.c                    | 25 ++++++++++++++++++++++-
+ tests/028-dbus/expected.out     |  1 +
+ 15 files changed, 109 insertions(+), 12 deletions(-)
+
+diff --git a/doc/api.txt b/doc/api.txt
+index e11f944de5861663d742c8b91129f7b592e7f72c..31016bec004f0b7f00db4cb3baefd236d485dc85 100644
+--- a/doc/api.txt
++++ b/doc/api.txt
+@@ -56,6 +56,7 @@ o object layout
+                {("template-crldp"),array-of-string (CRL distribution point URIs)}
+                {("template-ns-comment"),string (Netscape comment)}
+                {("template-profile"),string (certificate profile)}
++               {("template-issuer"),string (requested issuer)}
+                {("template-challenge-password"),string (password to add to CSR)}
+                {("template-challenge-password-file"),string (password file)
+                {("cert-presave-command"),string}
+@@ -164,6 +165,7 @@ o object layout
+                {("template-crldp"),array-of-string (CRL distribution point URIs)}
+                {("template-ns-comment"),string (Netscape comment)}
+                {("template-profile"),string (certificate profile)}
++               {("template-issuer"),string (requested issuer)}
+                {("template-challenge-password"),string (password to add to CSR)}
+                {("template-challenge-password-file"),string (password file)
+                {("cert-presave-command"),string}
+diff --git a/doc/submit.txt b/doc/submit.txt
+index dbf5319dc29bd9adb4054d4e76e90f028bad5fa6..7444f88c078b7453ae350268482832485259348a 100644
+--- a/doc/submit.txt
++++ b/doc/submit.txt
+@@ -13,6 +13,7 @@ An external CA helper has a few jobs:
+   * $CERTMONGER_REQ_PRINCIPAL -> Kerberos principal name subjectAltName values
+   * $CERTMONGER_REQ_IP_ADDRESS-> IP address subjectAltName values (since 0.78)
+   * $CERTMONGER_CA_PROFILE    -> requested enrollment profile/template/certtype
++  * $CERTMONGER_CA_ISSUER     -> requested issuer for enrollment
+   * $CERTMONGER_CSR           -> certificate signing request
+   * $CERTMONGER_CERTIFICATE   -> previously-issued certificate, if there is one
+   * $CERTMONGER_CA_NICKNAME   -> nickname of CA (since 0.73)
+diff --git a/src/cadata.c b/src/cadata.c
+index 947b2e68d3e74abf688aebd48344bfbf964e5656..7861fe73104143d6a9135fcb50b3ead583b03bf7 100644
+--- a/src/cadata.c
++++ b/src/cadata.c
+@@ -50,6 +50,7 @@ const char *attribute_map[] = {
+ 	CM_SUBMIT_REQ_EMAIL_ENV, CM_DBUS_PROP_TEMPLATE_EMAIL,
+ 	CM_SUBMIT_REQ_IP_ADDRESS_ENV, CM_DBUS_PROP_TEMPLATE_IP_ADDRESS,
+ 	CM_SUBMIT_PROFILE_ENV, CM_DBUS_PROP_TEMPLATE_PROFILE,
++	CM_SUBMIT_ISSUER_ENV, CM_DBUS_PROP_TEMPLATE_ISSUER,
+ 	NULL,
+ };
+ 
+diff --git a/src/getcert-request.1.in b/src/getcert-request.1.in
+index f11f1ffa35ccb6eb3d6aeea149353f55d5266534..b6578dce4b06fd60f9e784ba5665489eb3dd3982 100644
+--- a/src/getcert-request.1.in
++++ b/src/getcert-request.1.in
+@@ -87,6 +87,9 @@ the CA should correspond to one listed by \fIgetcert list-cas\fR.
+ \fB\-T\fR NAME
+ Request a certificate using the named profile, template, or certtype,
+ from the specified CA.
++.TP
++\fB\-X\fR NAME
++Request a certificate using the named issuer from the specified CA.
+ 
+ .SH SIGNING REQUEST OPTIONS
+ 
+diff --git a/src/getcert-resubmit.1.in b/src/getcert-resubmit.1.in
+index ad31da9995194280d79c2ce6bb2311291d37072d..165940eab1e625ecd3db63a1cf0bd822ae6abf72 100644
+--- a/src/getcert-resubmit.1.in
++++ b/src/getcert-resubmit.1.in
+@@ -48,6 +48,9 @@ the CA should correspond to one listed by \fIgetcert list-cas\fR.
+ Request a certificate using the named profile, template, or certtype,
+ from the specified CA.
+ .TP
++\fB\-X\fR NAME
++Request a certificate using the named issuer from the specified CA.
++.TP
+ \fB\-I\fR NAME
+ Assign the specified nickname to this task, replacing the previous nickname.
+ 
+diff --git a/src/getcert-start-tracking.1.in b/src/getcert-start-tracking.1.in
+index 6cd24e77dd578662e4b18b8ae18dd26b6faa7122..a46f53578626bc62abaeb22e77500548c34ac3c0 100644
+--- a/src/getcert-start-tracking.1.in
++++ b/src/getcert-start-tracking.1.in
+@@ -85,6 +85,9 @@ useful in combination with \fB\-r\fR.
+ \fB\-T\fR NAME
+ Request a certificate using the named profile, template, or certtype,
+ from the specified CA.
++.TP
++\fB\-X\fR NAME
++Request a certificate using the named issuer from the specified CA.
+ 
+ .SH SIGNING REQUEST OPTIONS
+ If and when \fIcertmonger\fR attempts to obtain a new certificate to replace
+diff --git a/src/getcert.c b/src/getcert.c
+index 49840dd968a75929ef55c6b77966187f0c59fa78..cfa36fb1a7ea16c9c9bacc8f40360efa594b7830 100644
+--- a/src/getcert.c
++++ b/src/getcert.c
+@@ -691,7 +691,7 @@ request(const char *argv0, int argc, const char **argv)
+ 	char *pin = NULL, *pinfile = NULL, *cpass = NULL, *cpassfile = NULL;
+ 	int keysize = 0, auto_renew = 1, verbose = 0, ku = 0, kubit, c, i, j;
+ 	char *ca = DEFAULT_CA, *subject = NULL, **eku = NULL, *oid, *id = NULL;
+-	char *profile = NULL, kustring[16];
++	char *profile = NULL, *issuer = NULL, kustring[16];
+ 	char **principal = NULL, **dns = NULL, **email = NULL, **ipaddr = NULL;
+ 	char *key_owner = NULL, *key_perms = NULL;
+ 	char *cert_owner = NULL, *cert_perms = NULL;
+@@ -732,6 +732,7 @@ request(const char *argv0, int argc, const char **argv)
+ 		{"ca", 'c', POPT_ARG_STRING, &ca, 0, _("use the specified CA configuration rather than the default"), HELP_TYPE_NAME},
+ #endif
+ 		{"profile", 'T', POPT_ARG_STRING, NULL, 'T', _("ask the CA to process the request using the named profile or template"), HELP_TYPE_NAME},
++		{"issuer", 'X', POPT_ARG_STRING, NULL, 'X', _("ask the CA to process the request using the named issuer"), HELP_TYPE_NAME},
+ 		{"subject-name", 'N', POPT_ARG_STRING, NULL, 'N', _("set requested subject name (default: CN=<hostname>)"), HELP_TYPE_SUBJECT},
+ 		{"key-usage", 'u', POPT_ARG_STRING, NULL, 'u', _("set requested key usage value"), HELP_TYPE_KU},
+ 		{"extended-key-usage", 'U', POPT_ARG_STRING, NULL, 'U', _("set requested extended key usage OID"), HELP_TYPE_EKU},
+@@ -858,6 +859,9 @@ request(const char *argv0, int argc, const char **argv)
+ 		case 'T':
+ 			profile = talloc_strdup(globals.tctx, poptarg);
+ 			break;
++		case 'X':
++			issuer = talloc_strdup(globals.tctx, poptarg);
++			break;
+ 		case 'N':
+ 			subject = talloc_strdup(globals.tctx, poptarg);
+ 			break;
+@@ -1289,6 +1293,13 @@ request(const char *argv0, int argc, const char **argv)
+ 		params[i] = &param[i];
+ 		i++;
+ 	}
++	if (issuer != NULL) {
++		param[i].key = CM_DBUS_PROP_TEMPLATE_ISSUER;
++		param[i].value_type = cm_tdbusm_dict_s;
++		param[i].value.s = issuer;
++		params[i] = &param[i];
++		i++;
++	}
+ 	if (precommand != NULL) {
+ 		param[i].key = CM_DBUS_PROP_CERT_PRESAVE_COMMAND;
+ 		param[i].value_type = cm_tdbusm_dict_s;
+@@ -1480,7 +1491,7 @@ add_basic_request(enum cm_tdbus_type bus, char *id,
+ 		  char *key_perms, char *cert_perms,
+ 		  char *pin, char *pinfile,
+ 		  char *cpass, char *cpassfile,
+-		  char *ca, char *profile,
++		  char *ca, char *profile, char *issuer,
+ 		  char *precommand, char *postcommand,
+ 		  char **anchor_dbs, char **anchor_files,
+ 		  dbus_bool_t auto_renew_stop, int waitreq,
+@@ -1644,6 +1655,13 @@ add_basic_request(enum cm_tdbus_type bus, char *id,
+ 		params[i] = &param[i];
+ 		i++;
+ 	}
++	if (issuer != NULL) {
++		param[i].key = CM_DBUS_PROP_TEMPLATE_ISSUER;
++		param[i].value_type = cm_tdbusm_dict_s;
++		param[i].value.s = issuer;
++		params[i] = &param[i];
++		i++;
++	}
+ 	if (precommand != NULL) {
+ 		param[i].key = CM_DBUS_PROP_CERT_PRESAVE_COMMAND;
+ 		param[i].value_type = cm_tdbusm_dict_s;
+@@ -1726,7 +1744,7 @@ set_tracking(const char *argv0, const char *category,
+ 	char **anchor_dbs = NULL, **anchor_files = NULL;
+ 	char *id = NULL, *new_id = NULL, *new_request;
+ 	char *keyfile = NULL, *certfile = NULL, *ca = DEFAULT_CA;
+-	char *profile = NULL;
++	char *profile = NULL, *issuer = NULL;
+ 	char *pin = NULL, *pinfile = NULL, *cpass = NULL, *cpassfile = NULL;
+ 	char *key_owner = NULL, *key_perms = NULL;
+ 	char *cert_owner = NULL, *cert_perms = NULL;
+@@ -1767,6 +1785,7 @@ set_tracking(const char *argv0, const char *category,
+ 		{"ca", 'c', POPT_ARG_STRING, &ca, 0, _("use the specified CA configuration rather than the default"), HELP_TYPE_NAME},
+ #endif
+ 		{"profile", 'T', POPT_ARG_STRING, NULL, 'T', _("ask the CA to process the request using the named profile or template"), HELP_TYPE_NAME},
++		{"issuer", 'X', POPT_ARG_STRING, NULL, 'X', _("ask the CA to process the request using the named issuer"), HELP_TYPE_NAME},
+ 		{"key-usage", 'u', POPT_ARG_STRING, NULL, 'u', _("override requested key usage value"), HELP_TYPE_KU},
+ 		{"extended-key-usage", 'U', POPT_ARG_STRING, NULL, 'U', _("override requested extended key usage OID"), HELP_TYPE_EKU},
+ 		{"principal", 'K', POPT_ARG_STRING, NULL, 'K', _("override requested principal name"), HELP_TYPE_PRINCIPAL},
+@@ -2291,7 +2310,7 @@ set_tracking(const char *argv0, const char *category,
+ 						 key_perms, cert_perms,
+ 						 pin, pinfile,
+ 						 cpass, cpassfile,
+-						 ca, profile,
++						 ca, profile, issuer,
+ 						 precommand, postcommand,
+ 						 anchor_dbs, anchor_files,
+ 						 (auto_renew_stop > 0),
+@@ -2366,7 +2385,7 @@ rekey_or_resubmit(const char *argv0, const char *category, int argc,
+ 	char *id = NULL, *new_id = NULL, *ca = NULL, *new_request, *nss_scheme;
+ 	char *subject = NULL, **eku = NULL, *oid = NULL;
+ 	char **principal = NULL, **dns = NULL, **email = NULL, **ipaddr = NULL;
+-	char *profile = NULL, kustring[16];
++	char *profile = NULL, *issuer = NULL, kustring[16];
+ 	char *key_owner = NULL, *key_perms = NULL;
+ 	char *cert_owner = NULL, *cert_perms = NULL;
+ 	char *keytype = NULL;
+@@ -2403,6 +2422,7 @@ rekey_or_resubmit(const char *argv0, const char *category, int argc,
+ 		{"ca", 'c', POPT_ARG_STRING, &ca, 0, _("use the specified CA configuration rather than the current one"), HELP_TYPE_NAME},
+ #endif
+ 		{"profile", 'T', POPT_ARG_STRING, NULL, 'T', _("ask the CA to process the request using the named profile or template"), HELP_TYPE_NAME},
++		{"issuer", 'X', POPT_ARG_STRING, NULL, 'X', _("ask the CA to process the request using the named issuer"), HELP_TYPE_NAME},
+ 		{"subject-name", 'N', POPT_ARG_STRING, NULL, 'N', _("set requested subject name (default: CN=<hostname>)"), HELP_TYPE_SUBJECT},
+ 		{"key-usage", 'u', POPT_ARG_STRING, NULL, 'u', _("set requested key usage value"), HELP_TYPE_KU},
+ 		{"extended-key-usage", 'U', POPT_ARG_STRING, NULL, 'U', _("set requested extended key usage OID"), HELP_TYPE_EKU},
+@@ -2477,6 +2497,9 @@ rekey_or_resubmit(const char *argv0, const char *category, int argc,
+ 		case 'T':
+ 			profile = talloc_strdup(globals.tctx, poptarg);
+ 			break;
++		case 'X':
++			issuer = talloc_strdup(globals.tctx, poptarg);
++			break;
+ 		case 'i':
+ 			id = talloc_strdup(globals.tctx, poptarg);
+ 			break;
+@@ -2838,6 +2861,13 @@ rekey_or_resubmit(const char *argv0, const char *category, int argc,
+ 		params[i] = &param[i];
+ 		i++;
+ 	}
++	if (issuer != NULL) {
++		param[i].key = CM_DBUS_PROP_TEMPLATE_ISSUER;
++		param[i].value_type = cm_tdbusm_dict_s;
++		param[i].value.s = issuer;
++		params[i] = &param[i];
++		i++;
++	}
+ 	if (precommand != NULL) {
+ 		param[i].key = CM_DBUS_PROP_CERT_PRESAVE_COMMAND;
+ 		param[i].value_type = cm_tdbusm_dict_s;
+@@ -4647,6 +4677,7 @@ help(const char *twopartcmd, const char *category)
+ 		N_("  -c CA		use the specified CA rather than the default\n"),
+ #endif
+ 		N_("  -T PROFILE	ask the CA to process the request using the named profile or template\n"),
++		N_("  -X ISSUER	ask the CA to process the request using the named issuer\n"),
+ 		N_("* Parameters for the signing request:\n"),
+ 		N_("  -N NAME	set requested subject name (default: CN=<hostname>)\n"),
+ 		N_("  -U EXTUSAGE	set requested extended key usage OID\n"),
+@@ -4695,6 +4726,7 @@ help(const char *twopartcmd, const char *category)
+ 		N_("  -c CA		use the specified CA rather than the default\n"),
+ #endif
+ 		N_("  -T PROFILE	ask the CA to process the request using the named profile or template\n"),
++		N_("  -X ISSUER	ask the CA to process the request using the named issuer\n"),
+ 		N_("* Parameters for the signing request at renewal time:\n"),
+ 		N_("  -U EXTUSAGE	override requested extended key usage OID\n"),
+ 		N_("  -u KEYUSAGE	set requested key usage value\n"),
+@@ -4773,6 +4805,7 @@ help(const char *twopartcmd, const char *category)
+ 		N_("  -c CA		use the specified CA rather than the current one\n"),
+ #endif
+ 		N_("  -T PROFILE	ask the CA to process the request using the named profile or template\n"),
++		N_("  -X ISSUER	ask the CA to process the request using the named issuer\n"),
+ 		N_("* Bus options:\n"),
+ 		N_("  -S		connect to the certmonger service on the system bus\n"),
+ 		N_("  -s		connect to the certmonger service on the session bus\n"),
+@@ -4820,6 +4853,7 @@ help(const char *twopartcmd, const char *category)
+ 		N_("  -c CA		use the specified CA rather than the current one\n"),
+ #endif
+ 		N_("  -T PROFILE	ask the CA to process the request using the named profile or template\n"),
++		N_("  -X ISSUER	ask the CA to process the request using the named issuer\n"),
+ 		N_("  -G TYPE	type of new key to be generated\n"),
+ 		N_("  -g SIZE	size of new key to be generated\n"),
+ 		N_("* Bus options:\n"),
+diff --git a/src/ipa.c b/src/ipa.c
+index 5236abb40246c270d1b14c5cfbc467dbd6e8f7a4..72cdda6b07ea5a4850fb404497196c46a6bbbd6d 100644
+--- a/src/ipa.c
++++ b/src/ipa.c
+@@ -332,7 +332,8 @@ cm_locate_xmlrpc_service(const char *server,
+ /* Make an XML-RPC request to the "cert_request" method. */
+ static int
+ submit_or_poll_uri(const char *uri, const char *cainfo, const char *capath,
+-	           const char *csr, const char *reqprinc, const char *profile)
++	           const char *csr, const char *reqprinc,
++		   const char *profile, const char *issuer)
+ {
+ 	struct cm_submit_x_context *ctx;
+ 	const char *args[2];
+@@ -366,6 +367,10 @@ submit:
+ 	if (profile != NULL) {
+ 		cm_submit_x_add_named_arg_s(ctx, "profile_id", profile);
+ 	}
++	/* Add the requested CA named argument. */
++	if (issuer != NULL) {
++		cm_submit_x_add_named_arg_s(ctx, "ca", issuer);
++	}
+ 	/* Tell the server to add entries for a principal if one
+ 	 * doesn't exist yet. */
+ 	cm_submit_x_add_named_arg_b(ctx, "add", 1);
+@@ -440,12 +445,14 @@ static int
+ submit_or_poll(const char *uri, const char *cainfo, const char *capath,
+ 	       const char *server, int ldap_uri_cmd, const char *ldap_uri,
+ 	       const char *host, const char *domain, char *basedn,
+-	       const char *csr, const char *reqprinc, const char *profile)
++	       const char *csr, const char *reqprinc,
++	       const char *profile, const char *issuer)
+ {
+ 	int i, u;
+ 	char **uris;
+ 
+-	i = submit_or_poll_uri(uri, cainfo, capath, csr, reqprinc, profile);
++	i = submit_or_poll_uri(uri, cainfo, capath, csr, reqprinc, profile,
++			       issuer);
+ 	if ((i == CM_SUBMIT_STATUS_UNREACHABLE) ||
+ 	    (i == CM_SUBMIT_STATUS_UNCONFIGURED)) {
+ 		u = cm_locate_xmlrpc_service(server, ldap_uri_cmd, ldap_uri,
+@@ -456,7 +463,8 @@ submit_or_poll(const char *uri, const char *cainfo, const char *capath,
+ 					continue;
+ 				}
+ 				i = submit_or_poll_uri(uris[u], cainfo, capath,
+-						       csr, reqprinc, profile);
++						       csr, reqprinc, profile,
++						       issuer);
+ 				if ((i != CM_SUBMIT_STATUS_UNREACHABLE) &&
+ 				    (i != CM_SUBMIT_STATUS_UNCONFIGURED)) {
+ 					talloc_free(uris);
+@@ -556,7 +564,7 @@ main(int argc, const char **argv)
+ 	const char *xmlrpc_uri = NULL, *ldap_uri = NULL, *server = NULL, *csrfile;
+ 	int xmlrpc_uri_cmd = 0, ldap_uri_cmd = 0, verbose = 0;
+ 	const char *mode = CM_OP_SUBMIT;
+-	char ldn[LINE_MAX], *basedn = NULL, *profile = NULL;
++	char ldn[LINE_MAX], *basedn = NULL, *profile = NULL, *issuer = NULL;
+ 	krb5_error_code kret;
+ 	poptContext pctx;
+ 	struct poptOption popts[] = {
+@@ -571,6 +579,7 @@ main(int argc, const char **argv)
+ 		{"use-ccache-creds", 'K', POPT_ARG_NONE, NULL, 'K', "use default ccache instead of creating a new one using keytab", NULL},
+ 		{"principal-of-request", 'P', POPT_ARG_STRING, &reqprinc, 0, "principal name in signing request", "PRINCIPAL"},
+ 		{"profile", 'T', POPT_ARG_STRING, &profile, 0, "request enrollment using the specified profile", "NAME"},
++		{"issuer", 'X', POPT_ARG_STRING, &issuer, 0, "request enrollment using the specified CA", "NAME"},
+ 		{"basedn", 'b', POPT_ARG_STRING, &basedn, 0, "IPA domain LDAP base DN", "DN"},
+ 		{"verbose", 'v', POPT_ARG_NONE, NULL, 'v', NULL, NULL},
+ 		POPT_AUTOHELP
+@@ -729,6 +738,10 @@ main(int argc, const char **argv)
+ 		    (getenv(CM_SUBMIT_PROFILE_ENV) != NULL)) {
+ 			profile = strdup(getenv(CM_SUBMIT_PROFILE_ENV));
+ 		}
++		if ((issuer == NULL) &&
++		    (getenv(CM_SUBMIT_ISSUER_ENV) != NULL)) {
++			issuer = strdup(getenv(CM_SUBMIT_ISSUER_ENV));
++		}
+ 		if ((server != NULL) && !xmlrpc_uri_cmd) {
+ 			snprintf(uri, sizeof(uri),
+ 				 "https://%s/ipa/xml", server);
+@@ -835,7 +848,7 @@ main(int argc, const char **argv)
+ 		return submit_or_poll(uri, cainfo, capath,
+ 				      server, ldap_uri_cmd, ldap_uri,
+ 				      host, domain, basedn,
+-				      csr, reqprinc, profile);
++				      csr, reqprinc, profile, issuer);
+ 	} else
+ 	if (strcasecmp(mode, CM_OP_FETCH_ROOTS) == 0) {
+ 		return fetch_roots(server, ldap_uri_cmd, ldap_uri, host,
+diff --git a/src/store-files.c b/src/store-files.c
+index 961d03b7d1724a2cdb1fc4a26d8f1e25e474824f..889829ca62a035a758288aac158cbe17b0fd9e6d 100644
+--- a/src/store-files.c
++++ b/src/store-files.c
+@@ -129,6 +129,7 @@ enum cm_store_file_field {
+ 	cm_store_entry_field_template_ocsp_location,
+ 	cm_store_entry_field_template_ns_comment,
+ 	cm_store_entry_field_template_profile,
++	cm_store_entry_field_template_issuer,
+ 	cm_store_entry_field_template_no_ocsp_check,
+ 	cm_store_entry_field_template_ns_certtype,
+ 
+@@ -303,6 +304,7 @@ static struct cm_store_file_field_list {
+ 	{cm_store_entry_field_template_ns_comment, "template_ns_comment"},
+ 	{cm_store_entry_field_template_profile, "template_profile"}, /* right */
+ 	{cm_store_entry_field_template_profile, "ca_profile"}, /* wrong */
++	{cm_store_entry_field_template_issuer, "template_issuer"},
+ 	{cm_store_entry_field_template_no_ocsp_check, "template_no_ocsp_check"},
+ 	{cm_store_entry_field_template_ns_certtype, "template_ns_certtype"},
+ 
+@@ -1127,6 +1129,9 @@ cm_store_entry_read(void *parent, const char *filename, FILE *fp)
+ 			case cm_store_entry_field_template_profile:
+ 				ret->cm_template_profile = free_if_empty(p);
+ 				break;
++			case cm_store_entry_field_template_issuer:
++				ret->cm_template_issuer = free_if_empty(p);
++				break;
+ 			case cm_store_entry_field_template_no_ocsp_check:
+ 				ret->cm_template_no_ocsp_check = atoi(p) != 0;
+ 				talloc_free(p);
+@@ -1370,6 +1375,7 @@ cm_store_ca_read(void *parent, const char *filename, FILE *fp)
+ 			case cm_store_entry_field_template_ocsp_location:
+ 			case cm_store_entry_field_template_ns_comment:
+ 			case cm_store_entry_field_template_profile:
++			case cm_store_entry_field_template_issuer:
+ 			case cm_store_entry_field_template_no_ocsp_check:
+ 			case cm_store_entry_field_template_ns_certtype:
+ 			case cm_store_entry_field_challenge_password:
+@@ -1972,6 +1978,8 @@ cm_store_entry_write(FILE *fp, struct cm_store_entry *entry)
+ 				entry->cm_template_ns_comment);
+ 	cm_store_file_write_str(fp, cm_store_entry_field_template_profile,
+ 				entry->cm_template_profile);
++	cm_store_file_write_str(fp, cm_store_entry_field_template_issuer,
++				entry->cm_template_issuer);
+ 	cm_store_file_write_int(fp, cm_store_entry_field_template_no_ocsp_check,
+ 				entry->cm_template_no_ocsp_check ? 1 : 0);
+ 	cm_store_file_write_str(fp, cm_store_entry_field_template_ns_certtype,
+@@ -2735,6 +2743,7 @@ cm_store_entry_dup(void *parent, struct cm_store_entry *entry)
+ 	ret->cm_template_ocsp_location = cm_store_maybe_strdupv(ret, entry->cm_template_ocsp_location);
+ 	ret->cm_template_ns_comment = cm_store_maybe_strdup(ret, entry->cm_template_ns_comment);
+ 	ret->cm_template_profile = cm_store_maybe_strdup(ret, entry->cm_template_profile);
++	ret->cm_template_issuer = cm_store_maybe_strdup(ret, entry->cm_template_issuer);
+ 	ret->cm_template_no_ocsp_check = entry->cm_template_no_ocsp_check;
+ 	ret->cm_template_ns_certtype = cm_store_maybe_strdup(ret,
+ 							     entry->cm_template_ns_certtype);
+diff --git a/src/store-int.h b/src/store-int.h
+index d7d3fc86306b103b0a90faef7396697743b9c8da..2d3a35387516c48ab81a6422e42d57d5741593f6 100644
+--- a/src/store-int.h
++++ b/src/store-int.h
+@@ -142,6 +142,7 @@ struct cm_store_entry {
+ 	char **cm_template_ocsp_location;
+ 	char *cm_template_ns_comment;
+ 	char *cm_template_profile;
++	char *cm_template_issuer;
+ 	char *cm_template_ns_certtype;
+ 	unsigned int cm_template_no_ocsp_check: 1;
+ 	/* A challenge password, which may be included (in cleartext form!) in
+diff --git a/src/submit-e.c b/src/submit-e.c
+index 6997b436e42aa4f77c421040070ee2484467dea5..befd01e0fd00b8f9e239752ffbd80c985fae5057 100644
+--- a/src/submit-e.c
++++ b/src/submit-e.c
+@@ -876,6 +876,7 @@ cm_submit_e_helper_main(int fd, struct cm_store_ca *ca,
+ 	maybe_setenv(CM_SUBMIT_COOKIE_ENV, entry->cm_ca_cookie);
+ 	maybe_setenv(CM_SUBMIT_CA_NICKNAME_ENV, entry->cm_ca_nickname);
+ 	maybe_setenv(CM_SUBMIT_PROFILE_ENV, entry->cm_template_profile);
++	maybe_setenv(CM_SUBMIT_ISSUER_ENV, entry->cm_template_issuer);
+ 	maybe_setenv(CM_SUBMIT_CERTIFICATE_ENV, entry->cm_cert);
+ 	/* Only pass SCEP data to the helper if we haven't used this set of
+ 	 * nonced data before.  It'll ask for fresh data if it needs it. */
+diff --git a/src/submit-e.h b/src/submit-e.h
+index 2e325cf7d36436b89287e9933db83a6d853abfd1..0148d4da07507a000d8e6e8aca98f2ed84669eca 100644
+--- a/src/submit-e.h
++++ b/src/submit-e.h
+@@ -48,6 +48,7 @@ const char *cm_submit_e_status_text(enum cm_external_status status);
+ #define CM_SUBMIT_COOKIE_ENV "CERTMONGER_CA_COOKIE"
+ #define CM_SUBMIT_CA_NICKNAME_ENV "CERTMONGER_CA_NICKNAME"
+ #define CM_SUBMIT_PROFILE_ENV "CERTMONGER_CA_PROFILE"
++#define CM_SUBMIT_ISSUER_ENV "CERTMONGER_CA_ISSUER"
+ #define CM_SUBMIT_CERTIFICATE_ENV "CERTMONGER_CERTIFICATE"
+ #define CM_SUBMIT_SCEP_CA_IDENTIFIER_ENV "CERTMONGER_SCEP_CA_IDENTIFIER"
+ #define CM_SUBMIT_SCEP_RA_CERTIFICATE_ENV "CERTMONGER_SCEP_RA_CERTIFICATE"
+diff --git a/src/tdbus.h b/src/tdbus.h
+index c9b3afeb59548c2dc1260cfd7c76b39327a42f89..496f2dd289a0bd9b4d66451ea5eb0acf83d0cf5f 100644
+--- a/src/tdbus.h
++++ b/src/tdbus.h
+@@ -108,6 +108,7 @@
+ #define CM_DBUS_PROP_TEMPLATE_FRESHEST_CRL "template-freshest-crl"
+ #define CM_DBUS_PROP_TEMPLATE_NS_COMMENT "template-ns-comment"
+ #define CM_DBUS_PROP_TEMPLATE_PROFILE "template-profile"
++#define CM_DBUS_PROP_TEMPLATE_ISSUER "template-issuer"
+ #define CM_DBUS_PROP_TEMPLATE_NS_CERTTYPE "template-ns-certtype"
+ #define CM_DBUS_SIGNAL_REQUEST_CERT_SAVED "SavedCertificate"
+ #define CM_DBUS_PROP_CA_PRESAVE_COMMAND "ca-presave-command"
+diff --git a/src/tdbush.c b/src/tdbush.c
+index 4660f80f26669d31b2629c543384fe95bbec1ea9..05a503e06a553c566dcff5e053cbd8aa16c20f14 100644
+--- a/src/tdbush.c
++++ b/src/tdbush.c
+@@ -1562,6 +1562,13 @@ base_add_request(DBusConnection *conn, DBusMessage *msg,
+ 							      param->value.s);
+ 	}
+ 	param = cm_tdbusm_find_dict_entry(d,
++					  CM_DBUS_PROP_TEMPLATE_ISSUER,
++					  cm_tdbusm_dict_s);
++	if (param != NULL) {
++		new_entry->cm_template_issuer = maybe_strdup(new_entry,
++							      param->value.s);
++	}
++	param = cm_tdbusm_find_dict_entry(d,
+ 					  CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD,
+ 					  cm_tdbusm_dict_s);
+ 	if ((param != NULL) &&
+@@ -3306,6 +3313,14 @@ request_modify(DBusConnection *conn, DBusMessage *msg,
+ 				}
+ 			} else
+ 			if ((param->value_type == cm_tdbusm_dict_s) &&
++			    (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_ISSUER) == 0)) {
++				talloc_free(entry->cm_template_issuer);
++				entry->cm_template_issuer = maybe_strdup(entry, param->value.s);
++				if (n_propname + 2 < sizeof(propname) / sizeof(propname[0])) {
++					propname[n_propname++] = CM_DBUS_PROP_TEMPLATE_ISSUER;
++				}
++			} else
++			if ((param->value_type == cm_tdbusm_dict_s) &&
+ 			    (strcasecmp(param->key, CM_DBUS_PROP_TEMPLATE_CHALLENGE_PASSWORD) == 0)) {
+ 				talloc_free(entry->cm_template_challenge_password);
+ 				entry->cm_template_challenge_password = maybe_strdup(entry,
+@@ -6712,6 +6727,14 @@ cm_tdbush_iface_request(void)
+ 								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 								       NULL),
+ 				     make_interface_item(cm_tdbush_interface_property,
++							 make_property(CM_DBUS_PROP_TEMPLATE_ISSUER,
++								       cm_tdbush_property_string,
++								       cm_tdbush_property_readwrite,
++								       cm_tdbush_property_char_p,
++								       offsetof(struct cm_store_entry, cm_template_issuer),
++								       NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++								       NULL),
++				     make_interface_item(cm_tdbush_interface_property,
+ 							 make_property(CM_DBUS_PROP_TEMPLATE_NS_CERTTYPE,
+ 								       cm_tdbush_property_string,
+ 								       cm_tdbush_property_readwrite,
+@@ -7156,7 +7179,7 @@ cm_tdbush_iface_request(void)
+ 				     make_interface_item(cm_tdbush_interface_signal,
+ 							 make_signal(CM_DBUS_SIGNAL_REQUEST_CERT_SAVED,
+ 								     NULL),
+-							 NULL)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
++							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+ 	}
+ 	return ret;
+ }
+diff --git a/tests/028-dbus/expected.out b/tests/028-dbus/expected.out
+index ba55dd5ce97c74475dbebb761c41dd2e64e64365..b2660317b3102373f2a5a877a7224f727929412c 100644
+--- a/tests/028-dbus/expected.out
++++ b/tests/028-dbus/expected.out
+@@ -328,6 +328,7 @@ OK
+   <property name="template-freshest-crl" type="as" access="readwrite"/>
+   <property name="template-ns-comment" type="s" access="readwrite"/>
+   <property name="template-profile" type="s" access="readwrite"/>
++  <property name="template-issuer" type="s" access="readwrite"/>
+   <property name="template-ns-certtype" type="s" access="readwrite"/>
+   <property name="template-challenge-password" type="s" access="readwrite"/>
+   <property name="template-challenge-password-file" type="s" access="readwrite"/>
+-- 
+2.9.0
+

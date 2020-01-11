@@ -1,0 +1,35 @@
+From 301e56c06192649bc33ddbda77ac55c0fb69f2a0 Mon Sep 17 00:00:00 2001
+From: Nalin Dahyabhai <nalin@redhat.com>
+Date: Tue, 14 Jun 2016 15:59:10 -0400
+Subject: [PATCH] ipa-submit: Retry without "ca" on OptionError
+
+Add a fallback for when the IPA server returns error 3005 ("OptionError")
+when we've tried to use the "ca" named argument in a request.  As we did
+with "profile_id" earlier, take a guess that it didn't understand the
+most recently-added option that we're setting, and retry without it set.
+---
+ src/ipa.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/src/ipa.c b/src/ipa.c
+index f2736c6f37948df902b65157480fc0c29ec58c3e..f8abe609a603b614067e56ebe9935472b647ed99 100644
+--- a/src/ipa.c
++++ b/src/ipa.c
+@@ -387,6 +387,14 @@ submit:
+ 		switch (i / 1000) {
+ 		case 2: /* authorization error - permanent */
+ 		case 3: /* invocation error - permanent */
++			if ((i == 3005) && (issuer != NULL)) {
++				/* Most likely the server didn't understand the
++				 * "ca" argument.  At least, at this
++				 * point.  Randomly dropping arguments is not
++				 * really an extensible solution, though. */
++				issuer = NULL;
++				goto submit;
++			}
+ 			if ((i == 3005) && (profile != NULL)) {
+ 				/* Most likely the server didn't understand the
+ 				 * "profile_id" argument.  At least, at this
+-- 
+2.9.0
+
