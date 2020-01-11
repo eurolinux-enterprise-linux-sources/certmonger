@@ -1,4 +1,4 @@
-From c47a439f510adffe4e2225408261d0e93059e077 Mon Sep 17 00:00:00 2001
+From f85876b61af0716c00a255be42c7b62fc3c83e3f Mon Sep 17 00:00:00 2001
 From: Jan Cholasta <jcholast@redhat.com>
 Date: Fri, 7 Aug 2015 13:40:41 +0200
 Subject: [PATCH] Remove rekey feature
@@ -88,10 +88,10 @@ index f07b9002a206526ea7f0334f5ba0071d8fffd3ae..64f0f5e80cd0fa3ae01fcf27828f9793
  Be verbose about errors.  Normally, the details of an error received from
  the daemon will be suppressed if the client can make a diagnostic suggestion.
 diff --git a/src/getcert.c b/src/getcert.c
-index c84273a9bfc8730422f18ade87ce174fbbc44634..dcdbdd455dd8c61c1aeaad6a5c7feef21b56feab 100644
+index 49840dd968a75929ef55c6b77966187f0c59fa78..1b7d5fc27c970178e310e9bb7e9abde3f6b7bbce 100644
 --- a/src/getcert.c
 +++ b/src/getcert.c
-@@ -4625,7 +4625,6 @@ static struct {
+@@ -4595,7 +4595,6 @@ static struct {
  	{"start-tracking", start_tracking},
  	{"stop-tracking", stop_tracking},
  	{"resubmit", resubmit},
@@ -99,7 +99,7 @@ index c84273a9bfc8730422f18ade87ce174fbbc44634..dcdbdd455dd8c61c1aeaad6a5c7feef2
  	{"refresh", refresh},
  	{"list", list},
  	{"status", status},
-@@ -5041,8 +5040,6 @@ help(const char *twopartcmd, const char *category)
+@@ -5007,8 +5006,6 @@ help(const char *twopartcmd, const char *category)
  		 N_("stop monitoring a certificate\n")},
  		{"resubmit", resubmit_help,
  		 N_("resubmit an in-progress enrollment request, or start a new one\n")},
@@ -181,7 +181,7 @@ index d3bbc050947a1a0472187503110682c9028f9c6f..11f9ae3cc193981d3c2bf986a4a5c4c7
  		} else
  		if (strcasecmp(mode, CM_OP_FETCH_SCEP_CA_CERTS) == 0) {
 diff --git a/src/submit-e.c b/src/submit-e.c
-index befd01e0fd00b8f9e239752ffbd80c985fae5057..af05efeb762933e31fecc67b1204001b7e81c697 100644
+index 6997b436e42aa4f77c421040070ee2484467dea5..4d434f3ef1c87f9b5288a80d66006ea7baa9f643 100644
 --- a/src/submit-e.c
 +++ b/src/submit-e.c
 @@ -446,12 +446,6 @@ cm_submit_e_need_scep_messages(struct cm_submit_state *state)
@@ -198,10 +198,10 @@ index befd01e0fd00b8f9e239752ffbd80c985fae5057..af05efeb762933e31fecc67b1204001b
  }
  
 diff --git a/src/tdbush.c b/src/tdbush.c
-index 631da3ed2bbb1f6828d576760299ad51d7e41923..aec5e9d0a36a7cb5c035e1aefda04c2b32b1e100 100644
+index 4660f80f26669d31b2629c543384fe95bbec1ea9..9a03674d7ba313129083f6f606e86ca4b3933186 100644
 --- a/src/tdbush.c
 +++ b/src/tdbush.c
-@@ -7117,14 +7117,6 @@ cm_tdbush_iface_request(void)
+@@ -7094,14 +7094,6 @@ cm_tdbush_iface_request(void)
  										     NULL))),
  								     NULL),
  				     make_interface_item(cm_tdbush_interface_method,
@@ -216,12 +216,12 @@ index 631da3ed2bbb1f6828d576760299ad51d7e41923..aec5e9d0a36a7cb5c035e1aefda04c2b
  							 make_method("resubmit",
  								     request_resubmit,
  								     make_method_arg("working",
-@@ -7179,7 +7171,7 @@ cm_tdbush_iface_request(void)
+@@ -7156,7 +7148,7 @@ cm_tdbush_iface_request(void)
  				     make_interface_item(cm_tdbush_interface_signal,
  							 make_signal(CM_DBUS_SIGNAL_REQUEST_CERT_SAVED,
  								     NULL),
--							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
-+							 NULL)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
+-							 NULL)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
++							 NULL))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))));
  	}
  	return ret;
  }
@@ -255,10 +255,10 @@ index bd57a01ba8725418978259018441f6a9a6672758..85d07b3baef83dbafd39c03888881cb6
  
  [Enroll until we notice we have no specified CA.]
 diff --git a/tests/028-dbus/expected.out b/tests/028-dbus/expected.out
-index 93cc4d184524c4b1aeba02a650c94d832462c236..26850efaedb966cd94ecd0db42d6adb378b47f37 100644
+index ba55dd5ce97c74475dbebb761c41dd2e64e64365..d8fb98bcf9950c9c21c48feac303dc0b46189ab7 100644
 --- a/tests/028-dbus/expected.out
 +++ b/tests/028-dbus/expected.out
-@@ -403,9 +403,6 @@ OK
+@@ -401,9 +401,6 @@ OK
     <arg name="status" type="b" direction="out"/>
     <arg name="path" type="o" direction="out"/>
    </method>
@@ -268,7 +268,7 @@ index 93cc4d184524c4b1aeba02a650c94d832462c236..26850efaedb966cd94ecd0db42d6adb3
    <method name="resubmit">
     <arg name="working" type="b" direction="out"/>
    </method>
-@@ -483,9 +480,6 @@ recently
+@@ -481,9 +478,6 @@ recently
  1 on /org/fedorahosted/certmonger/requests/Request2
  After setting template-eku to 1.2.3.4.5.6.7.8.9.10, we got dbus.Array([dbus.String(u'1.2.3.4.5.6.7.8.9.10')], signature=dbus.Signature('s'), variant_level=1)
  
@@ -370,5 +370,5 @@ index bd8cca7c3eedb5a02249f450451b651bb270ec24..62a1c746f86bb53fe79d1226ab919482
  -STOP-
  Test complete.
 -- 
-2.7.4
+2.4.3
 

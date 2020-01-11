@@ -26,7 +26,7 @@
 
 Name:		certmonger
 Version:	0.78.4
-Release:	3%{?dist}.1
+Release:	1%{?dist}
 Summary:	Certificate status monitor and PKI enrollment client
 
 Group:		System Environment/Daemons
@@ -36,20 +36,7 @@ Source0:	http://fedorahosted.org/released/certmonger/certmonger-%{version}.tar.g
 Source1:	http://fedorahosted.org/released/certmonger/certmonger-%{version}.tar.gz.sig
 BuildRoot:	%(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
 
-Patch0001:	0001-Stop-assuming-RSA-512-works.patch
-Patch0002:	0002-Stop-assuming-RSA-512-works-part-two.patch
-Patch0003:	0003-Add-issuer-request-option-for-specifying-issuer.patch
-Patch0004:	0004-Documentation-mark-CERTMONGER_CA_ISSUER-as-0.79.patch
-Patch0005:	0005-Comment-whitespace-fixup.patch
-Patch0006:	0006-ipa-submit-Retry-without-ca-on-OptionError.patch
-Patch0007:	0007-getcert-fix-a-potential-out-of-bounds.patch
-Patch0008:	0008-Document-the-X-option-in-the-ipa-submit-man-page.patch
-Patch0009:	0009-Fix-a-flakiness-in-the-028-dbus-test.patch
-Patch0010:	0010-Set-all-bits-to-1-in-local-CA-Basic-Constraint-to-se.patch
-Patch0011:	0011-Fix-conversions-of-bit-lengths-to-byte-lengths.patch
-
 Patch1001:	1001-Remove-rekey-feature.patch
-Patch1002:	1002-Fix-CA-option-name-for-ipa-cert-request.patch
 
 BuildRequires:	openldap-devel
 BuildRequires:	dbus-devel, nspr-devel, nss-devel, openssl-devel, libidn-devel
@@ -258,29 +245,6 @@ exit 0
 %endif
 
 %changelog
-* Tue Mar 27 2018 Rob Crittenden <rcritten@redhat.com> - 0.78.4-3.1
-- Use required DER encoding when setting CA basic constraint (#1560961)
-- NSS 3.34 more strictly enforces length checking when verifying signatures
-  (#1560960)
-
-* Tue Sep  6 2016 Jan Cholasta <jcholast@redhat.com> - 0.78.4-3
-- Resolves: #1367683 getcert request command fails to use Sub CA using -X
-  argument
-  - Fix CA option name for ipa cert-request
-
-* Fri Jul  1 2016 Jan Cholasta <jcholast@redhat.com> - 0.78.4-2
-- Resolves: #1345755 Support for specifying IPA lightweight CA
-  - Add 'issuer' request option for specifying issuer
-  - Documentation: mark $CERTMONGER_CA_ISSUER as 0.79
-  - Comment/whitespace fixup
-  - ipa-submit: Retry without "ca" on OptionError
-  - getcert: fix a potential out-of-bounds
-  - Document the -X option in the ipa-submit man page
-- Resolves: #1351052 certmonger build for RHEL 7.3 failure
-  - Stop assuming RSA 512 works
-  - Stop assuming RSA 512 works, part two
-  - Fix a flakiness in the 028-dbus test
-
 * Mon Aug 10 2015 Jan Cholasta <jcholast@redhat.com> - 0.78.4-1
 - Resolves: #1249753 challenge password not added in csr using start-tracking
 - Resolves: #1250397 Remove certmonger rekey feature in 7.2
